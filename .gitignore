@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# Tauri / Rust
+target/
+
+# Environment
+.env
+.env.local
+
+# IDE / OS
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# Runtime data
+.coverage
+*.log
+data/
+tmp/
+output/
+# Local tooling
+.claude/
+.pydeps/
+.tmp-pip/
+.venv-api/
+_tmp_*.txt
+_tmp_*.tsx
+tmp_test*.txt
+tmp_test*.tsx
+*.egg-info/
+
