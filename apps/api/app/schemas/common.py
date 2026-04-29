@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class ContentType(str, Enum):
     article = "article"
     bilibili_video = "bilibili_video"
+    podcast_episode = "podcast_episode"
 
 
 class ItemStatus(str, Enum):
@@ -45,6 +46,7 @@ class SummaryType(str, Enum):
     short = "short"
     outline = "outline"
     key_points = "key_points"
+    visual_context = "visual_context"
 
 
 class TranscriptType(str, Enum):

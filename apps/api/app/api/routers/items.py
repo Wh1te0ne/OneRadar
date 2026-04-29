@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from app.schemas.common import ReadingState
 from app.schemas.folders import (
     FolderCreateRequest,
     FolderDeleteResponse,
@@ -17,6 +18,7 @@ from app.schemas.items import (
     ItemListResponse,
     ItemReprocessRequest,
     ItemReprocessResponse,
+    ReadingStateUpdateRequest,
 )
 from app.services.folders_service import create_folder as create_folder_service
 from app.services.folders_service import delete_folder as delete_folder_service
@@ -24,10 +26,12 @@ from app.services.folders_service import list_folders as list_folders_service
 from app.services.folders_service import move_item_to_folder as move_item_to_folder_service
 from app.services.folders_service import update_folder as update_folder_service
 from app.services.items_service import delete_item as delete_item_service
+from app.services.items_service import generate_item_summary as generate_item_summary_service
 from app.services.items_service import get_item as get_item_service
 from app.services.items_service import import_item as import_item_service
 from app.services.items_service import list_items as list_items_service
 from app.services.items_service import reprocess_item as reprocess_item_service
+from app.services.items_service import update_reading_state as update_reading_state_service
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -69,6 +73,7 @@ def list_items(
     status: str | None = None,
     tag: str | None = None,
     folder_id: str | None = None,
+    collection_id: str | None = None,
     inbox_only: bool = False,
 ) -> ItemListResponse:
     return list_items_service(
@@ -79,6 +84,7 @@ def list_items(
         status=status,
         tag=tag,
         folder_id=folder_id,
+        collection_id=collection_id,
         inbox_only=inbox_only,
     )
 
@@ -91,10 +97,29 @@ def get_item(item_id: str) -> ItemDetailResponse:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.put("/{item_id}/reading-state")
+def update_reading_state(item_id: str, payload: ReadingStateUpdateRequest) -> ReadingState:
+    try:
+        return update_reading_state_service(item_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/{item_id}/reprocess")
-def reprocess_item(item_id: str, payload: ItemReprocessRequest | None = None) -> ItemReprocessResponse:
+def reprocess_item(
+    item_id: str,
+    payload: ItemReprocessRequest | None = None,
+) -> ItemReprocessResponse:
     _ = payload
     return reprocess_item_service(item_id)
+
+
+@router.post("/{item_id}/summaries/generate")
+def generate_item_summary(item_id: str) -> ItemReprocessResponse:
+    try:
+        return generate_item_summary_service(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/{item_id}")

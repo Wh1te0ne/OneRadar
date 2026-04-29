@@ -1,11 +1,35 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createApiClient } from "../api";
+import type { ApiBilibiliIntegrationSettings, ApiProvider } from "../api";
 import { useAppState } from "../state/appState";
+import { displayFolderName } from "../utils/display";
+
+const DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+const DOUBAO_CHAT_ENDPOINT = "ep-20260304161530-6ffr5";
 
 const themeOptions = [
   { value: "system", label: "跟随系统", icon: "brightness_auto" },
-  { value: "light",  label: "浅色",    icon: "light_mode" },
-  { value: "dark",   label: "深色",    icon: "dark_mode" },
+  { value: "light", label: "浅色", icon: "light_mode" },
+  { value: "dark", label: "深色", icon: "dark_mode" },
 ] as const;
+
+type ProviderKind = "doubao" | "openai_compatible" | "custom";
+type ProviderCapability = "llm" | "asr";
+
+type ProviderFormState = {
+  id: string | null;
+  capability: ProviderCapability;
+  provider_name: string;
+  provider_type: ProviderKind;
+  base_url: string;
+  api_key: string;
+  chat_model: string;
+  transcription_model: string;
+  transcription_app_id: string;
+  transcription_access_token: string;
+  transcription_secret_key: string;
+  is_enabled: boolean;
+};
 
 function providerTypeLabel(t: string) {
   switch (t) {
@@ -16,25 +40,358 @@ function providerTypeLabel(t: string) {
   }
 }
 
+function capabilityOf(provider: ApiProvider): ProviderCapability {
+  if (provider.capability === "asr" || provider.capability === "llm") return provider.capability;
+  if ((provider.transcription_model || provider.transcription_app_id) && !provider.chat_model) return "asr";
+  return "llm";
+}
+
+function emptyProviderForm(capability: ProviderCapability): ProviderFormState {
+  return {
+    id: null,
+    capability,
+    provider_name: capability === "llm" ? "Doubao LLM" : "Doubao ASR",
+    provider_type: "doubao",
+    base_url: capability === "llm" ? DOUBAO_BASE_URL : "",
+    api_key: "",
+    chat_model: capability === "llm" ? DOUBAO_CHAT_ENDPOINT : "",
+    transcription_model: capability === "asr" ? "volc.bigasr.auc_turbo" : "",
+    transcription_app_id: "",
+    transcription_access_token: "",
+    transcription_secret_key: "",
+    is_enabled: true,
+  };
+}
+
+function providerToForm(provider: ApiProvider): ProviderFormState {
+  const capability = capabilityOf(provider);
+  return {
+    id: provider.id,
+    capability,
+    provider_name: provider.provider_name,
+    provider_type: (provider.provider_type as ProviderKind | undefined) ?? "custom",
+    base_url: provider.base_url ?? "",
+    api_key: "",
+    chat_model: provider.chat_model ?? "",
+    transcription_model: provider.transcription_model ?? "",
+    transcription_app_id: provider.transcription_app_id ?? "",
+    transcription_access_token: "",
+    transcription_secret_key: "",
+    is_enabled: provider.is_enabled,
+  };
+}
+
+function applyProviderDefaults(form: ProviderFormState, providerType: ProviderKind): ProviderFormState {
+  if (providerType !== "doubao") {
+    return {
+      ...form,
+      provider_type: providerType,
+      base_url: form.capability === "llm" ? form.base_url : "",
+      chat_model: form.capability === "llm" ? form.chat_model : "",
+      transcription_model: form.capability === "asr" ? form.transcription_model : "",
+    };
+  }
+  return {
+    ...form,
+    provider_type: "doubao",
+    provider_name:
+      form.provider_name && !["Doubao", "Doubao LLM", "Doubao ASR"].includes(form.provider_name)
+        ? form.provider_name
+        : form.capability === "llm" ? "Doubao LLM" : "Doubao ASR",
+    base_url: form.capability === "llm" ? (form.base_url || DOUBAO_BASE_URL) : "",
+    chat_model: form.capability === "llm" ? (form.chat_model || DOUBAO_CHAT_ENDPOINT) : "",
+    transcription_model: form.capability === "asr" ? (form.transcription_model || "volc.bigasr.auc_turbo") : "",
+  };
+}
+
 export function SettingsPage() {
   const { apiBaseUrl, folders, lastError, loadFolders, loadProviders, providers, resolvedTheme, themeMode, setThemeMode, workspace } = useAppState();
+  const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
+  const [bilibiliIntegration, setBilibiliIntegration] = useState<ApiBilibiliIntegrationSettings | null>(null);
+  const [integrationLoading, setIntegrationLoading] = useState(true);
+  const [integrationSaving, setIntegrationSaving] = useState(false);
+  const [integrationMessage, setIntegrationMessage] = useState<string | null>(null);
+  const [integrationError, setIntegrationError] = useState<string | null>(null);
+  const [llmForm, setLlmForm] = useState<ProviderFormState>(() => emptyProviderForm("llm"));
+  const [asrForm, setAsrForm] = useState<ProviderFormState>(() => emptyProviderForm("asr"));
+  const [editing, setEditing] = useState<ProviderCapability | null>(null);
+  const [providerSaving, setProviderSaving] = useState(false);
+  const [providerMessage, setProviderMessage] = useState<string | null>(null);
+  const [providerError, setProviderError] = useState<string | null>(null);
+
+  const llmProviders = providers.filter((provider) => capabilityOf(provider) === "llm");
+  const asrProviders = providers.filter((provider) => capabilityOf(provider) === "asr");
 
   useEffect(() => {
     if (!providers.length) void loadProviders();
     if (!folders.length) void loadFolders();
   }, [folders.length, loadFolders, loadProviders, providers.length]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadIntegration() {
+      setIntegrationLoading(true);
+      setIntegrationError(null);
+      try {
+        const result = await client.getBilibiliIntegration();
+        if (!cancelled) setBilibiliIntegration(result);
+      } catch (e) {
+        if (!cancelled) setIntegrationError(e instanceof Error ? e.message : "读取视频增强设置失败");
+      } finally {
+        if (!cancelled) setIntegrationLoading(false);
+      }
+    }
+    void loadIntegration();
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  async function handleVisualEnhancementChange(enabled: boolean) {
+    setIntegrationSaving(true);
+    setIntegrationMessage(null);
+    setIntegrationError(null);
+    try {
+      const result = await client.updateBilibiliIntegration({
+        is_enabled: Boolean(bilibiliIntegration?.is_enabled),
+        visual_enhancement_enabled: enabled,
+      });
+      setBilibiliIntegration(result);
+      setIntegrationMessage(enabled ? "已开启多模态视觉增强。" : "已关闭多模态视觉增强。");
+    } catch (e) {
+      setIntegrationError(e instanceof Error ? e.message : "保存视频增强设置失败");
+    } finally {
+      setIntegrationSaving(false);
+    }
+  }
+
+  async function saveProvider(form: ProviderFormState) {
+    setProviderSaving(true);
+    setProviderMessage(null);
+    setProviderError(null);
+    try {
+      const payload = {
+        provider_name: form.provider_name.trim() || (form.capability === "llm" ? "大语言模型" : "转写模型"),
+        provider_type: form.provider_type,
+        capability: form.capability,
+        base_url: form.capability === "llm" ? form.base_url.trim() || null : null,
+        api_key: form.capability === "llm" ? form.api_key.trim() || null : null,
+        chat_model: form.capability === "llm" ? form.chat_model.trim() || null : null,
+        embedding_model: null,
+        transcription_model: form.capability === "asr" ? form.transcription_model.trim() || null : null,
+        transcription_app_id: form.capability === "asr" ? form.transcription_app_id.trim() || null : null,
+        transcription_access_token: form.capability === "asr" ? form.transcription_access_token.trim() || null : null,
+        transcription_secret_key: form.capability === "asr" ? form.transcription_secret_key.trim() || null : null,
+        is_enabled: form.is_enabled,
+      };
+      await (form.id ? client.updateProvider(form.id, payload) : client.createProvider(payload));
+      await loadProviders();
+      setEditing(null);
+      setLlmForm(emptyProviderForm("llm"));
+      setAsrForm(emptyProviderForm("asr"));
+      setProviderMessage(form.capability === "llm" ? "大语言模型已保存。" : "转写模型已保存。");
+    } catch (e) {
+      setProviderError(e instanceof Error ? e.message : "保存模型失败");
+    } finally {
+      setProviderSaving(false);
+    }
+  }
+
+  async function deleteProvider(providerId: string) {
+    setProviderSaving(true);
+    setProviderMessage(null);
+    setProviderError(null);
+    try {
+      await client.deleteProvider(providerId);
+      await loadProviders();
+      setProviderMessage("模型配置已删除。");
+    } catch (e) {
+      setProviderError(e instanceof Error ? e.message : "删除模型失败");
+    } finally {
+      setProviderSaving(false);
+    }
+  }
+
+  function providerRow(provider: ApiProvider) {
+    const capability = capabilityOf(provider);
+    const isAsr = capability === "asr";
+    const configured = isAsr
+      ? Boolean(provider.transcription_app_id || provider.transcription_model)
+      : Boolean(provider.api_key_configured || provider.chat_model);
+    return (
+      <div key={provider.id} className="provider-row">
+        <div className="provider-icon" style={{ background: provider.is_enabled ? "rgba(var(--primary-rgb),0.1)" : "var(--surface-high)" }}>
+          <span className="icon icon-sm" style={{ color: provider.is_enabled ? "var(--primary)" : "var(--outline)" }}>
+            {isAsr ? "graphic_eq" : "psychology"}
+          </span>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{provider.provider_name}</div>
+          <div style={{ fontSize: 12, color: "var(--outline)" }}>
+            {providerTypeLabel(provider.provider_type)} · {isAsr ? provider.transcription_app_id ?? "APP ID 未配置" : provider.base_url ?? "BaseURL 未配置"}
+          </div>
+        </div>
+        <div className="provider-row-actions">
+          <span className={`chip ${provider.is_enabled ? "chip-success" : "chip-neutral"}`}>{provider.is_enabled ? "启用" : "停用"}</span>
+          <span className={`chip ${configured ? "chip-neutral" : "chip-error"}`}>{configured ? "已配置" : "待配置"}</span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              const form = providerToForm(provider);
+              if (capability === "llm") setLlmForm(form);
+              else setAsrForm(form);
+              setEditing(capability);
+              setProviderMessage(null);
+              setProviderError(null);
+            }}
+          >
+            编辑
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void deleteProvider(provider.id)} disabled={providerSaving}>
+            删除
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function providerEditor(form: ProviderFormState, setForm: (updater: (current: ProviderFormState) => ProviderFormState) => void) {
+    const isAsr = form.capability === "asr";
+    return (
+      <div className="provider-editor">
+        <div className="provider-editor-header">
+          <div>
+            <div className="rail-section-title">{form.id ? "编辑模型配置" : "添加模型配置"}</div>
+            <p className="text-caption" style={{ margin: "4px 0 0" }}>
+              先选择供应商，再填写这个供应商需要的字段。
+            </p>
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(null)}>
+            收起
+          </button>
+        </div>
+        <label>
+          <span className="text-caption">供应商</span>
+          <select
+            className="input"
+            value={form.provider_type}
+            onChange={(event) => setForm((current) => applyProviderDefaults(current, event.target.value as ProviderKind))}
+          >
+            <option value="doubao">豆包</option>
+            <option value="openai_compatible" disabled={isAsr}>OpenAI 兼容</option>
+            <option value="custom" disabled={isAsr}>自定义</option>
+          </select>
+        </label>
+        <label>
+          <span className="text-caption">自定义名称</span>
+          <input
+            className="input"
+            value={form.provider_name}
+            onChange={(event) => setForm((current) => ({ ...current, provider_name: event.target.value }))}
+          />
+        </label>
+        {!isAsr && (
+          <>
+            <label>
+              <span className="text-caption">BaseURL</span>
+              <input
+                className="input"
+                value={form.base_url}
+                onChange={(event) => setForm((current) => ({ ...current, base_url: event.target.value }))}
+                placeholder={form.provider_type === "doubao" ? DOUBAO_BASE_URL : "https://example.com/v1"}
+              />
+            </label>
+            <label>
+              <span className="text-caption">API Key</span>
+              <input
+                className="input"
+                type="password"
+                value={form.api_key}
+                onChange={(event) => setForm((current) => ({ ...current, api_key: event.target.value }))}
+                placeholder={providers.find((provider) => provider.id === form.id)?.api_key_configured ? "已保存，留空沿用；填写新值可覆盖" : "填入 API Key"}
+              />
+            </label>
+            <label>
+              <span className="text-caption">模型名 / Endpoint</span>
+              <input
+                className="input"
+                value={form.chat_model}
+                onChange={(event) => setForm((current) => ({ ...current, chat_model: event.target.value }))}
+                placeholder={form.provider_type === "doubao" ? DOUBAO_CHAT_ENDPOINT : "模型名"}
+              />
+            </label>
+          </>
+        )}
+        {isAsr && form.provider_type === "doubao" && (
+          <>
+            <label>
+              <span className="text-caption">APP ID</span>
+              <input
+                className="input"
+                value={form.transcription_app_id}
+                onChange={(event) => setForm((current) => ({ ...current, transcription_app_id: event.target.value }))}
+                placeholder="填入豆包语音 APP ID"
+              />
+            </label>
+            <label>
+              <span className="text-caption">Access Token</span>
+              <input
+                className="input"
+                type="password"
+                value={form.transcription_access_token}
+                onChange={(event) => setForm((current) => ({ ...current, transcription_access_token: event.target.value }))}
+                placeholder={providers.find((provider) => provider.id === form.id)?.transcription_access_token_configured ? "已保存，留空沿用；填写新值可覆盖" : "填入 Access Token"}
+              />
+            </label>
+            <label>
+              <span className="text-caption">Secret Key</span>
+              <input
+                className="input"
+                type="password"
+                value={form.transcription_secret_key}
+                onChange={(event) => setForm((current) => ({ ...current, transcription_secret_key: event.target.value }))}
+                placeholder={providers.find((provider) => provider.id === form.id)?.transcription_secret_key_configured ? "已保存，留空沿用；填写新值可覆盖" : "填入 Secret Key"}
+              />
+            </label>
+            <label>
+              <span className="text-caption">资源 ID</span>
+              <input
+                className="input"
+                value={form.transcription_model}
+                onChange={(event) => setForm((current) => ({ ...current, transcription_model: event.target.value }))}
+                placeholder="volc.bigasr.auc_turbo"
+              />
+            </label>
+          </>
+        )}
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={form.is_enabled}
+            onChange={(event) => setForm((current) => ({ ...current, is_enabled: event.target.checked }))}
+          />
+          <span>启用这个模型</span>
+        </label>
+        <div className="btn-group">
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveProvider(form)} disabled={providerSaving}>
+            <span className="icon icon-sm">{form.id ? "save" : "add"}</span>
+            {form.id ? "保存修改" : "添加"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page">
-      {/* Header */}
       <div className="page-header">
         <p className="page-eyebrow">设置</p>
         <h2 className="page-title">系统配置</h2>
-        <p className="page-lead">主题外观、工作区信息、模型服务与文件夹管理。</p>
+        <p className="page-lead">主题外观、工作区信息、模型服务与知识库管理。</p>
       </div>
 
-      <div className="stack-lg" style={{ maxWidth: 760 }}>
-        {/* Appearance */}
+      <div className="stack-lg" style={{ maxWidth: 820 }}>
         <div className="settings-section">
           <div className="settings-section-title">
             <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>palette</span>
@@ -57,7 +414,6 @@ export function SettingsPage() {
           <p className="text-meta">当前：{resolvedTheme === "dark" ? "深色模式" : "浅色模式"}。界面语言固定为中文。</p>
         </div>
 
-        {/* Workspace */}
         <div className="settings-section">
           <div className="settings-section-title">
             <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>workspaces</span>
@@ -73,7 +429,7 @@ export function SettingsPage() {
               <div key={item.label} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", background: "var(--surface-container)", borderRadius: "var(--radius-sm)" }}>
                 <span className="icon" style={{ color: "var(--outline)", marginTop: 1 }}>{item.icon}</span>
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--outline)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{item.label}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--outline)", textTransform: "uppercase", marginBottom: 4 }}>{item.label}</div>
                   <div style={{ fontSize: 14, fontWeight: 500, color: "var(--on-surface)", wordBreak: "break-all" }}>{item.value}</div>
                 </div>
               </div>
@@ -82,11 +438,76 @@ export function SettingsPage() {
           {lastError && <div className="feedback feedback-error">{lastError}</div>}
         </div>
 
-        {/* Folders */}
+        <div className="settings-section">
+          <div className="settings-section-title">
+            <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>smart_toy</span>
+            模型服务
+          </div>
+
+          <div className="settings-model-block">
+            <div className="settings-model-block-header">
+              <div>
+                <h3>大语言模型</h3>
+                <p>用于摘要、问答、视频视觉增强等文本理解任务。</p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setLlmForm(emptyProviderForm("llm")); setEditing("llm"); }}>
+                <span className="icon icon-sm">add</span>
+                添加模型服务
+              </button>
+            </div>
+            <div className="stack-sm">
+              {llmProviders.length ? llmProviders.map(providerRow) : <p className="text-meta">还没有配置大语言模型。</p>}
+            </div>
+            {editing === "llm" && providerEditor(llmForm, setLlmForm)}
+          </div>
+
+          <div className="settings-model-block">
+            <div className="settings-model-block-header">
+              <div>
+                <h3>转写模型（ASR）</h3>
+                <p>用于播客音频和无字幕视频的语音转文字。</p>
+              </div>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setAsrForm(emptyProviderForm("asr")); setEditing("asr"); }}>
+                <span className="icon icon-sm">add</span>
+                添加模型服务
+              </button>
+            </div>
+            <div className="stack-sm">
+              {asrProviders.length ? asrProviders.map(providerRow) : <p className="text-meta">还没有配置转写模型。</p>}
+            </div>
+            {editing === "asr" && providerEditor(asrForm, setAsrForm)}
+          </div>
+
+          {(providerMessage || providerError) && (
+            <div className="stack-sm">
+              {providerMessage && <div className="feedback feedback-success">{providerMessage}</div>}
+              {providerError && <div className="feedback feedback-error">{providerError}</div>}
+            </div>
+          )}
+
+          <div className="settings-subsection">
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={Boolean(bilibiliIntegration?.visual_enhancement_enabled)}
+                disabled={integrationLoading || integrationSaving}
+                onChange={(e) => void handleVisualEnhancementChange(e.target.checked)}
+              />
+              <span>启用视频多模态视觉增强</span>
+            </label>
+            <p className="text-caption" style={{ marginTop: -6 }}>
+              开启后，B站视频仍优先使用字幕，没有字幕再走音频转写；在已有文本基础上额外调用支持视频/图像的大模型分析画面。
+            </p>
+            {integrationLoading && <p className="text-meta">正在读取视频增强设置…</p>}
+            {integrationMessage && <div className="feedback feedback-success">{integrationMessage}</div>}
+            {integrationError && <div className="feedback feedback-error">{integrationError}</div>}
+          </div>
+        </div>
+
         <div className="settings-section">
           <div className="settings-section-title">
             <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>folder</span>
-            文件夹 <span style={{ fontWeight: 400, color: "var(--outline)", fontSize: 13 }}>（{folders.length} 个）</span>
+            知识库 <span style={{ fontWeight: 400, color: "var(--outline)", fontSize: 13 }}>（{folders.length} 个）</span>
           </div>
           <div className="stack-sm">
             {folders.map((f) => (
@@ -95,52 +516,13 @@ export function SettingsPage() {
                   <span className="icon icon-sm">{f.is_builtin ? "inbox" : "folder"}</span>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{f.name}</div>
-                  <div style={{ fontSize: 12, color: "var(--outline)" }}>{f.is_builtin ? "内置文件夹" : "自定义文件夹"}</div>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{displayFolderName(f.name, f.is_builtin)}</div>
+                  <div style={{ fontSize: 12, color: "var(--outline)" }}>{f.is_builtin ? "内置入口" : "收藏夹"}</div>
                 </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <span className="chip chip-neutral">{f.item_count} 条</span>
-                  <span className="chip chip-neutral" style={{ fontFamily: "monospace", fontSize: 10 }}>{f.id}</span>
-                </div>
+                <span className="chip chip-neutral">{f.item_count} 条</span>
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Model providers */}
-        <div className="settings-section">
-          <div className="settings-section-title">
-            <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>smart_toy</span>
-            模型服务 <span style={{ fontWeight: 400, color: "var(--outline)", fontSize: 13 }}>（{providers.length} 个）</span>
-          </div>
-          {providers.length ? (
-            <div className="stack-sm">
-              {providers.map((p) => (
-                <div key={p.id} className="provider-row">
-                  <div className="provider-icon" style={{ background: p.is_enabled ? "rgba(70,83,195,0.1)" : "var(--surface-high)" }}>
-                    <span className="icon icon-sm" style={{ color: p.is_enabled ? "var(--primary)" : "var(--outline)" }}>
-                      {p.is_enabled ? "psychology" : "psychology_alt"}
-                    </span>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{p.provider_name}</div>
-                    <div style={{ fontSize: 12, color: "var(--outline)" }}>{providerTypeLabel(p.provider_type)} · {p.base_url ?? "地址未配置"}</div>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flexShrink: 0, justifyContent: "flex-end" }}>
-                    <span className={`chip ${p.is_enabled ? "chip-success" : "chip-neutral"}`}>{p.is_enabled ? "启用" : "停用"}</span>
-                    {p.chat_model && <span className="chip chip-neutral" style={{ fontSize: 10 }}>对话 {p.chat_model}</span>}
-                    {p.transcription_model && <span className="chip chip-neutral" style={{ fontSize: 10 }}>转写 {p.transcription_model}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state" style={{ padding: "24px 0" }}>
-              <div className="empty-state-icon"><span className="icon icon-lg">smart_toy</span></div>
-              <h3>暂无模型服务</h3>
-              <p>请先完成服务端连接以读取模型配置。</p>
-            </div>
-          )}
         </div>
       </div>
     </div>

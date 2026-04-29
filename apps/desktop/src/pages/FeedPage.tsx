@@ -153,7 +153,7 @@ export function FeedPage() {
     setImportMessage(null);
     try {
       const result = await client.importItem(item.link, "article");
-      setImportMessage(result.is_duplicate ? `已存在：${result.uid}` : `已加入收件箱：${result.uid}`);
+      setImportMessage(result.is_duplicate ? `已存在：${result.uid}` : `已加入稍后阅读：${result.uid}`);
     } catch (nextError) {
       setImportMessage(nextError instanceof Error ? nextError.message : "导入失败");
     } finally {
@@ -172,7 +172,7 @@ export function FeedPage() {
           alignItems: "center",
           justifyContent: "space-between",
           padding: "14px 28px",
-          borderBottom: "1px solid rgba(172,179,183,0.18)",
+          borderBottom: "1px solid rgba(var(--outline-rgb),0.18)",
           background: "var(--surface-lowest)",
           flexShrink: 0,
           gap: 16,
@@ -228,8 +228,8 @@ export function FeedPage() {
         <div
           style={{
             padding: "12px 28px",
-            background: "rgba(70,83,195,0.04)",
-            borderBottom: "1px solid rgba(70,83,195,0.12)",
+            background: "rgba(var(--primary-rgb),0.04)",
+            borderBottom: "1px solid rgba(var(--primary-rgb),0.12)",
             display: "flex",
             flexDirection: "column",
             gap: 12,
@@ -323,7 +323,7 @@ function FeedRow({ item, isImporting, onImport }: { item: ApiFeedPreviewItem; is
         alignItems: "flex-start",
         gap: 0,
         padding: "0 28px",
-        borderBottom: "1px solid rgba(172,179,183,0.12)",
+        borderBottom: "1px solid rgba(var(--outline-rgb),0.12)",
         transition: "background 120ms ease",
       }}
       onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-container)"; }}

@@ -2,16 +2,17 @@
 
 ## 1. Architecture Goals
 
-OneRadar V1 is a reader-first personal knowledge library with manual link input only.
+OneRadar V1 is a reader-first personal knowledge library with manual link input plus a scoped podcast subscription surface.
 
 The architecture must support these constraints:
 
-- Manual input only.
-- Supported inputs: article links and Bilibili video links.
+- Manual item creation only.
+- Supported inputs: article links, Bilibili video links, and explicitly imported podcast episodes from user-subscribed podcast RSS feeds.
 - Server-first execution with a Windows desktop client.
 - Docker-based deployment for the server.
 - Subtitle-first, then ASR transcription for video items.
-- First-class provider registry for chat, embedding, and transcription models.
+- Optional multimodal visual enhancement for video items after subtitle/ASR text exists.
+- First-class provider registry for chat, embedding, transcription, and visual-understanding model use.
 - Web-first UI rendered inside a desktop shell.
 
 The architecture should optimize for:
@@ -41,6 +42,7 @@ flowchart LR
   W --> PROC[Processing Workers]
   ING --> SRC1[Article Fetchers]
   ING --> SRC2[Bilibili Fetchers]
+  ING --> SRC3[Podcast RSS / Enclosure Fetchers]
   PROC --> EX[Extractors]
   PROC --> TR[Transcription Adapters]
   PROC --> AI[LLM Provider Adapters]
@@ -60,12 +62,14 @@ The server owns:
 
 The desktop client owns:
 
-- Login and server connection setup.
+- Server connection setup and single-user workspace bootstrap.
 - Import UI.
 - Library browsing.
 - Reading and annotation UI.
 - Provider settings UI.
 - Import workbench UI for manual link submission and source-specific auth such as Bilibili cookies.
+- Podcast UI for Apple search, RSS subscription management, and explicit episode import.
+- Bilibili QR-code login helper for explicit app-based authorization, modeled after bilidown-style login UX.
 - Desktop-only local helper for explicit Chromium cookie import when the user chooses to read Bilibili browser cookies into OneRadar.
 
 ## 3. Core Design Principles
@@ -74,10 +78,13 @@ The desktop client owns:
 
 V1 does not crawl the web proactively.
 
-Every content item starts from a user-supplied URL. That URL is then routed into one of two pipelines:
+Every content item starts from a user action. Article and Bilibili items start from a user-supplied URL. Podcast episode items start when the user explicitly adds a discovered episode to Inbox / later reading.
 
 - Article pipeline.
 - Bilibili pipeline.
+- Podcast episode pipeline.
+
+Podcast subscriptions are discovery state, not content items. Subscribing to a podcast RSS feed never downloads audio and never triggers model work by itself.
 
 ### 3.2 Source-specific pipelines behind a shared item model
 
@@ -100,6 +107,7 @@ For V1, keep a separate integration-settings layer for source-specific auth such
 
 - `integration_key = bilibili`
 - server-only cookie storage
+- QR-code login stores cookies only after user confirmation in the Bilibili mobile app
 - masked previews in API responses
 - no raw cookie echo in desktop UI
 - worker-side lookup just before Bilibili fetch steps
@@ -125,9 +133,13 @@ For Bilibili items, the preferred order is:
 3. Audio extraction.
 4. ASR transcription.
 
+If multimodal visual enhancement is enabled, the worker keeps the subtitle/ASR result as the canonical readable transcript, then sends a sampled short video clip to a video-capable multimodal model. If direct video analysis is unavailable or fails, the worker falls back to sampled video frames. The model output adds supplemental context about slides, diagrams, screen content, demonstrations, actions, and scene changes. Visual enhancement is non-blocking: failure should be recorded as a pipeline step and should not prevent transcript-based import completion.
+
 Implementation note:
 
 - Evaluate `BBDown` and `Bilibili All In One` first for Bilibili-specific metadata, subtitle retrieval, and authenticated fallback handling.
+- Use `bilidown` as a product reference for QR-code login state and Cookie acquisition UX, not as the media pipeline dependency.
+- Keep a direct Bilibili `x/player/playurl` DASH-audio fallback for public videos that can be accessed without cookies.
 - Keep `yt-dlp` as the generic media fallback rather than the first Bilibili-specific integration choice.
 - Treat `Bilibili All In One` as a technical template until its runtime domains and credential handling are explicitly approved.
 
@@ -145,9 +157,10 @@ This keeps the UI reusable for future PWA or mobile-oriented work while still de
 
 Responsibilities:
 
-- User login and server connection.
+- Server connection and workspace bootstrap.
 - Manual item import.
 - Library list and detail pages.
+- Podcast search, subscription, and explicit episode import.
 - Reading view for articles and transcripts.
 - Highlight and note interaction.
 - Collection and tag management.
@@ -163,7 +176,7 @@ Non-responsibilities:
 
 Responsibilities:
 
-- Authentication and session handling.
+- Single-user workspace bootstrap and internal ownership context.
 - CRUD APIs for content, annotations, collections, reading state, and providers.
 - Import orchestration and task creation.
 - Query APIs for search and item detail.
@@ -268,7 +281,41 @@ Implementation candidates for steps 2 to 4:
 
 - `BBDown`: Bilibili-first downloader and subtitle helper.
 - `Bilibili All In One`: compact auth-aware reference for subtitle-first and media fallback flows.
+- Direct Bilibili `x/player/playurl`: lightweight anonymous DASH-audio fallback for public videos where the legacy playback API is available.
 - `yt-dlp`: generic fallback when platform-specific helpers are insufficient.
+
+Implementation baseline:
+
+- Worker tasks resolve the enabled provider with a configured transcription model before running ASR.
+- When subtitle retrieval returns no transcript, the worker first tries a shell-free BBDown subprocess wrapper, then a direct Bilibili `x/player/playurl` DASH-audio extractor, then a shell-free `yt-dlp` subprocess wrapper, and passes the produced audio file into the transcription adapter.
+- The first adapter is OpenAI-compatible audio transcription using the provider base URL, decrypted server-side key, and configured transcription model.
+- Optional visual enhancement uses the enabled chat/vision-capable provider model after transcript generation, tries direct sampled-video-clip analysis first, falls back to sampled frames when needed, and persists the model output as a `visual_context` summary.
+- Bilibili cookies are passed to media tools through temporary files/configs, not through persisted task results, and those temporary files are removed after use.
+- Task results and persisted metadata expose provider/model names and transcript status, but not raw provider API keys or source-site cookies.
+
+### 5.3 Podcast Pipeline
+
+```mermaid
+flowchart TD
+  A[User searches Apple Podcasts] --> B[Select podcast RSS feed]
+  B --> C[Subscribe feed for discovery only]
+  C --> D[List RSS episodes]
+  D --> E[User adds one episode to Inbox]
+  E --> F[Dedupe by feed URL plus GUID]
+  F --> G[Download enclosure audio]
+  G --> H[Persist audio artifact]
+  H --> I[ASR transcription]
+  I --> J[Generate summary and outline]
+```
+
+Implementation notes:
+
+- Apple iTunes Search API is the MVP discovery provider because it can return podcast RSS `feedUrl` values without a user API key.
+- RSS subscriptions should be stored server-side and treated as source configuration.
+- RSS polling/preview reads episode metadata and enclosure URLs but does not download media.
+- Only the explicit episode-import endpoint creates `content_items.content_type = podcast_episode`.
+- Podcast audio is persisted for future reprocessing and should be deleted when the corresponding content item is deleted.
+- Podcast reader UX should prioritize the audio player and AI summaries; transcript text is supporting material, not the main reading surface.
 
 ## 6. Provider Architecture
 
@@ -304,6 +351,15 @@ Capabilities:
 - Chat / summarization.
 - Embedding.
 - Transcription.
+- Video visual understanding, resolved to a visual-capable chat model in V1.
+
+Implementation baseline:
+
+- `ProviderCapability.summarization` resolves to the configured chat/summarization model.
+- `ProviderCapability.embedding` resolves to the configured embedding model.
+- `ProviderCapability.transcription` resolves to the configured transcription model.
+- `ProviderCapability.video_visual_understanding` resolves to the configured chat model for V1, because the provider registry does not yet expose a dedicated visual model field.
+- Runtime provider config may include a decrypted key for server-side adapters, but public API responses expose only whether a key is configured.
 
 This lets the user mix providers, for example:
 
@@ -320,6 +376,7 @@ Recommended adapter groups:
 - `chat/summarization adapter`
 - `embedding adapter`
 - `transcription adapter`
+- `video visual-understanding adapter`
 
 Adapter behavior should be consistent:
 
@@ -421,9 +478,9 @@ This reduces the blast radius of:
 
 ### 8.4 Asset Access
 
-Assets derived from imported content should be protected by authenticated access.
+Assets derived from imported content should not expose raw storage paths directly to the client.
 
-The server should not expose raw storage paths directly to the client.
+If deployment-level access control is needed, keep it outside the V1 account UX, such as a reverse proxy or local network boundary.
 
 ### 8.5 Error Hygiene
 

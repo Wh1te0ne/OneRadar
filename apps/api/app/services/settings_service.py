@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from http.cookies import SimpleCookie
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.models import IntegrationSetting
@@ -71,14 +70,20 @@ def _parse_cookie_header(raw_cookie: str | None) -> dict[str, str | None]:
     return parsed
 
 
-def _entry_from_values(*, is_enabled: bool, values: dict[str, str | None], updated_at: datetime | None) -> BilibiliIntegrationSettingsEntry:
+def _entry_from_values(
+    *,
+    is_enabled: bool,
+    values: dict[str, Any],
+    updated_at: datetime | None,
+) -> BilibiliIntegrationSettingsEntry:
     sessdata = values.get('sessdata')
     bili_jct = values.get('bili_jct')
     buvid3 = values.get('buvid3')
     has_cookie_values = any((sessdata, bili_jct, buvid3))
-    ready = is_enabled and bool(sessdata and bili_jct and buvid3)
+    ready = is_enabled and bool(sessdata and bili_jct)
     return BilibiliIntegrationSettingsEntry(
         is_enabled=is_enabled,
+        visual_enhancement_enabled=bool(values.get('visual_enhancement_enabled')),
         has_cookie_values=has_cookie_values,
         ready_for_authenticated_fetch=ready,
         sessdata_configured=bool(sessdata),
@@ -91,7 +96,10 @@ def _entry_from_values(*, is_enabled: bool, values: dict[str, str | None], updat
     )
 
 
-def _store_record_from_entry(entry: BilibiliIntegrationSettingsEntry, values: dict[str, str | None]) -> dict[str, Any]:
+def _store_record_from_entry(
+    entry: BilibiliIntegrationSettingsEntry,
+    values: dict[str, Any],
+) -> dict[str, Any]:
     return {
         'id': entry.integration_key,
         'integration_key': entry.integration_key,
@@ -109,7 +117,11 @@ def get_bilibili_integration_settings() -> BilibiliIntegrationSettingsEntry:
             if setting is None:
                 return _entry_from_values(is_enabled=False, values={}, updated_at=None)
             values = dict(setting.config or {})
-            return _entry_from_values(is_enabled=bool(setting.is_enabled), values=values, updated_at=setting.updated_at)
+            return _entry_from_values(
+                is_enabled=bool(setting.is_enabled),
+                values=values,
+                updated_at=setting.updated_at,
+            )
     except SQLAlchemyError:
         seed_store()
         with STORE.lock:
@@ -146,6 +158,8 @@ def update_bilibili_integration_settings(
                 if raw_value is None:
                     continue
                 resolved_values[key] = _normalize_secret(raw_value)
+            if payload.visual_enhancement_enabled is not None:
+                resolved_values['visual_enhancement_enabled'] = payload.visual_enhancement_enabled
 
             if setting is None:
                 user = get_primary_user(session)
@@ -185,8 +199,17 @@ def update_bilibili_integration_settings(
                 if raw_value is None:
                     continue
                 resolved_values[key] = _normalize_secret(raw_value)
-            entry = _entry_from_values(is_enabled=payload.is_enabled, values=resolved_values, updated_at=now)
-            STORE.integrations[BILIBILI_INTEGRATION_KEY] = _store_record_from_entry(entry, resolved_values)
+            if payload.visual_enhancement_enabled is not None:
+                resolved_values['visual_enhancement_enabled'] = payload.visual_enhancement_enabled
+            entry = _entry_from_values(
+                is_enabled=payload.is_enabled,
+                values=resolved_values,
+                updated_at=now,
+            )
+            STORE.integrations[BILIBILI_INTEGRATION_KEY] = _store_record_from_entry(
+                entry,
+                resolved_values,
+            )
         return entry
 
 

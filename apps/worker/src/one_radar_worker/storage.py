@@ -24,12 +24,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Engine
 
+from .credential_crypto import reveal_secret
+
 PENDING_STATUS = 'pending'
 RUNNING_STATUS = 'running'
 RETRYING_STATUS = 'retrying'
 SUCCESS_STATUS = 'success'
 FAILED_STATUS = 'failed'
-SUPPORTED_TASK_TYPES = {'fetch_meta', 'reprocess_item'}
+SUPPORTED_TASK_TYPES = {'fetch_meta', 'reprocess_item', 'generate_summary'}
 
 metadata = MetaData()
 
@@ -64,6 +66,28 @@ integration_settings = Table(
     Column('display_name', String, nullable=False),
     Column('is_enabled', Boolean, nullable=False),
     Column('config', JSON, nullable=False),
+    Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column('updated_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
+)
+
+model_providers = Table(
+    'model_providers',
+    metadata,
+    Column('id', Uuid, primary_key=True),
+    Column('user_id', Uuid, nullable=False),
+    Column('provider_name', String, nullable=False),
+    Column('provider_type', String, nullable=False),
+    Column('display_name', String, nullable=False),
+    Column('base_url', Text, nullable=True),
+    Column('api_key_encrypted', Text, nullable=True),
+    Column('chat_model', String, nullable=True),
+    Column('embedding_model', String, nullable=True),
+    Column('transcription_model', String, nullable=True),
+    Column('is_enabled', Boolean, nullable=False),
+    Column('is_builtin', Boolean, nullable=False),
+    Column('config', JSON, nullable=False),
+    Column('last_test_status', String, nullable=True),
+    Column('last_tested_at', DateTime(timezone=True), nullable=True),
     Column('created_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
     Column('updated_at', DateTime(timezone=True), server_default=func.now(), nullable=False),
 )
@@ -590,13 +614,13 @@ def complete_task(engine: Engine, task: dict[str, Any], item: dict[str, Any], re
             .where(content_items.c.id == item['id'])
             .values(
                 title=content_item_payload.get('title') or item.get('title') or '未命名内容',
-                subtitle=content_item_payload.get('subtitle'),
-                author_name=content_item_payload.get('author_name'),
-                author_id=content_item_payload.get('author_id'),
-                cover_url=content_item_payload.get('cover_url'),
-                duration_seconds=content_item_payload.get('duration_seconds'),
-                language=content_item_payload.get('language'),
-                published_at=published_at,
+                subtitle=content_item_payload.get('subtitle', item.get('subtitle')),
+                author_name=content_item_payload.get('author_name', item.get('author_name')),
+                author_id=content_item_payload.get('author_id', item.get('author_id')),
+                cover_url=content_item_payload.get('cover_url', item.get('cover_url')),
+                duration_seconds=content_item_payload.get('duration_seconds', item.get('duration_seconds')),
+                language=content_item_payload.get('language', item.get('language')),
+                published_at=published_at or item.get('published_at'),
                 status='completed',
                 raw_meta=raw_meta,
                 fetch_hash=content_hash,
@@ -686,3 +710,85 @@ def load_integration_config(engine: Engine, user_id: str, integration_key: str) 
         config = dict(row.get('config') or {})
         config['is_enabled'] = bool(row.get('is_enabled'))
         return config
+
+
+def load_transcription_provider_config(engine: Engine, user_id: str) -> dict[str, Any]:
+    with engine.begin() as conn:
+        rows = (
+            conn.execute(
+                select(model_providers)
+                .where(
+                    model_providers.c.user_id == UUID(user_id),
+                    model_providers.c.is_enabled.is_(True),
+                )
+                .order_by(model_providers.c.created_at.asc())
+            )
+            .mappings()
+            .all()
+        )
+        row = _select_provider_for_capability(rows, "asr")
+        if row is None:
+            return {}
+        config = dict(row.get('config') or {})
+        transcription_config = dict(config.get('transcription') or {})
+        return {
+            'provider_id': str(row['id']),
+            'provider_name': row['provider_name'],
+            'provider_type': row['provider_type'],
+            'base_url': row['base_url'],
+            'api_key': reveal_secret(row['api_key_encrypted']),
+            'model_name': row['transcription_model'],
+            'doubao_transcription': {
+                'app_id': transcription_config.get('app_id'),
+                'access_token': reveal_secret(transcription_config.get('access_token_encrypted')),
+                'secret_key': reveal_secret(transcription_config.get('secret_key_encrypted')),
+            },
+        }
+
+
+def load_visual_understanding_provider_config(engine: Engine, user_id: str) -> dict[str, Any]:
+    with engine.begin() as conn:
+        rows = (
+            conn.execute(
+                select(model_providers)
+                .where(
+                    model_providers.c.user_id == UUID(user_id),
+                    model_providers.c.is_enabled.is_(True),
+                )
+                .order_by(model_providers.c.created_at.asc())
+            )
+            .mappings()
+            .all()
+        )
+        row = _select_provider_for_capability(rows, "llm")
+        if row is None:
+            return {}
+        return {
+            'provider_id': str(row['id']),
+            'provider_name': row['provider_name'],
+            'provider_type': row['provider_type'],
+            'base_url': row['base_url'],
+            'api_key': reveal_secret(row['api_key_encrypted']),
+            'model_name': row['chat_model'],
+        }
+
+
+def load_summary_provider_config(engine: Engine, user_id: str) -> dict[str, Any]:
+    return load_visual_understanding_provider_config(engine, user_id)
+
+
+def _select_provider_for_capability(rows: list[dict[str, Any]], capability: str):
+    fallback = None
+    for row in rows:
+        config = dict(row.get('config') or {})
+        provider_capability = str(config.get('capability') or '').strip().lower()
+        if provider_capability == capability:
+            return row
+        if fallback is None:
+            if capability == "llm" and row.get('chat_model'):
+                fallback = row
+            if capability == "asr" and (
+                row.get('transcription_model') or dict(config.get('transcription') or {})
+            ):
+                fallback = row
+    return fallback

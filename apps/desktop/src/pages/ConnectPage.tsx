@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAppState } from "../state/appState";
+import { displayFolderName } from "../utils/display";
 
 function connectionStateLabel(state: "idle" | "checking" | "connected" | "unavailable") {
   switch (state) {
@@ -70,7 +71,7 @@ export function ConnectPage() {
             background: "linear-gradient(135deg, var(--primary), var(--primary-container))",
             display: "flex", alignItems: "center", justifyContent: "center",
             margin: "0 auto 20px",
-            boxShadow: "0 8px 24px rgba(70,83,195,0.3)"
+            boxShadow: "0 8px 24px rgba(var(--primary-rgb),0.18)"
           }}>
             <span className="icon icon-lg" style={{ fontSize: 32, color: "var(--on-primary)" }}>radar</span>
           </div>
@@ -125,7 +126,7 @@ export function ConnectPage() {
             {[
               { label: "服务版本", value: health?.version ?? "未读取", icon: "tag" },
               { label: "工作区", value: workspace?.workspace_name ?? "未读取", icon: "workspaces" },
-              { label: "默认入口", value: inboxFolder?.name ?? "收件箱", icon: "inbox" },
+              { label: "默认入口", value: displayFolderName(inboxFolder?.name, true), icon: "inbox" },
               { label: "主题", value: themeMode === "system" ? `系统 (${resolvedTheme === "dark" ? "深色" : "浅色"})` : (themeMode === "dark" ? "深色" : "浅色"), icon: "palette" },
             ].map((item) => (
               <div key={item.label} style={{ padding: "10px 12px", background: "var(--surface-container)", borderRadius: "var(--radius-sm)", display: "flex", gap: 10, alignItems: "center" }}>
@@ -149,7 +150,7 @@ export function ConnectPage() {
             <div className="stack-sm">
               {providers.map((p) => (
                 <div key={p.id} className="provider-row">
-                  <div className="provider-icon" style={{ background: p.is_enabled ? "rgba(70,83,195,0.1)" : "var(--surface-high)" }}>
+                  <div className="provider-icon" style={{ background: p.is_enabled ? "rgba(var(--primary-rgb),0.1)" : "var(--surface-high)" }}>
                     <span className="icon icon-sm" style={{ color: p.is_enabled ? "var(--primary)" : "var(--outline)" }}>psychology</span>
                   </div>
                   <div style={{ flex: 1 }}>

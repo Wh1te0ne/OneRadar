@@ -7,9 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.db.models import IntegrationSetting, ModelProvider, User
 
-
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD_HASH = "secret"
+DEFAULT_WORKSPACE_USERNAME = "local"
+DISABLED_PASSWORD_HASH = "single-user-mode"
 
 
 def get_primary_user(session: Session) -> User:
@@ -18,9 +17,9 @@ def get_primary_user(session: Session) -> User:
         return user
 
     user = User(
-        username=DEFAULT_ADMIN_USERNAME,
-        password_hash=DEFAULT_ADMIN_PASSWORD_HASH,
-        display_name="Admin",
+        username=DEFAULT_WORKSPACE_USERNAME,
+        password_hash=DISABLED_PASSWORD_HASH,
+        display_name="Local Workspace",
     )
     session.add(user)
     session.flush()
@@ -40,6 +39,9 @@ def get_bilibili_integration_setting(session: Session) -> IntegrationSetting | N
     user = get_primary_user(session)
     return session.execute(
         select(IntegrationSetting)
-        .where(IntegrationSetting.user_id == user.id, IntegrationSetting.integration_key == 'bilibili')
+        .where(
+            IntegrationSetting.user_id == user.id,
+            IntegrationSetting.integration_key == 'bilibili',
+        )
         .limit(1)
     ).scalar_one_or_none()

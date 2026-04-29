@@ -15,11 +15,15 @@ class ProviderPresetEntry(BaseModel):
 class ProviderCreateRequest(BaseModel):
     provider_name: str = Field(min_length=1)
     provider_type: ProviderType
+    capability: str | None = None
     base_url: str | None = None
     api_key: str | None = None
     chat_model: str | None = None
     embedding_model: str | None = None
     transcription_model: str | None = None
+    transcription_app_id: str | None = None
+    transcription_access_token: str | None = None
+    transcription_secret_key: str | None = None
     is_enabled: bool = True
 
 
@@ -36,10 +40,15 @@ class ProviderEntry(BaseModel):
     id: str
     provider_name: str
     provider_type: ProviderType
+    capability: str = "llm"
     base_url: str | None = None
+    api_key_configured: bool = False
     chat_model: str | None = None
     embedding_model: str | None = None
     transcription_model: str | None = None
+    transcription_app_id: str | None = None
+    transcription_access_token_configured: bool = False
+    transcription_secret_key_configured: bool = False
     is_enabled: bool = True
     last_test_status: str | None = None
     last_tested_at: datetime | None = None

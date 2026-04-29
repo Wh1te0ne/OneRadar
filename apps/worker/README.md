@@ -44,7 +44,7 @@ Bilibili jobs:
 - normalize URL
 - fetch metadata
 - try subtitles first
-- fall back to audio extraction and ASR
+- fall back to BBDown, direct Bilibili `playurl` audio, then `yt-dlp`, audio extraction and ASR through the configured transcription provider
 - store timestamped transcript
 - generate summary and outline
 - build search index
@@ -67,6 +67,18 @@ The result is intentionally shaped so the API layer can later store:
 - structured blocks
 - quality score and scoring reasons
 - summary inputs
+
+## Bilibili ASR fallback
+
+The Bilibili pipeline is subtitle-first. If no usable subtitle transcript is available, it:
+
+- extracts audio with a subprocess-based BBDown wrapper first
+- uses a direct Bilibili `x/player/playurl` DASH-audio path before `yt-dlp` so public videos can work without browser cookies when that legacy API is available
+- resolves the enabled model provider with a `transcription_model`
+- submits the audio to the transcription adapter
+- stores the result as an `asr` transcript with timestamped segments when the provider returns them
+
+Provider API keys are decrypted only inside the worker process and are not copied into task results. Bilibili cookies are passed to media tools through temporary files/configs and are removed after each extraction attempt.
 
 ## Current status
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiItemSummary } from "../api";
 import { useAppState } from "../state/appState";
@@ -40,6 +40,14 @@ function sortByRecent(items: ApiItemSummary[]) {
 function fallbackSummary(item: ApiItemSummary) {
   if (item.summary?.trim()) return item.summary.trim();
   return item.content_type === "bilibili_video" ? "视频条目，等待处理。" : "文章条目，等待处理。";
+}
+
+
+function normalizeProgress(progress?: number) {
+  if (typeof progress !== "number" || Number.isNaN(progress)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(progress)));
 }
 
 type SortMode = "recent" | "unread" | "type";
@@ -94,7 +102,7 @@ export function InboxPage() {
     setMovingId(itemId);
     try {
       const result = await client.moveItem(itemId, folderId);
-      setFeedback({ id: itemId, msg: `已移入 ${result.folder_name}` });
+      setFeedback({ id: itemId, msg: `已收藏到知识库：${result.folder_name}` });
       setItems(await refreshInbox(keyword));
       await loadFolders();
       setTimeout(() => setFeedback(null), 2000);
@@ -112,7 +120,7 @@ export function InboxPage() {
       {/* Top bar */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "14px 28px", borderBottom: "1px solid rgba(172,179,183,0.18)",
+        padding: "14px 28px", borderBottom: "1px solid rgba(var(--outline-rgb),0.18)",
         background: "var(--surface-lowest)", flexShrink: 0, gap: 16,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -205,25 +213,57 @@ function InboxRow({
   feedbackMsg: string | null;
   onMoveToFolder: (folderId: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [selectedFolder, setSelectedFolder] = useState(folders[0]?.id ?? "");
+  const navigate = useNavigate();
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
   const isVideo = item.content_type === "bilibili_video";
+  const progress = normalizeProgress(item.progress_percent);
+  const showProgress = progress > 0 && progress < 100;
+  const readHref = `/items/${item.id}?from=inbox`;
+
+  useEffect(() => {
+    if (!menuPosition) return;
+    const close = () => setMenuPosition(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [menuPosition]);
+
+  function openMenu(x: number, y: number) {
+    const menuWidth = 220;
+    const menuHeight = 132;
+    setMenuPosition({
+      x: Math.min(x, window.innerWidth - menuWidth - 12),
+      y: Math.min(y, window.innerHeight - menuHeight - 12),
+    });
+  }
+
+  function handleMove(folderId: string) {
+    setMenuPosition(null);
+    onMoveToFolder(folderId);
+  }
+
 
   return (
     <div
       style={{
-        borderBottom: "1px solid rgba(172,179,183,0.12)",
+        borderBottom: "1px solid rgba(var(--outline-rgb),0.12)",
         transition: "background 120ms ease",
-        background: expanded ? "var(--surface-container)" : undefined,
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openMenu(e.clientX, e.clientY);
       }}
     >
       {/* Main row */}
       <div
         style={{ display: "flex", alignItems: "flex-start", gap: 0, padding: "0 28px", cursor: "pointer" }}
-        onClick={() => setExpanded(!expanded)}
-        onMouseEnter={(e) => { if (!expanded) (e.currentTarget as HTMLDivElement).style.background = "var(--surface-low)"; }}
-        onMouseLeave={(e) => { if (!expanded) (e.currentTarget as HTMLDivElement).style.background = ""; }}
+        onClick={() => navigate(readHref)}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-low)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ""; }}
       >
         {/* Unread dot */}
         <div style={{
@@ -242,6 +282,37 @@ function InboxRow({
             </span>
             <span style={{ fontSize: 11, color: "var(--outline-v)" }}>·</span>
             <span className={statusChipClass(item.status)} style={{ fontSize: 11 }}>{statusLabel(item.status)}</span>
+            {showProgress && (
+              <span
+                className="chip chip-neutral"
+                style={{
+                  gap: 6,
+                  paddingInline: 8,
+                  fontSize: 11,
+                  color: "var(--on-surface-v)",
+                  borderColor: "rgba(var(--outline-rgb),0.22)",
+                  background: "rgba(var(--primary-rgb),0.05)",
+                }}
+              >
+                <span style={{
+                  width: 22,
+                  height: 4,
+                  borderRadius: 999,
+                  background: "rgba(var(--outline-rgb),0.16)",
+                  overflow: "hidden",
+                  flexShrink: 0,
+                }}>
+                  <span style={{
+                    display: "block",
+                    width: `${progress}%`,
+                    height: "100%",
+                    borderRadius: 999,
+                    background: "var(--primary)",
+                  }} />
+                </span>
+                {progress}%
+              </span>
+            )}
           </div>
 
           <h3 style={{
@@ -265,58 +336,77 @@ function InboxRow({
           <span style={{ fontSize: 11.5, color: "var(--outline)" }}>
             {new Date(item.updated_at ?? item.created_at ?? "").toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
           </span>
-          <span className="icon icon-sm" style={{ color: expanded ? "var(--primary)" : "var(--outline)" }}>
-            {expanded ? "keyboard_arrow_up" : "keyboard_arrow_down"}
-          </span>
+          <button
+            type="button"
+            className="topbar-icon-btn"
+            aria-label="更多操作"
+            title="更多操作"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openMenu(e.clientX, e.clientY);
+            }}
+            style={{ width: 28, height: 28 }}
+          >
+            <span className="icon icon-sm">more_horiz</span>
+          </button>
         </div>
       </div>
 
-      {/* Expanded actions */}
-      {expanded && (
-        <div style={{ padding: "0 28px 14px 50px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <Link
-            className="btn btn-primary btn-sm"
-            to={`/items/${item.id}`}
-            onClick={(e) => e.stopPropagation()}
-          >
+      {feedbackMsg && (
+        <div style={{ padding: "0 28px 10px 50px", fontSize: 12, color: "var(--success)", fontWeight: 600 }}>
+          ✓ {feedbackMsg}
+        </div>
+      )}
+
+      {menuPosition && (
+        <div
+          className="item-context-menu"
+          style={{ left: menuPosition.x, top: menuPosition.y }}
+          onClick={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          <button type="button" className="context-menu-item" onClick={() => navigate(readHref)}>
             <span className="icon icon-sm">auto_stories</span>
-            打开阅读
-          </Link>
+            阅读
+          </button>
 
           {folders.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <select
-                className="select"
-                style={{ padding: "6px 10px", fontSize: 12.5, width: "auto", minWidth: 120 }}
-                value={selectedFolder}
-                onChange={(e) => setSelectedFolder(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {folders.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
-              <button
-                className="btn btn-secondary btn-sm"
-                type="button"
-                disabled={isMoving || !selectedFolder}
-                onClick={(e) => { e.stopPropagation(); onMoveToFolder(selectedFolder); }}
-              >
+            <div className="context-menu-submenu">
+              <button type="button" className="context-menu-item">
                 <span className="icon icon-sm">drive_file_move</span>
-                {isMoving ? "移动中…" : "存入知识库"}
+                {isMoving ? "收藏中…" : "收藏到知识库"}
+                <span className="icon icon-sm context-menu-arrow">chevron_right</span>
               </button>
+              <div className="item-context-submenu" role="menu">
+                {folders.map((folder) => (
+                  <button
+                    key={folder.id}
+                    type="button"
+                    className="context-menu-item"
+                    disabled={isMoving}
+                    onClick={() => handleMove(folder.id)}
+                  >
+                    <span className="icon icon-sm">folder</span>
+                    {folder.name}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
           {folders.length === 0 && (
-            <Link className="btn btn-ghost btn-sm" to="/library" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="context-menu-item" onClick={() => navigate("/library")}>
               <span className="icon icon-sm">create_new_folder</span>
-              先去知识库建文件夹
-            </Link>
+              先创建收藏夹
+            </button>
           )}
 
-          {feedbackMsg && (
-            <span style={{ fontSize: 12, color: "var(--success)", fontWeight: 600 }}>✓ {feedbackMsg}</span>
+          {item.source_url && (
+            <a className="context-menu-item" href={item.source_url} target="_blank" rel="noreferrer">
+              <span className="icon icon-sm">open_in_new</span>
+              打开原文
+            </a>
           )}
         </div>
       )}

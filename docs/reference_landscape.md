@@ -219,6 +219,78 @@ Recommended role in OneRadar:
 - Prefer evaluating it alongside BBDown and yt-dlp if the initial Bilibili ingestion path needs a more integrated auth-aware helper.
 - Do not treat it as an approved product dependency until its code, runtime domains, and credential handling are reviewed in the context of OneRadar's security model.
 
+### 3. Podcast Search And RSS
+
+#### Apple iTunes Search API
+
+Docs: [iTunes Search API](https://performance-partners.apple.com/resources/documentation/itunes-store-web-service-search-api/)
+
+Use for:
+
+- Podcast search without a user-provided API key.
+- Resolving podcast search results to RSS `feedUrl` values when Apple exposes them.
+
+Recommended role in OneRadar:
+
+- MVP podcast discovery provider.
+- Use server-side proxy endpoints so the desktop UI does not depend directly on Apple response shape.
+
+Limitations:
+
+- Apple search coverage and `feedUrl` availability are not guaranteed for every podcast.
+- Keep manual RSS input or future Podcast Index integration available as fallback paths.
+
+#### Podcast RSS Enclosures
+
+Use for:
+
+- Discovering episode metadata.
+- Locating episode audio through RSS `<enclosure>` URLs.
+
+Recommended role in OneRadar:
+
+- Store user-managed podcast RSS subscriptions.
+- Never download audio just because a feed is subscribed.
+- Download and persist audio only after a user explicitly adds an episode to Inbox / later reading.
+
+#### bilidown
+
+Repo: [iuroc/bilidown](https://github.com/iuroc/bilidown)
+
+License:
+
+- Apache-2.0
+
+Why it matters:
+
+- It is a user-facing Bilibili downloader with an explicit QR-code login flow, which makes it more useful as a product interaction reference than command-line fetchers.
+- It demonstrates a practical shape for letting a desktop user authorize Bilibili access without manually copying browser cookies.
+- Its supported URL surface includes single videos, series, collections, favorites, and watch-later style inputs, which is useful when deciding how far OneRadar should or should not expand beyond manual single-link ingestion.
+
+What to reuse as inspiration:
+
+- Application-level QR-code login UX: generate QR code, show scan status, poll login state, save cookies after confirmation.
+- Clear login-state feedback instead of asking the user to infer whether a pasted cookie is valid.
+- Treating authenticated Bilibili access as an explicit user action, not background browser session scraping.
+
+What not to copy directly:
+
+- Downloader-first scope, batch download management, tray-centric task behavior, and broad collection/favorite import flows are outside OneRadar V1.
+- Go plus SQLite application architecture does not match the preferred OneRadar FastAPI plus Tauri stack.
+- Direct code reuse still requires targeted review even though the license is permissive.
+
+Operational cautions:
+
+- QR-code login returns full-session credentials such as `SESSDATA` and `bili_jct`, and may also return refresh-token data depending on the endpoint behavior.
+- Store successful QR-login credentials only in the server-side integration settings layer, keep API responses masked, and redact logs.
+- QR-code URLs and keys are short-lived login material; do not persist them beyond the active login attempt.
+
+Recommended role in OneRadar:
+
+- Use as the main product reference for Bilibili QR-code authorization.
+- Keep BBDown and yt-dlp as media/subtitle/audio fetch references; keep bilidown as the login and authenticated-user-flow reference.
+- Prefer QR-code login as the recommended Cookie acquisition path in the desktop UI, with manual paste and local Chromium Cookie import retained as fallbacks.
+
 ### 3. Transcription
 
 #### faster-whisper
@@ -258,6 +330,7 @@ For V1, OneRadar should combine ideas like this:
 - Scope discipline from Shiori.
 - Article parsing from Readability plus Trafilatura.
 - Bilibili ingestion from BBDown or Bilibili All In One, with yt-dlp as a generic fallback.
+- Bilibili login UX from bilidown-style QR-code authorization, while keeping credential storage inside OneRadar's server-side integration settings.
 - Transcription abstraction that can target subtitles first, then ASR via provider adapters.
 
 ## Licensing Guidance

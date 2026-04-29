@@ -4,7 +4,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.annotations import HighlightEntry, NoteEntry
 from app.schemas.common import ContentType, ItemStatus, ReadingState, SummaryType
+from app.schemas.organization import CollectionEntry, TagEntry
 
 
 class ImportItemRequest(BaseModel):
@@ -36,6 +38,8 @@ class ItemListEntry(BaseModel):
     is_inbox: bool = True
     is_read: bool
     is_favorited: bool
+    progress_percent: float = Field(default=0, ge=0, le=100)
+    last_read_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     summary: str | None = None
@@ -72,28 +76,6 @@ class SummaryEntry(BaseModel):
     version: int = 1
 
 
-class HighlightEntry(BaseModel):
-    id: str
-    quote_text: str
-    color: str | None = None
-    note_id: str | None = None
-
-
-class NoteEntry(BaseModel):
-    id: str
-    content: str
-    highlight_id: str | None = None
-
-
-class TagEntry(BaseModel):
-    name: str
-
-
-class CollectionEntry(BaseModel):
-    id: str
-    name: str
-
-
 class ItemDetailResponse(BaseModel):
     uid: str
     id: str
@@ -115,8 +97,19 @@ class ItemDetailResponse(BaseModel):
     reading_state: ReadingState
 
 
+class ReadingStateUpdateRequest(BaseModel):
+    progress_percent: float | None = Field(default=None, ge=0, le=100)
+    last_read_at: datetime | None = None
+    is_archived: bool | None = None
+    is_favorited: bool | None = None
+    last_position_type: str | None = None
+    last_position_value: str | None = None
+
+
 class ItemReprocessRequest(BaseModel):
-    steps: list[str] = Field(default_factory=lambda: ["extract", "transcribe", "summarize", "index"])
+    steps: list[str] = Field(
+        default_factory=lambda: ["extract", "transcribe", "summarize", "index"]
+    )
 
 
 class ItemReprocessResponse(BaseModel):

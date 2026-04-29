@@ -59,58 +59,45 @@ When needed, use explicit query parameters such as:
 
 Do not rely on implicit ordering.
 
-## 3. Authentication Model
+## 3. Single-User Workspace Model
 
-V1 should use a simple private-deployment auth model.
+V1 is a single-user desktop reader and must not expose a user-facing account or login flow.
 
 Recommended default:
 
-- Login returns an access token.
-- Client sends `Authorization: Bearer <token>`.
-- Token storage is handled by the desktop client.
+- Desktop configures the server address and calls a workspace bootstrap endpoint.
+- The backend keeps an internal primary user only as an ownership boundary for rows.
+- API examples omit login and token headers in V1.
+- If deployment-level protection is needed, put it outside the V1 product UX, for example behind a reverse proxy or local network boundary.
 
-Alternative server-managed session cookies are acceptable if the UI is ever served directly from the backend, but the desktop-first API should not depend on browser cookies.
+### 3.1 Workspace Bootstrap
 
-### 3.1 Login Flow
+Recommended V1 workspace endpoints:
 
-Recommended V1 auth endpoints:
-
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
+- `GET /api/auth/bootstrap`
 - `GET /api/auth/me`
 
-### 3.2 Login Request
+`/api/auth/me` returns the internal primary user for diagnostics and ownership context. It is not a login session endpoint.
 
-```http
-POST /api/auth/login
-Content-Type: application/json
-```
+### 3.2 Bootstrap Response
 
 ```json
 {
-  "username": "admin",
-  "password": "secret"
-}
-```
-
-### 3.3 Login Response
-
-```json
-{
-  "access_token": "eyJhbGciOi...",
-  "token_type": "Bearer",
-  "expires_in": 86400,
-  "user": {
+  "workspace_name": "OneRadar",
+  "single_user_mode": true,
+  "ui_locale": "zh-CN",
+  "requires_login": false,
+  "default_inbox_folder": {
     "id": "uuid",
-    "username": "admin"
+    "name": "稍后阅读",
+    "is_builtin": true,
+    "item_count": 0
+  },
+  "primary_user": {
+    "id": "uuid",
+    "username": "local"
   }
 }
-```
-
-### 3.4 Auth Headers
-
-```http
-Authorization: Bearer eyJhbGciOi...
 ```
 
 ## 4. Error Format
@@ -189,14 +176,13 @@ Response:
 
 ## 6. Unified Import Flow
 
-V1 should expose a single import entrypoint for both article and Bilibili URLs.
+V1 exposes a single import entrypoint for article and Bilibili URLs. Podcast episodes are imported through the podcast API because their identity comes from RSS episode metadata, not only from a pasted URL.
 
 ### 6.1 Create Import Task
 
 ```http
 POST /api/items/import
 Content-Type: application/json
-Authorization: Bearer <token>
 ```
 
 Request:
@@ -250,7 +236,6 @@ Example conflict-safe response:
 
 ```http
 GET /api/items?keyword=reader&tag=knowledge&page=1&page_size=20
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -280,7 +265,6 @@ Response:
 
 ```http
 GET /api/items/{id}
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -320,7 +304,6 @@ Response:
 
 ```http
 POST /api/items/{id}/reprocess
-Authorization: Bearer <token>
 ```
 
 Request:
@@ -341,13 +324,30 @@ Response:
 }
 ```
 
+### 7.4 Generate Item Summary
+
+```http
+POST /api/items/{id}/summaries/generate
+```
+
+Creates a `generate_summary` task for the item. The worker resolves the enabled summarization provider, reads the best available source text from parsed article text, transcript text, or podcast episode summary, and persists a refreshed `short` summary.
+
+Response:
+
+```json
+{
+  "item_id": "uuid",
+  "task_id": "uuid",
+  "status": "pending"
+}
+```
+
 ## 8. Reading and Content Assets
 
 ### 8.1 Parsed Document
 
 ```http
 GET /api/items/{id}/document
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -366,7 +366,6 @@ Response:
 
 ```http
 GET /api/items/{id}/transcript
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -391,7 +390,6 @@ Response:
 
 ```http
 GET /api/items/{id}/summaries
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -413,7 +411,6 @@ Response:
 
 ```http
 GET /api/items/{id}/related
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -430,7 +427,6 @@ Response:
 
 ```http
 GET /api/tasks?status=failed&page=1&page_size=20
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -458,14 +454,12 @@ Response:
 
 ```http
 GET /api/tasks/{id}
-Authorization: Bearer <token>
 ```
 
 ### 9.3 Retry Task
 
 ```http
 POST /api/tasks/{id}/retry
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -485,7 +479,6 @@ Provider management is a core V1 API surface.
 
 ```http
 GET /api/providers
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -498,6 +491,7 @@ Response:
       "provider_name": "Doubao",
       "provider_type": "doubao",
       "base_url": "https://api.example.com",
+      "api_key_configured": true,
       "chat_model": "doubao-chat",
       "embedding_model": "doubao-embed",
       "transcription_model": "doubao-transcribe",
@@ -511,7 +505,6 @@ Response:
 
 ```http
 POST /api/providers
-Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
@@ -537,29 +530,59 @@ Response:
   "id": "uuid",
   "provider_name": "Custom OpenAI Compatible",
   "provider_type": "openai_compatible",
+  "api_key_configured": true,
   "is_enabled": true
 }
 ```
+
+## 6.3 Podcast APIs
+
+Podcast subscriptions are a scoped RSS exception. Subscribing only discovers episodes; it never downloads audio or triggers AI processing.
+
+```http
+GET /api/podcasts/search?q=凹凸电波&country=US&limit=12
+```
+
+Searches Apple iTunes Search API and returns podcast results with `feed_url` when Apple exposes one.
+
+```http
+GET /api/podcasts/subscriptions
+POST /api/podcasts/subscriptions
+DELETE /api/podcasts/subscriptions/{subscription_id}
+```
+
+Manages user podcast RSS subscriptions.
+
+```http
+GET /api/podcasts/episodes?limit=80
+```
+
+Aggregates episodes from subscribed RSS feeds, sorted by publish time descending.
+
+```http
+POST /api/podcasts/episodes/import
+```
+
+Creates a `podcast_episode` content item in Inbox / later reading. The request includes feed URL, episode title, GUID, publish time, enclosure URL, and optional enclosure metadata. Dedupe is based on feed URL plus GUID, falling back to enclosure URL. Only this explicit import step may download and persist audio.
+
+Provider API responses must never echo raw API keys. The server stores provider keys in `api_key_encrypted` and only exposes `api_key_configured` to the client.
 
 ### 10.3 Update Provider
 
 ```http
 PUT /api/providers/{id}
-Authorization: Bearer <token>
 ```
 
 ### 10.4 Delete Provider
 
 ```http
 DELETE /api/providers/{id}
-Authorization: Bearer <token>
 ```
 
 ### 10.5 Test Provider Connection
 
 ```http
 POST /api/providers/{id}/test
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -575,7 +598,6 @@ Response:
 
 ```http
 GET /api/providers/presets
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -601,7 +623,6 @@ Response:
 
 ```http
 GET /api/search?q=whisper&page=1&page_size=20
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -629,7 +650,6 @@ Response:
 
 ```http
 GET /api/search/suggestions?q=whis
-Authorization: Bearer <token>
 ```
 
 Response:
@@ -648,7 +668,6 @@ Annotations are first-class objects, not UI-only state.
 
 ```http
 POST /api/items/{id}/highlights
-Authorization: Bearer <token>
 ```
 
 Request:
@@ -667,7 +686,16 @@ Response:
 ```json
 {
   "id": "uuid",
-  "item_id": "uuid"
+  "item_id": "uuid",
+  "quote_text": "important sentence",
+  "anchor_type": "article_text",
+  "start_anchor": "p3",
+  "end_anchor": "p3",
+  "start_offset": null,
+  "end_offset": null,
+  "segment_index": null,
+  "color": "yellow",
+  "note_id": null
 }
 ```
 
@@ -675,14 +703,12 @@ Response:
 
 ```http
 GET /api/items/{id}/highlights
-Authorization: Bearer <token>
 ```
 
 ### 12.3 Create Note
 
 ```http
 POST /api/items/{id}/notes
-Authorization: Bearer <token>
 ```
 
 Request:
@@ -698,21 +724,35 @@ Request:
 
 ```http
 PUT /api/notes/{id}
-Authorization: Bearer <token>
+```
+
+Request:
+
+```json
+{
+  "content": "Updated note"
+}
 ```
 
 ### 12.5 Delete Note
 
 ```http
 DELETE /api/notes/{id}
-Authorization: Bearer <token>
+```
+
+Response:
+
+```json
+{
+  "id": "uuid",
+  "deleted": true
+}
 ```
 
 ### 12.6 Tags
 
 ```http
 POST /api/items/{id}/tags
-Authorization: Bearer <token>
 ```
 
 Request:
@@ -723,13 +763,23 @@ Request:
 }
 ```
 
+Response:
+
+```json
+{
+  "items": [
+    { "id": "research", "name": "research" },
+    { "id": "video", "name": "video" }
+  ]
+}
+```
+
 ## 13. Collections APIs
 
 ### 13.1 Create Collection
 
 ```http
 POST /api/collections
-Authorization: Bearer <token>
 ```
 
 Request:
@@ -745,21 +795,34 @@ Request:
 
 ```http
 GET /api/collections
-Authorization: Bearer <token>
+```
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "name": "AI Reading",
+      "description": "Saved materials about AI",
+      "is_favorite": false,
+      "item_count": 3
+    }
+  ]
+}
 ```
 
 ### 13.3 Get Collection
 
 ```http
 GET /api/collections/{id}
-Authorization: Bearer <token>
 ```
 
 ### 13.4 Add Item to Collection
 
 ```http
 POST /api/collections/{id}/items
-Authorization: Bearer <token>
 ```
 
 Request:
@@ -770,11 +833,30 @@ Request:
 }
 ```
 
+Response:
+
+```json
+{
+  "id": "uuid",
+  "name": "AI Reading",
+  "item_count": 4
+}
+```
+
 ### 13.5 Remove Item from Collection
 
 ```http
 DELETE /api/collections/{id}/items/{item_id}
-Authorization: Bearer <token>
+```
+
+Response:
+
+```json
+{
+  "id": "uuid",
+  "name": "AI Reading",
+  "item_count": 3
+}
 ```
 
 ## 14. Reading State APIs
@@ -783,7 +865,6 @@ Authorization: Bearer <token>
 
 ```http
 PUT /api/items/{id}/reading-state
-Authorization: Bearer <token>
 ```
 
 Request:
@@ -806,7 +887,6 @@ If needed, the UI can use the same reading-state endpoint rather than separate r
 
 ```http
 GET /api/settings/integrations/bilibili
-Authorization: Bearer <token>
 ```
 
 Response should return:
@@ -816,11 +896,14 @@ Response should return:
 - masked previews only
 - whether the saved cookie set is ready for authenticated subtitle fetch
 
+For QR-code login, readiness is based on `SESSDATA` plus `bili_jct`; `buvid3` remains useful when imported from a browser but is not required because Bilibili Web QR login may not return it.
+
+The Bilibili integration settings also include `visual_enhancement_enabled`. This flag is independent from Cookie enablement: when it is true, successful Bilibili import still uses subtitle-first/ASR-second text as the canonical transcript, then optionally runs visual frame analysis as a non-blocking enhancement.
+
 ### 15.2 Update Bilibili Integration Settings
 
 ```http
 PUT /api/settings/integrations/bilibili
-Authorization: Bearer <token>
 ```
 
 Example request:
@@ -842,10 +925,62 @@ Notes:
 
 ```http
 POST /api/settings/integrations/bilibili/parse-cookie
-Authorization: Bearer <token>
 ```
 
 Use this for import-page previews when the user pastes a full browser cookie string and wants to verify which fields can be extracted before saving.
+
+### 15.4 Create Bilibili QR Login
+
+```http
+POST /api/settings/integrations/bilibili/qrcode
+```
+
+Response:
+
+```json
+{
+  "url": "https://passport.bilibili.com/h5-app/passport/login/scan?...",
+  "qrcode_key": "32-character-key",
+  "expires_in_seconds": 180
+}
+```
+
+The desktop client renders `url` as a local QR code and keeps `qrcode_key` only for polling. Do not persist the QR URL or key as integration credentials.
+
+### 15.5 Poll Bilibili QR Login
+
+```http
+POST /api/settings/integrations/bilibili/qrcode/poll
+```
+
+Request:
+
+```json
+{
+  "qrcode_key": "32-character-key"
+}
+```
+
+Response:
+
+```json
+{
+  "code": 86090,
+  "state": "scanned",
+  "message": "已扫码，等待确认",
+  "saved_cookie": null
+}
+```
+
+State values:
+
+- `waiting`: not scanned yet
+- `scanned`: scanned but not confirmed on the phone
+- `confirmed`: login confirmed and server-side integration cookies saved
+- `expired`: QR code expired
+- `failed`: polling failed or returned an unexpected state
+
+On `confirmed`, the API stores any returned Bilibili cookies through the existing integration settings path and returns only the masked settings object in `saved_cookie`.
 
 ## 16. Task-Oriented Flows
 
@@ -869,6 +1004,11 @@ Use this for import-page previews when the user pastes a full browser cookie str
 6. Transcript is stored with timestamped segments.
 7. Summary and outline are generated.
 8. Client opens the item and can jump by timestamp.
+
+Implementation note:
+
+- ASR uses the enabled provider with a configured `transcription_model`.
+- Task results may include provider/model names and `transcript_type = "asr"`, but must not include raw provider API keys.
 
 ### 16.3 Failed Task Recovery Flow
 

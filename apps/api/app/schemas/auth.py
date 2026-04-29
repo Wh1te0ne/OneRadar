@@ -8,26 +8,10 @@ from app.schemas.common import ThemeMode
 from app.schemas.folders import FolderEntry
 
 
-class LoginRequest(BaseModel):
-    username: str | None = None
-    password: str | None = None
-
-
 class AuthUser(BaseModel):
     id: str
     username: str
     created_at: datetime
-
-
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "Bearer"
-    expires_in: int
-    user: AuthUser
-
-
-class LogoutResponse(BaseModel):
-    ok: bool
 
 
 class WorkspaceBootstrapResponse(BaseModel):
@@ -41,4 +25,6 @@ class WorkspaceBootstrapResponse(BaseModel):
     default_inbox_folder: FolderEntry
     primary_user: AuthUser
     requires_login: bool = False
-    capabilities: list[str] = Field(default_factory=lambda: ["items", "folders", "providers", "tasks", "settings"])
+    capabilities: list[str] = Field(
+        default_factory=lambda: ["items", "folders", "providers", "tasks", "settings"]
+    )

@@ -25,12 +25,16 @@ Desktop.ini
 # Runtime data
 .coverage
 *.log
+*.db
 data/
 tmp/
 output/
+.tmp-*/
 # Local tooling
 .claude/
 .pydeps/
+.tmp-pip-install/
+.tmp-pytest*/
 .tmp-pip/
 .venv-api/
 _tmp_*.txt

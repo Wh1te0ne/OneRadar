@@ -20,6 +20,8 @@ def reset_store() -> None:
     STORE.providers.clear()
     STORE.folders.clear()
     STORE.integrations.clear()
+    STORE.podcast_subscriptions.clear()
+    STORE.collections.clear()
     yield
     STORE.users.clear()
     STORE.items.clear()
@@ -27,3 +29,5 @@ def reset_store() -> None:
     STORE.providers.clear()
     STORE.folders.clear()
     STORE.integrations.clear()
+    STORE.podcast_subscriptions.clear()
+    STORE.collections.clear()

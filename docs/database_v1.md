@@ -27,6 +27,7 @@ An item may originate from:
 
 - an article URL
 - a Bilibili video URL
+- an explicitly imported podcast episode from a subscribed podcast RSS feed
 
 The item type decides which processing pipeline runs, but the user-facing record remains unified.
 
@@ -154,11 +155,13 @@ Recommended `content_type` values:
 
 - `article`
 - `bilibili_video`
+- `podcast_episode`
 
 Recommended `source_platform` values:
 
 - `web`
 - `bilibili`
+- `podcast`
 
 Recommended `status` values:
 
@@ -180,6 +183,13 @@ Rationale:
 - `normalized_url` is the primary dedupe key for manually submitted links.
 - `status` is useful for inbox and retry UX.
 - `raw_meta` holds source-specific metadata without forcing schema churn.
+
+Podcast note:
+
+- Podcast subscriptions can initially be stored as service configuration under `integration_settings.integration_key = 'podcasts'`.
+- Imported podcast episodes are normal `content_items` with `content_type = 'podcast_episode'`.
+- Their `normalized_url` should be a stable synthetic episode identity derived from feed URL plus GUID, falling back to enclosure URL.
+- Their `raw_meta.podcast` stores feed URL, podcast title, episode link, enclosure URL, enclosure type/length, image URL, and persisted audio path.
 
 ---
 
@@ -208,6 +218,14 @@ Recommended `snapshot_type` values:
 - `bilibili_subtitle`
 - `bilibili_media_manifest`
 - `bilibili_audio`
+- `podcast_audio`
+
+Podcast audio rule:
+
+- Podcast RSS subscriptions do not create audio snapshots.
+- A `podcast_audio` snapshot is created only after the user explicitly adds an episode to Inbox / later reading.
+- The snapshot `storage_path` points at the persisted audio artifact used for future reprocessing.
+- Deleting the `content_items` row for a podcast episode should delete the persisted audio artifact as part of item cleanup.
 
 Indexes:
 

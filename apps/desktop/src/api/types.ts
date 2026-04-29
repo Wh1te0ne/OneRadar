@@ -56,20 +56,62 @@ export type ApiProvider = {
   id: string;
   provider_name: string;
   provider_type: string;
+  capability?: "llm" | "asr";
   base_url?: string | null;
+  api_key_configured?: boolean;
   chat_model?: string | null;
   embedding_model?: string | null;
   transcription_model?: string | null;
+  transcription_app_id?: string | null;
+  transcription_access_token_configured?: boolean;
+  transcription_secret_key_configured?: boolean;
   is_enabled: boolean;
   last_test_status?: string | null;
   last_tested_at?: string | null;
+};
+
+export type ApiProviderPayload = {
+  provider_name: string;
+  provider_type: "openai_compatible" | "doubao" | "custom";
+  capability?: "llm" | "asr";
+  base_url?: string | null;
+  api_key?: string | null;
+  chat_model?: string | null;
+  embedding_model?: string | null;
+  transcription_model?: string | null;
+  transcription_app_id?: string | null;
+  transcription_access_token?: string | null;
+  transcription_secret_key?: string | null;
+  is_enabled: boolean;
+};
+
+export type ApiProviderTestResponse = {
+  provider_id: string;
+  ok: boolean;
+  latency_ms: number;
+};
+
+export type ApiReadingState = {
+  progress_percent: number;
+  last_read_at?: string | null;
+  is_archived: boolean;
+  is_favorited: boolean;
+};
+
+export type ApiReadingStateUpdatePayload = {
+  progress_percent?: number;
+  last_read_at?: string | null;
+  is_archived?: boolean;
+  is_favorited?: boolean;
+  last_position_type?: string;
+  last_position_value?: string;
 };
 
 export type ApiItemSummary = {
   uid: string;
   id: string;
   title: string;
-  content_type: "article" | "bilibili_video";
+  content_type: "article" | "bilibili_video" | "podcast_episode";
   source_url: string;
   status: "pending" | "processing" | "completed" | "failed";
   folder_id: string;
@@ -77,14 +119,31 @@ export type ApiItemSummary = {
   is_inbox: boolean;
   is_read: boolean;
   is_favorited: boolean;
+  progress_percent: number;
+  last_read_at?: string | null;
   created_at: string;
   updated_at: string;
   summary?: string;
   tags?: string[];
 };
 
+export type ApiTag = {
+  id: string;
+  name: string;
+};
+
+export type ApiCollection = {
+  id: string;
+  name: string;
+  description?: string | null;
+  is_favorite: boolean;
+  item_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type ApiSummary = {
-  summary_type: "one_line" | "short" | "outline" | "key_points";
+  summary_type: "one_line" | "short" | "outline" | "key_points" | "visual_context";
   content: string;
   model_name?: string | null;
   version?: number;
@@ -107,11 +166,36 @@ export type ApiTranscript = {
   model_name?: string | null;
 };
 
+export type ApiHighlight = {
+  id: string;
+  item_id: string;
+  quote_text: string;
+  anchor_type: "article_text" | "transcript_segment" | string;
+  start_anchor?: string | null;
+  end_anchor?: string | null;
+  start_offset?: number | null;
+  end_offset?: number | null;
+  segment_index?: number | null;
+  color?: string | null;
+  note_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ApiNote = {
+  id: string;
+  item_id: string;
+  content: string;
+  highlight_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type ApiItemDetail = {
   uid: string;
   id: string;
   title: string;
-  content_type: "article" | "bilibili_video";
+  content_type: "article" | "bilibili_video" | "podcast_episode";
   source_url: string;
   status: "pending" | "processing" | "completed" | "failed";
   folder_id: string;
@@ -121,6 +205,14 @@ export type ApiItemDetail = {
     author_name?: string | null;
     published_at?: string | null;
     site_name?: string | null;
+    podcast?: {
+      feed_url?: string | null;
+      podcast_title?: string | null;
+      episode_link?: string | null;
+      enclosure_url?: string | null;
+      enclosure_type?: string | null;
+      audio_storage_path?: string | null;
+    };
   };
   parsed_document: {
     plain_text: string;
@@ -130,18 +222,12 @@ export type ApiItemDetail = {
   } | null;
   transcript?: ApiTranscript | null;
   summaries: ApiSummary[];
-  highlights: Array<{ id: string; quote_text?: string; text?: string; color?: string | null; note_id?: string | null }>;
-  notes: Array<{ id: string; content?: string; text?: string; highlight_id?: string | null }>;
-  tags: Array<{ name: string } | string>;
-  collections: Array<{ id: string; name: string }>;
-  reading_state: {
-    progress_percent: number;
-    last_read_at?: string | null;
-    is_archived: boolean;
-    is_favorited: boolean;
-  };
+  highlights: ApiHighlight[];
+  notes: ApiNote[];
+  tags: ApiTag[];
+  collections: ApiCollection[];
+  reading_state: ApiReadingState;
 };
-
 
 export type ApiSecretStatus = {
   configured: boolean;
@@ -152,6 +238,7 @@ export type ApiBilibiliIntegrationSettings = {
   integration_key: string;
   display_name: string;
   is_enabled: boolean;
+  visual_enhancement_enabled: boolean;
   has_cookie_values: boolean;
   ready_for_authenticated_fetch: boolean;
   sessdata_configured: boolean;
@@ -172,13 +259,26 @@ export type ApiBilibiliCookieParseResponse = {
   extracted_count: number;
 };
 
+export type ApiBilibiliQrcodeGenerateResponse = {
+  url: string;
+  qrcode_key: string;
+  expires_in_seconds: number;
+};
+
+export type ApiBilibiliQrcodePollResponse = {
+  code: number;
+  state: "waiting" | "scanned" | "confirmed" | "expired" | "failed";
+  message: string;
+  saved_cookie?: ApiBilibiliIntegrationSettings | null;
+};
+
 export type ApiImportResponse = {
   uid: string;
   item_id: string;
   existing_uid?: string | null;
   task_id?: string | null;
   status: string;
-  content_type: "article" | "bilibili_video";
+  content_type: "article" | "bilibili_video" | "podcast_episode";
   folder_id: string;
   folder_name: string;
   is_duplicate: boolean;
@@ -191,6 +291,22 @@ export type ApiMoveItemResponse = {
   is_inbox: boolean;
 };
 
+export type ApiItemTaskResponse = {
+  item_id: string;
+  task_id: string;
+  status: string;
+};
+
+export type ApiTaskEntry = {
+  id: string;
+  item_id: string;
+  task_type: string;
+  status: "pending" | "running" | "retrying" | "success" | "failed" | "canceled";
+  attempt_count: number;
+  error_message?: string | null;
+  created_at: string;
+};
+
 export type ApiCreateFolderResponse = ApiFolderEntry;
 
 export type ApiListResponse<T> = {
@@ -200,4 +316,47 @@ export type ApiListResponse<T> = {
   total?: number;
 };
 
+export type ApiPodcastSearchItem = {
+  itunes_id?: string | null;
+  title: string;
+  author?: string | null;
+  feed_url?: string | null;
+  page_url?: string | null;
+  image_url?: string | null;
+  genre?: string | null;
+  episode_count?: number | null;
+  is_subscribable: boolean;
+};
+
+export type ApiPodcastSubscription = {
+  id: string;
+  feed_url: string;
+  title: string;
+  author?: string | null;
+  image_url?: string | null;
+  itunes_id?: string | null;
+  page_url?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiPodcastEpisode = {
+  id: string;
+  subscription_id?: string | null;
+  feed_url: string;
+  podcast_title: string;
+  title: string;
+  guid?: string | null;
+  link?: string | null;
+  summary?: string | null;
+  author?: string | null;
+  published_at?: string | null;
+  duration_seconds?: number | null;
+  enclosure_url: string;
+  enclosure_type?: string | null;
+  enclosure_length?: number | null;
+  image_url?: string | null;
+  is_imported: boolean;
+  item_id?: string | null;
+};
 

@@ -173,7 +173,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setFolders(response.items);
       return response.items;
     } catch (error) {
-      setLastError(error instanceof ApiError ? error.message : "读取文件夹失败");
+      setLastError(error instanceof ApiError ? error.message : "读取知识库失败");
       return [];
     }
   };

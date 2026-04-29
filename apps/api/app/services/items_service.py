@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
@@ -8,8 +9,22 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
-from app.db.models import ContentItem, ContentParsedDocument, ProcessingTask, Summary, Transcript as TranscriptModel
+from app.db.models import (
+    CollectionItem,
+    ContentItem,
+    ContentItemTag,
+    ContentParsedDocument,
+    ProcessingTask,
+    Summary,
+)
+from app.db.models import (
+    ReadingState as ReadingStateModel,
+)
+from app.db.models import (
+    Transcript as TranscriptModel,
+)
 from app.db.session import SessionLocal
+from app.schemas.annotations import HighlightEntry, NoteEntry
 from app.schemas.common import ContentType, ItemStatus, ReadingState, TaskStatus
 from app.schemas.items import (
     ImportItemResponse,
@@ -19,10 +34,11 @@ from app.schemas.items import (
     ItemListResponse,
     ItemReprocessResponse,
     ParsedDocument,
+    ReadingStateUpdateRequest,
     SummaryEntry,
-    TagEntry,
     Transcript,
 )
+from app.schemas.organization import CollectionEntry, TagEntry
 from app.services.db_access import get_primary_user
 from app.services.folders_service import (
     INBOX_FOLDER_ID,
@@ -34,7 +50,6 @@ from app.services.folders_service import (
 )
 from app.services.store import STORE, now_utc, seed_store
 from app.services.url_safety import validate_public_http_url
-
 
 DEFAULT_PARSED_DOCUMENT = {
     "plain_text": "",
@@ -119,7 +134,8 @@ def _normalize_content_type(source_hint: str | None, url: str) -> ContentType:
     normalized_hint = (source_hint or "").strip().casefold()
     normalized_url = url.casefold()
     if normalized_hint in {"bilibili", "bilibili_video"} or any(
-        host in normalized_url for host in ("bilibili.com", "b23.tv", "bili22.cn", "bili23.cn", "bili2233.cn")
+        host in normalized_url
+        for host in ("bilibili.com", "b23.tv", "bili22.cn", "bili23.cn", "bili2233.cn")
     ):
         return ContentType.bilibili_video
     return ContentType.article
@@ -147,6 +163,7 @@ def _item_meta(item: ContentItem) -> dict[str, object]:
         "author_name": item.author_name or raw_meta.get("author_name"),
         "published_at": item.published_at or raw_meta.get("published_at"),
         "site_name": raw_meta.get("site_name") or metadata.get("site_name"),
+        "podcast": raw_meta.get("podcast"),
     }
 
 
@@ -185,7 +202,10 @@ def _latest_transcript_record(item: ContentItem) -> TranscriptModel | None:
     transcripts = list(item.transcripts or [])
     if not transcripts:
         return None
-    return max(transcripts, key=lambda record: (record.created_at, record.updated_at, str(record.id)))
+    return max(
+        transcripts,
+        key=lambda record: (record.created_at, record.updated_at, str(record.id)),
+    )
 
 
 def _item_transcript(item: ContentItem) -> Transcript | None:
@@ -209,7 +229,10 @@ def _item_transcript(item: ContentItem) -> Transcript | None:
 
 def _sorted_summary_records(item: ContentItem) -> list[Summary]:
     records = list(item.summaries or [])
-    return sorted(records, key=lambda record: (record.summary_type, record.version, record.created_at, str(record.id)))
+    return sorted(
+        records,
+        key=lambda record: (record.summary_type, record.version, record.created_at, str(record.id)),
+    )
 
 
 def _item_summaries(item: ContentItem) -> list[SummaryEntry]:
@@ -231,24 +254,82 @@ def _item_summaries(item: ContentItem) -> list[SummaryEntry]:
 
 
 def _item_highlights(item: ContentItem) -> list[dict[str, object]]:
+    records = list(item.highlights or [])
+    if records:
+        return [
+            HighlightEntry(
+                id=str(record.id),
+                item_id=str(record.content_item_id),
+                quote_text=record.quote_text,
+                anchor_type=record.anchor_type,
+                start_anchor=record.start_anchor,
+                end_anchor=record.end_anchor,
+                start_offset=record.start_offset,
+                end_offset=record.end_offset,
+                segment_index=record.segment_index,
+                color=record.color,
+                note_id=str(record.note_id) if record.note_id else None,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            ).model_dump()
+            for record in sorted(
+                records,
+                key=lambda entry: (entry.created_at, str(entry.id)),
+                reverse=True,
+            )
+        ]
     raw_meta = item.raw_meta or {}
-    return list(raw_meta.get("highlights") or [])
+    return [
+        {**highlight, "item_id": str(item.id)}
+        for highlight in list(raw_meta.get("highlights") or [])
+    ]
 
 
 def _item_notes(item: ContentItem) -> list[dict[str, object]]:
+    records = list(item.notes or [])
+    if records:
+        return [
+            NoteEntry(
+                id=str(record.id),
+                item_id=str(record.content_item_id),
+                content=record.content,
+                highlight_id=str(record.highlight_id) if record.highlight_id else None,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            ).model_dump()
+            for record in sorted(
+                records,
+                key=lambda entry: (entry.created_at, str(entry.id)),
+                reverse=True,
+            )
+        ]
     raw_meta = item.raw_meta or {}
-    return list(raw_meta.get("notes") or [])
+    return [{**note, "item_id": str(item.id)} for note in list(raw_meta.get("notes") or [])]
 
 
 def _item_tags(item: ContentItem) -> list[TagEntry]:
+    item_tags = list(item.item_tags or [])
+    if item_tags:
+        return [
+            TagEntry(id=link.tag.normalized_name, name=link.tag.name)
+            for link in sorted(item_tags, key=lambda entry: entry.tag.name.casefold())
+            if link.tag is not None
+        ]
     raw_meta = item.raw_meta or {}
     tags = raw_meta.get("tags") or []
-    return [TagEntry(name=str(tag)) for tag in tags]
+    return [TagEntry(id=str(tag).strip().casefold(), name=str(tag)) for tag in tags]
 
 
-def _item_collections(item: ContentItem) -> list[dict[str, object]]:
+def _item_collections(item: ContentItem) -> list[CollectionEntry]:
+    memberships = list(item.collection_items or [])
+    if memberships:
+        return [
+            CollectionEntry(id=str(link.collection.id), name=link.collection.name)
+            for link in sorted(memberships, key=lambda entry: entry.collection.name.casefold())
+            if link.collection is not None
+        ]
     raw_meta = item.raw_meta or {}
-    return list(raw_meta.get("collections") or [])
+    return [CollectionEntry(**collection) for collection in list(raw_meta.get("collections") or [])]
 
 
 def _item_reading_state(item: ContentItem) -> ReadingState:
@@ -287,7 +368,9 @@ def _item_search_text(item: ContentItem) -> str:
     summaries = _item_summaries(item)
     tags = _meta_list_values(raw_meta, "tags")
     collections = _meta_list_values(raw_meta, "collections")
-    summary_text = " ".join(summary.content.strip() for summary in summaries if summary.content.strip())
+    summary_text = " ".join(
+        summary.content.strip() for summary in summaries if summary.content.strip()
+    )
     return " ".join(
         filter(
             None,
@@ -337,8 +420,10 @@ def _preferred_summary_text(item: ContentItem) -> str | None:
 
 
 def _item_tags_for_list(item: ContentItem) -> list[str]:
-    raw_meta = item.raw_meta or {}
-    return _meta_list_values(raw_meta, "tags")
+    item_tags = list(item.item_tags or [])
+    if item_tags:
+        return [link.tag.name for link in item_tags if link.tag is not None]
+    return _meta_list_values(item.raw_meta or {}, "tags")
 
 
 def _item_list_entry(item: ContentItem) -> ItemListEntry:
@@ -356,6 +441,8 @@ def _item_list_entry(item: ContentItem) -> ItemListEntry:
         is_inbox=is_inbox,
         is_read=bool(reading_state.progress_percent >= 100),
         is_favorited=reading_state.is_favorited,
+        progress_percent=reading_state.progress_percent,
+        last_read_at=reading_state.last_read_at,
         created_at=item.created_at,
         updated_at=item.updated_at,
         summary=_preferred_summary_text(item),
@@ -396,7 +483,10 @@ def _fallback_import(url: str, source_hint: str | None) -> ImportItemResponse:
     content_type = _normalize_content_type(source_hint, normalized_url)
 
     with STORE.lock:
-        existing = next((item for item in STORE.items.values() if item["source_url"] == normalized_url), None)
+        existing = next(
+            (item for item in STORE.items.values() if item["source_url"] == normalized_url),
+            None,
+        )
         if existing is not None:
             folder_id = str(existing.get("folder_id", INBOX_FOLDER_ID))
             folder_name = str(existing.get("folder_name", INBOX_FOLDER_NAME))
@@ -424,6 +514,11 @@ def _fallback_import(url: str, source_hint: str | None) -> ImportItemResponse:
             "folder_name": INBOX_FOLDER_NAME,
             "is_inbox": True,
             "status": ItemStatus.pending.value,
+            "metadata": {
+                "author_name": None,
+                "published_at": None,
+                "site_name": None,
+            },
             "parsed_document": {
                 "plain_text": "",
                 "structured_blocks": [],
@@ -564,14 +659,20 @@ def import_item(url: str, source_hint: str | None) -> ImportItemResponse:
         return _fallback_import(url, source_hint)
 
 
-def _filtered_items(records: list[ContentItem], folder_id: str | None, inbox_only: bool) -> list[ContentItem]:
+def _filtered_items(
+    records: list[ContentItem],
+    folder_id: str | None,
+    inbox_only: bool,
+) -> list[ContentItem]:
     if folder_id is not None:
         target = normalize_folder_identifier(folder_id)
         if target == INBOX_FOLDER_ID:
             return [
                 item
                 for item in records
-                if _item_folder_info(item)[2] or item.folder_id is None or _item_folder_info(item)[0] == INBOX_FOLDER_ID
+                if _item_folder_info(item)[2]
+                or item.folder_id is None
+                or _item_folder_info(item)[0] == INBOX_FOLDER_ID
             ]
         return [item for item in records if _item_folder_info(item)[0] == target]
     if inbox_only:
@@ -589,6 +690,7 @@ def list_items(
     tag: str | None = None,
     folder_id: str | None = None,
     inbox_only: bool = False,
+    collection_id: str | None = None,
 ) -> ItemListResponse:
     try:
         with SessionLocal() as session:
@@ -601,6 +703,10 @@ def list_items(
                         selectinload(ContentItem.content_parsed_documents),
                         selectinload(ContentItem.transcripts),
                         selectinload(ContentItem.summaries),
+                        selectinload(ContentItem.item_tags).selectinload(ContentItemTag.tag),
+                        selectinload(ContentItem.collection_items).selectinload(
+                            CollectionItem.collection
+                        ),
                         selectinload(ContentItem.reading_state),
                     )
                     .where(ContentItem.user_id == user.id)
@@ -617,6 +723,7 @@ def list_items(
                     source_type=source_type,
                     status=status,
                     tag=tag,
+                    collection_id=collection_id,
                 )
             ]
             start = (page - 1) * page_size
@@ -636,17 +743,27 @@ def list_items(
                 items = [
                     record
                     for record in items
-                    if bool(record.get("is_inbox", False)) or str(record.get("folder_id", INBOX_FOLDER_ID)) == INBOX_FOLDER_ID
+                    if bool(record.get("is_inbox", False))
+                    or str(record.get("folder_id", INBOX_FOLDER_ID)) == INBOX_FOLDER_ID
                 ]
             else:
-                items = [record for record in items if str(record.get("folder_id", INBOX_FOLDER_ID)) == target]
+                items = [
+                    record
+                    for record in items
+                    if str(record.get("folder_id", INBOX_FOLDER_ID)) == target
+                ]
         elif inbox_only:
-            items = [record for record in items if bool(record.get("is_inbox", False)) or record.get("folder_id") is None]
+            items = [
+                record
+                for record in items
+                if bool(record.get("is_inbox", False)) or record.get("folder_id") is None
+            ]
 
         normalized_keyword = (keyword or "").strip().casefold()
         normalized_source_type = (source_type or "").strip().casefold()
         normalized_status = (status or "").strip().casefold()
         normalized_tag = (tag or "").strip().casefold()
+        normalized_collection_id = (collection_id or "").strip()
 
         if normalized_keyword:
             items = [
@@ -671,18 +788,40 @@ def list_items(
                 for record in items
                 if normalized_source_type
                 in {
-                    str(getattr(record.get("content_type", ""), "value", record.get("content_type", ""))).casefold(),
-                    ("bilibili" if record.get("content_type") == ContentType.bilibili_video else "web"),
+                    str(
+                        getattr(
+                            record.get("content_type", ""),
+                            "value",
+                            record.get("content_type", ""),
+                        )
+                    ).casefold(),
+                    (
+                        "bilibili"
+                        if record.get("content_type") == ContentType.bilibili_video
+                        else "web"
+                    ),
                 }
             ]
         if normalized_status:
-            items = [record for record in items if str(getattr(record.get("status", ""), "value", record.get("status", ""))).casefold() == normalized_status]
+            items = [
+                record
+                for record in items
+                if str(
+                    getattr(record.get("status", ""), "value", record.get("status", ""))
+                ).casefold()
+                == normalized_status
+            ]
         if normalized_tag:
             items = [
                 record
                 for record in items
-                if normalized_tag in {str(tag_value).casefold() for tag_value in record.get("tags", [])}
+                if normalized_tag
+                in {str(tag_value).casefold() for tag_value in record.get("tags", [])}
             ]
+        if normalized_collection_id:
+            collection = STORE.collections.get(normalized_collection_id)
+            item_ids = set(collection.get("item_ids", []) if collection else [])
+            items = [record for record in items if str(record.get("id")) in item_ids]
 
         start = (page - 1) * page_size
         end = start + page_size
@@ -700,10 +839,19 @@ def list_items(
                     is_inbox=bool(record.get("is_inbox", True)),
                     is_read=bool(record["reading_state"]["progress_percent"] >= 100),
                     is_favorited=bool(record["reading_state"]["is_favorited"]),
+                    progress_percent=float(record["reading_state"].get("progress_percent", 0) or 0),
+                    last_read_at=record["reading_state"].get("last_read_at"),
                     created_at=record["created_at"],
                     updated_at=record["updated_at"],
-                    summary=(str(record.get("parsed_document", {}).get("excerpt", "")).strip() or None),
-                    tags=[str(tag_value) for tag_value in record.get("tags", []) if str(tag_value).strip()],
+                    summary=(
+                        str(record.get("parsed_document", {}).get("excerpt", "")).strip()
+                        or None
+                    ),
+                    tags=[
+                        str(tag_value)
+                        for tag_value in record.get("tags", [])
+                        if str(tag_value).strip()
+                    ],
                 )
                 for record in items[start:end]
             ],
@@ -723,6 +871,10 @@ def get_item(item_id: str) -> ItemDetailResponse:
                     selectinload(ContentItem.content_parsed_documents),
                     selectinload(ContentItem.transcripts),
                     selectinload(ContentItem.summaries),
+                    selectinload(ContentItem.highlights),
+                    selectinload(ContentItem.notes),
+                    selectinload(ContentItem.item_tags).selectinload(ContentItemTag.tag),
+                    selectinload(ContentItem.collection_items).selectinload(CollectionItem.collection),
                     selectinload(ContentItem.reading_state),
                 )
                 .where(ContentItem.id == UUID(item_id))
@@ -739,6 +891,14 @@ def get_item(item_id: str) -> ItemDetailResponse:
     folder_id = str(record.get("folder_id", INBOX_FOLDER_ID))
     folder_name = str(record.get("folder_name", INBOX_FOLDER_NAME))
     is_inbox = bool(record.get("is_inbox", folder_id == INBOX_FOLDER_ID))
+    collections = [
+        {
+            "id": str(collection["id"]),
+            "name": str(collection["name"]),
+        }
+        for collection in STORE.collections.values()
+        if item_id in set(collection.get("item_ids", []) or [])
+    ]
     return ItemDetailResponse(
         uid=str(record["id"]),
         id=str(record["id"]),
@@ -755,27 +915,171 @@ def get_item(item_id: str) -> ItemDetailResponse:
         summaries=[SummaryEntry(**summary) for summary in record["summaries"]],
         highlights=record["highlights"],
         notes=record["notes"],
-        tags=[TagEntry(name=str(tag)) for tag in record["tags"]],
-        collections=record["collections"],
+        tags=[
+            TagEntry(id=str(tag).strip().casefold(), name=str(tag))
+            for tag in record["tags"]
+        ],
+        collections=[CollectionEntry(**collection) for collection in collections],
         reading_state=ReadingState.model_validate(record["reading_state"]),
     )
 
 
+def update_reading_state(item_id: str, payload: ReadingStateUpdateRequest) -> ReadingState:
+    item_uuid: UUID | None
+    try:
+        item_uuid = UUID(item_id)
+    except ValueError:
+        item_uuid = None
+
+    if item_uuid is not None:
+        try:
+            with SessionLocal() as session:
+                user = get_primary_user(session)
+                item = session.execute(
+                    select(ContentItem)
+                    .options(selectinload(ContentItem.reading_state))
+                    .where(
+                        ContentItem.user_id == user.id,
+                        ContentItem.id == item_uuid,
+                    )
+                ).scalar_one_or_none()
+                if item is None:
+                    raise ValueError("item not found")
+
+                raw_meta = dict(item.raw_meta or {})
+                fallback_state = (
+                    raw_meta.get("reading_state")
+                    if isinstance(raw_meta.get("reading_state"), dict)
+                    else {}
+                )
+                fallback_state = dict(DEFAULT_READING_STATE) | dict(fallback_state)
+
+                reading_state_record = item.reading_state
+                if reading_state_record is None:
+                    reading_state_record = ReadingStateModel(
+                        user_id=user.id,
+                        content_item_id=item.id,
+                        is_read=False,
+                        progress_percent=float(fallback_state.get("progress_percent", 0) or 0),
+                        last_read_at=None,
+                        is_archived=bool(fallback_state.get("is_archived", False)),
+                    )
+                    session.add(reading_state_record)
+                    session.flush()
+
+                next_progress = float(
+                    payload.progress_percent
+                    if payload.progress_percent is not None
+                    else reading_state_record.progress_percent
+                )
+                next_archived = bool(
+                    payload.is_archived
+                    if payload.is_archived is not None
+                    else reading_state_record.is_archived
+                )
+                next_favorited = bool(
+                    payload.is_favorited
+                    if payload.is_favorited is not None
+                    else fallback_state.get("is_favorited", False)
+                )
+                next_last_read_at = payload.last_read_at or now_utc()
+
+                reading_state_record.progress_percent = next_progress
+                reading_state_record.is_read = next_progress >= 100
+                reading_state_record.is_archived = next_archived
+                reading_state_record.last_read_at = next_last_read_at
+                if payload.last_position_type is not None:
+                    reading_state_record.last_position_type = payload.last_position_type
+                if payload.last_position_value is not None:
+                    reading_state_record.last_position_value = payload.last_position_value
+
+                raw_meta["reading_state"] = {
+                    **fallback_state,
+                    "progress_percent": next_progress,
+                    "last_read_at": (
+                        next_last_read_at.isoformat() if next_last_read_at is not None else None
+                    ),
+                    "is_archived": next_archived,
+                    "is_favorited": next_favorited,
+                    "last_position_type": (
+                        payload.last_position_type
+                        if payload.last_position_type is not None
+                        else reading_state_record.last_position_type
+                    ),
+                    "last_position_value": (
+                        payload.last_position_value
+                        if payload.last_position_value is not None
+                        else reading_state_record.last_position_value
+                    ),
+                }
+                item.raw_meta = raw_meta
+                session.commit()
+
+                return ReadingState(
+                    progress_percent=next_progress,
+                    last_read_at=next_last_read_at,
+                    is_archived=next_archived,
+                    is_favorited=next_favorited,
+                )
+        except SQLAlchemyError:
+            pass
+
+    seed_store()
+    with STORE.lock:
+        record = STORE.items.get(item_id)
+        if record is None:
+            raise ValueError("item not found")
+
+        reading_state = dict(DEFAULT_READING_STATE)
+        reading_state.update(record.get("reading_state") or {})
+        if payload.progress_percent is not None:
+            reading_state["progress_percent"] = float(payload.progress_percent)
+        if payload.is_archived is not None:
+            reading_state["is_archived"] = bool(payload.is_archived)
+        if payload.is_favorited is not None:
+            reading_state["is_favorited"] = bool(payload.is_favorited)
+        if payload.last_position_type is not None:
+            reading_state["last_position_type"] = payload.last_position_type
+        if payload.last_position_value is not None:
+            reading_state["last_position_value"] = payload.last_position_value
+
+        next_last_read_at = payload.last_read_at or now_utc()
+        reading_state["last_read_at"] = next_last_read_at
+        record["reading_state"] = reading_state
+        record["updated_at"] = next_last_read_at
+        return ReadingState.model_validate(reading_state)
+
+
 def delete_item(item_id: str) -> ItemDeleteResponse:
+    def remove_audio_artifact(raw_meta: dict[str, object] | None) -> None:
+        podcast_meta = (raw_meta or {}).get("podcast")
+        if not isinstance(podcast_meta, dict):
+            return
+        storage_path = podcast_meta.get("audio_storage_path")
+        if not isinstance(storage_path, str) or not storage_path.strip():
+            return
+        try:
+            Path(storage_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
     try:
         with SessionLocal() as session:
             item = session.get(ContentItem, UUID(item_id))
             if item is None:
                 raise ValueError("item not found")
+            remove_audio_artifact(item.raw_meta)
             session.delete(item)
             session.commit()
             return ItemDeleteResponse(uid=str(item.id), deleted=True)
-    except (SQLAlchemyError, ValueError):
+    except (SQLAlchemyError, ValueError) as exc:
         seed_store()
         with STORE.lock:
             record = STORE.items.pop(item_id, None)
         if record is None:
-            raise ValueError("item not found")
+            raise ValueError("item not found") from exc
+        raw_meta = record.get("raw_meta") if isinstance(record.get("raw_meta"), dict) else record
+        remove_audio_artifact(raw_meta)
         return ItemDeleteResponse(uid=item_id, deleted=True)
 
 
@@ -821,6 +1125,84 @@ def reprocess_item(item_id: str) -> ItemReprocessResponse:
         return ItemReprocessResponse(item_id=item_id, task_id=task_id, status="queued")
 
 
+def generate_item_summary(item_id: str) -> ItemReprocessResponse:
+    try:
+        with SessionLocal() as session:
+            user = get_primary_user(session)
+            item = session.get(ContentItem, UUID(item_id))
+            if item is None:
+                raise ValueError("item not found")
+            existing_task = session.execute(
+                select(ProcessingTask)
+                .where(
+                    ProcessingTask.content_item_id == item.id,
+                    ProcessingTask.task_type == "generate_summary",
+                    ProcessingTask.status.in_(
+                        [
+                            TaskStatus.pending.value,
+                            TaskStatus.running.value,
+                            TaskStatus.retrying.value,
+                        ]
+                    ),
+                )
+                .order_by(ProcessingTask.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if existing_task is not None:
+                return ItemReprocessResponse(
+                    item_id=item_id,
+                    task_id=str(existing_task.id),
+                    status=existing_task.status,
+                )
+            task = ProcessingTask(
+                content_item_id=item.id,
+                user_id=user.id,
+                task_type="generate_summary",
+                status=TaskStatus.pending.value,
+                priority=0,
+                attempt_count=0,
+                max_attempts=3,
+                locked_by=None,
+                payload={"steps": ["summarize"]},
+                result={},
+                error_message=None,
+                started_at=None,
+                finished_at=None,
+                next_retry_at=None,
+            )
+            session.add(task)
+            session.commit()
+            return ItemReprocessResponse(item_id=item_id, task_id=str(task.id), status="pending")
+    except (SQLAlchemyError, ValueError) as exc:
+        seed_store()
+        with STORE.lock:
+            if item_id not in STORE.items:
+                raise ValueError("item not found") from exc
+            for task in STORE.tasks.values():
+                if (
+                    str(task.get("item_id")) == item_id
+                    and str(task.get("task_type")) == "generate_summary"
+                    and str(task.get("status")) in {"pending", "running", "retrying"}
+                ):
+                    return ItemReprocessResponse(
+                        item_id=item_id,
+                        task_id=str(task["id"]),
+                        status=str(task["status"]),
+                    )
+            task_id = str(uuid4())
+            STORE.tasks[task_id] = {
+                "id": task_id,
+                "item_id": item_id,
+                "task_type": "generate_summary",
+                "status": TaskStatus.pending.value,
+                "attempt_count": 0,
+                "error_message": None,
+                "created_at": now_utc(),
+                "payload": {"steps": ["summarize"]},
+            }
+        return ItemReprocessResponse(item_id=item_id, task_id=task_id, status="pending")
+
+
 def _matches_item_filters(
     item: ContentItem,
     *,
@@ -828,11 +1210,13 @@ def _matches_item_filters(
     source_type: str | None,
     status: str | None,
     tag: str | None,
+    collection_id: str | None,
 ) -> bool:
     normalized_keyword = (keyword or "").strip().casefold()
     normalized_source_type = (source_type or "").strip().casefold()
     normalized_status = (status or "").strip().casefold()
     normalized_tag = (tag or "").strip().casefold()
+    normalized_collection_id = (collection_id or "").strip()
 
     if normalized_keyword and normalized_keyword not in _item_search_text(item):
         return False
@@ -841,10 +1225,17 @@ def _matches_item_filters(
         (item.source_platform or "").casefold(),
     }:
         return False
-    if normalized_status and str(getattr(item.status, "value", item.status)).casefold() != normalized_status:
+    if (
+        normalized_status
+        and str(getattr(item.status, "value", item.status)).casefold() != normalized_status
+    ):
         return False
     if normalized_tag:
-        tags = {value.casefold() for value in _meta_list_values(item.raw_meta, "tags")}
+        tags = {entry.name.casefold() for entry in _item_tags(item)}
         if normalized_tag not in tags:
+            return False
+    if normalized_collection_id:
+        collections = {entry.id for entry in _item_collections(item)}
+        if normalized_collection_id not in collections:
             return False
     return True

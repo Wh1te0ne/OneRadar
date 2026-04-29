@@ -3,7 +3,20 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    PrimaryKeyConstraint,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +35,10 @@ class User(TimestampMixin, Base):
     content_items: Mapped[list['ContentItem']] = relationship(back_populates='user')
     folders: Mapped[list['Folder']] = relationship(back_populates='user')
     reading_states: Mapped[list['ReadingState']] = relationship(back_populates='user')
+    highlights: Mapped[list['Highlight']] = relationship(back_populates='user')
+    notes: Mapped[list['Note']] = relationship(back_populates='user')
+    tags: Mapped[list['Tag']] = relationship(back_populates='user')
+    collections: Mapped[list['Collection']] = relationship(back_populates='user')
     processing_tasks: Mapped[list['ProcessingTask']] = relationship(back_populates='user')
     model_providers: Mapped[list['ModelProvider']] = relationship(back_populates='user')
     integration_settings: Mapped[list['IntegrationSetting']] = relationship(back_populates='user')
@@ -48,10 +65,11 @@ class Folder(TimestampMixin, Base):
     content_items: Mapped[list['ContentItem']] = relationship(back_populates='folder')
 
 
-
 class IntegrationSetting(TimestampMixin, Base):
     __tablename__ = 'integration_settings'
-    __table_args__ = (UniqueConstraint('user_id', 'integration_key', name='uq_integration_settings_user_key'),)
+    __table_args__ = (
+        UniqueConstraint('user_id', 'integration_key', name='uq_integration_settings_user_key'),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -103,10 +121,19 @@ class ContentItem(TimestampMixin, Base):
     folder: Mapped[Folder | None] = relationship(back_populates='content_items')
     processing_tasks: Mapped[list['ProcessingTask']] = relationship(back_populates='content_item')
     content_snapshots: Mapped[list['ContentSnapshot']] = relationship(back_populates='content_item')
-    content_parsed_documents: Mapped[list['ContentParsedDocument']] = relationship(back_populates='content_item')
+    content_parsed_documents: Mapped[list['ContentParsedDocument']] = relationship(
+        back_populates='content_item'
+    )
     transcripts: Mapped[list['Transcript']] = relationship(back_populates='content_item')
     summaries: Mapped[list['Summary']] = relationship(back_populates='content_item')
-    reading_state: Mapped['ReadingState | None'] = relationship(back_populates='content_item', uselist=False)
+    highlights: Mapped[list['Highlight']] = relationship(back_populates='content_item')
+    notes: Mapped[list['Note']] = relationship(back_populates='content_item')
+    item_tags: Mapped[list['ContentItemTag']] = relationship(back_populates='content_item')
+    collection_items: Mapped[list['CollectionItem']] = relationship(back_populates='content_item')
+    reading_state: Mapped['ReadingState | None'] = relationship(
+        back_populates='content_item',
+        uselist=False,
+    )
 
 
 class ReadingState(TimestampMixin, Base):
@@ -185,7 +212,12 @@ class ContentSnapshot(TimestampMixin, Base):
 class ContentParsedDocument(TimestampMixin, Base):
     __tablename__ = 'content_parsed_documents'
     __table_args__ = (
-        UniqueConstraint('content_item_id', 'parser_name', 'parser_version', name='uq_content_parsed_documents_item_parser_version'),
+        UniqueConstraint(
+            'content_item_id',
+            'parser_name',
+            'parser_version',
+            name='uq_content_parsed_documents_item_parser_version',
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -232,7 +264,12 @@ class Transcript(TimestampMixin, Base):
 class Summary(TimestampMixin, Base):
     __tablename__ = 'summaries'
     __table_args__ = (
-        UniqueConstraint('content_item_id', 'summary_type', 'version', name='uq_summaries_item_type_version'),
+        UniqueConstraint(
+            'content_item_id',
+            'summary_type',
+            'version',
+            name='uq_summaries_item_type_version',
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -245,7 +282,9 @@ class Summary(TimestampMixin, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     source_parsed_document_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey('content_parsed_documents.id', ondelete='SET NULL'), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey('content_parsed_documents.id', ondelete='SET NULL'),
+        nullable=True,
     )
     source_transcript_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey('transcripts.id', ondelete='SET NULL'), nullable=True
@@ -255,9 +294,139 @@ class Summary(TimestampMixin, Base):
     content_item: Mapped[ContentItem] = relationship(back_populates='summaries')
 
 
+class Highlight(TimestampMixin, Base):
+    __tablename__ = 'highlights'
+    __table_args__ = (
+        Index('ix_highlights_user_item_created_at', 'user_id', 'content_item_id', 'created_at'),
+        Index('ix_highlights_item_created_at', 'content_item_id', 'created_at'),
+        Index('ix_highlights_note_id', 'note_id'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    content_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('content_items.id', ondelete='CASCADE'), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    anchor_type: Mapped[str] = mapped_column(String, nullable=False)
+    quote_text: Mapped[str] = mapped_column(Text, nullable=False)
+    start_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    end_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    segment_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    color: Mapped[str | None] = mapped_column(String, nullable=True)
+    note_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('notes.id', ondelete='SET NULL'), nullable=True
+    )
+
+    content_item: Mapped[ContentItem] = relationship(back_populates='highlights')
+    user: Mapped[User] = relationship(back_populates='highlights')
+
+
+class Note(TimestampMixin, Base):
+    __tablename__ = 'notes'
+    __table_args__ = (
+        Index('ix_notes_user_item_created_at', 'user_id', 'content_item_id', 'created_at'),
+        Index('ix_notes_highlight_id', 'highlight_id'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    content_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('content_items.id', ondelete='CASCADE'), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    highlight_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('highlights.id', ondelete='SET NULL'), nullable=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    content_item: Mapped[ContentItem] = relationship(back_populates='notes')
+    user: Mapped[User] = relationship(back_populates='notes')
+
+
+class Tag(TimestampMixin, Base):
+    __tablename__ = 'tags'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'normalized_name', name='uq_tags_user_normalized_name'),
+        Index('ix_tags_user_name', 'user_id', 'name'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    user: Mapped[User] = relationship(back_populates='tags')
+    item_tags: Mapped[list['ContentItemTag']] = relationship(back_populates='tag')
+
+
+class ContentItemTag(TimestampMixin, Base):
+    __tablename__ = 'content_item_tags'
+    __table_args__ = (
+        PrimaryKeyConstraint('content_item_id', 'tag_id', name='pk_content_item_tags'),
+        Index('ix_content_item_tags_tag_item', 'tag_id', 'content_item_id'),
+    )
+
+    content_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('content_items.id', ondelete='CASCADE'), nullable=False
+    )
+    tag_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('tags.id', ondelete='CASCADE'), nullable=False
+    )
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    content_item: Mapped[ContentItem] = relationship(back_populates='item_tags')
+    tag: Mapped[Tag] = relationship(back_populates='item_tags')
+
+
+class Collection(TimestampMixin, Base):
+    __tablename__ = 'collections'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'name', name='uq_collections_user_name'),
+        Index('ix_collections_user_favorite_created', 'user_id', 'is_favorite', 'created_at'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_favorite: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    user: Mapped[User] = relationship(back_populates='collections')
+    collection_items: Mapped[list['CollectionItem']] = relationship(back_populates='collection')
+
+
+class CollectionItem(TimestampMixin, Base):
+    __tablename__ = 'collection_items'
+    __table_args__ = (
+        PrimaryKeyConstraint('collection_id', 'content_item_id', name='pk_collection_items'),
+        Index('ix_collection_items_item_collection', 'content_item_id', 'collection_id'),
+    )
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('collections.id', ondelete='CASCADE'), nullable=False
+    )
+    content_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('content_items.id', ondelete='CASCADE'), nullable=False
+    )
+
+    collection: Mapped[Collection] = relationship(back_populates='collection_items')
+    content_item: Mapped[ContentItem] = relationship(back_populates='collection_items')
+
+
 class ModelProvider(TimestampMixin, Base):
     __tablename__ = 'model_providers'
-    __table_args__ = (UniqueConstraint('user_id', 'provider_name', name='uq_model_providers_user_name'),)
+    __table_args__ = (
+        UniqueConstraint('user_id', 'provider_name', name='uq_model_providers_user_name'),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(

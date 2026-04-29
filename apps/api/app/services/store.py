@@ -23,6 +23,8 @@ class InMemoryStore:
     providers: dict[str, dict[str, object]] = field(default_factory=dict)
     folders: dict[str, dict[str, object]] = field(default_factory=dict)
     integrations: dict[str, dict[str, object]] = field(default_factory=dict)
+    podcast_subscriptions: dict[str, dict[str, object]] = field(default_factory=dict)
+    collections: dict[str, dict[str, object]] = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock)
 
 
@@ -35,19 +37,19 @@ def seed_store() -> None:
             return
         STORE.users["user-1"] = {
             "id": "user-1",
-            "username": "admin",
-            "password": "secret",
+            "username": "local",
             "created_at": now_utc(),
         }
         STORE.providers["provider-1"] = {
             "id": "provider-1",
             "provider_name": "Doubao",
             "provider_type": ProviderType.doubao,
-            "base_url": "https://api.example.com",
-            "chat_model": "doubao-chat",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "chat_model": "ep-20260304161530-6ffr5",
             "embedding_model": "doubao-embed",
-            "transcription_model": "doubao-transcribe",
+            "transcription_model": None,
             "is_enabled": True,
+            "config": {"capability": "llm"},
             "last_test_status": None,
             "last_tested_at": None,
         }

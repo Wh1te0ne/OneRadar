@@ -12,8 +12,8 @@ The repo must preserve these V1 boundaries:
 
 - V1 is a reader-first personal knowledge library.
 - Input is manual link submission only.
-- Manual input supports article links and Bilibili video links.
-- V1 does not include RSS, browser extension capture, or automated harvesting.
+- Manual input supports article links, Bilibili video links, and podcast episodes explicitly added from subscribed podcast feeds.
+- V1 does not include generic RSS, browser extension capture, or automated harvesting. Podcast RSS is the scoped exception: it is used only for user-managed podcast subscriptions and episode discovery.
 - V1 is server plus Windows desktop client first.
 - The server must support Docker deployment.
 - AI provider configuration must be user-manageable.
@@ -39,6 +39,9 @@ Required backend responsibilities:
 - Link normalization and deduplication.
 - Article fetching and readable-text extraction.
 - Bilibili metadata, subtitle retrieval, and audio-to-text fallback.
+- Podcast search/subscription, RSS episode discovery, and explicit podcast episode import.
+- Optional Bilibili visual enhancement after subtitle/ASR, without replacing the canonical transcript.
+- Podcast audio must not download automatically on subscription; it downloads only after the user adds an episode to Inbox / later reading.
 - Storage of raw materials and readable documents.
 - Provider registry and model selection.
 - Search, highlights, notes, folders/collections, and reading state.
@@ -58,7 +61,7 @@ Required desktop responsibilities:
 - Render article text and transcript text in a Reader-like layout.
 - Support annotations, labels, folders, collections, and search.
 - Expose provider, theme, and connection settings.
-- Support explicit desktop-side import of Bilibili Chromium cookies as a local-only helper for authenticated subtitle retrieval.
+- Support Bilibili QR-code login as the primary credential flow for authenticated subtitle retrieval.
 
 ### Cross-Platform Principle
 
@@ -134,6 +137,7 @@ Required abstraction direction:
 - `chat/summarization adapter`
 - `embedding adapter`
 - `transcription adapter`
+- `video visual-understanding adapter`
 
 Do not hard-code the product around one model vendor.
 
@@ -169,6 +173,28 @@ Rule:
 
 - Subtitle-first, ASR-second.
 - Summary must never be the only stored representation.
+- QR-code login is the preferred Bilibili authentication path; manual Cookie entry and desktop browser Cookie scraping are not part of the primary V1 UI.
+- Multimodal video analysis is an optional model setting and must not replace timestamped subtitles or ASR output.
+- When enabled, video visual analysis should prefer direct sampled-video input for providers that support it, with sampled-frame analysis as the fallback path.
+
+### Podcast Pipeline
+
+Minimum required stages:
+
+1. Search podcasts through Apple iTunes Search API.
+2. Store user-managed podcast RSS subscriptions.
+3. Preview subscribed RSS feeds for episode metadata.
+4. Create a unified `content_item` only when the user explicitly adds an episode to Inbox / later reading.
+5. Dedupe episode imports by feed URL plus GUID, with enclosure URL as fallback.
+6. Download and persist episode audio only for imported episodes.
+7. Transcribe and summarize imported episodes as derived outputs.
+8. Delete the persisted audio artifact when the imported podcast episode item is deleted.
+
+Rule:
+
+- Subscribing to a podcast never downloads audio and never triggers model processing by itself.
+- Podcast audio is a reprocessing source artifact; transcript text is supporting material, not the primary reader surface.
+- Podcast reader surfaces should prioritize the audio player, summaries, metadata, and notes.
 
 ## Search Requirements
 

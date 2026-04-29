@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiItemSummary } from "../api";
@@ -29,6 +29,14 @@ function formatTime(value?: string) {
   return d.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+
+function normalizeProgress(progress?: number) {
+  if (typeof progress !== "number" || Number.isNaN(progress)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(progress)));
+}
+
 function sortByRecent(items: ApiItemSummary[]) {
   return [...items].sort((a, b) => {
     const at = Date.parse(a.updated_at ?? a.created_at ?? "");
@@ -39,25 +47,26 @@ function sortByRecent(items: ApiItemSummary[]) {
 
 export function LibraryPage() {
   const { folderId } = useParams();
-  const [searchParams] = useSearchParams();
-  const { apiBaseUrl, folders, loadFolders, workspace } = useAppState();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { apiBaseUrl, folders, workspace } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const inboxFolderId = workspace?.default_inbox_folder?.id ?? "inbox";
 
   const [items, setItems] = useState<ApiItemSummary[]>([]);
   const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [showNewFolder, setShowNewFolder] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
-  const [creatingFolder, setCreatingFolder] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const keyword = searchParams.get("q")?.trim() ?? "";
+  const tagFilter = searchParams.get("tag")?.trim() ?? "";
   const folderEntries = useMemo(() => folders.filter((f) => f.id !== inboxFolderId), [folders, inboxFolderId]);
 
   async function refreshLibrary(activeFolderId?: string, kw = "") {
-    const r = await client.listItems({ pageSize: 200, folderId: activeFolderId, inboxOnly: false, keyword: kw || undefined });
+    const r = await client.listItems({
+      pageSize: 200,
+      folderId: activeFolderId,
+      inboxOnly: false,
+      keyword: kw || undefined,
+      tag: tagFilter || undefined,
+    });
     return sortByRecent(r.items.filter((i) => !i.is_inbox && i.folder_id !== inboxFolderId));
   }
 
@@ -76,157 +85,30 @@ export function LibraryPage() {
     }
     void load();
     return () => { cancelled = true; };
-  }, [client, folderId, keyword]);
+  }, [client, folderId, keyword, tagFilter]);
 
   const visibleItems = useMemo(() => {
     const kw = keyword.toLowerCase();
     return items.filter((i) =>
-      !kw || [i.title, i.summary ?? "", i.folder_name, i.source_url].join(" ").toLowerCase().includes(kw)
+      !kw || [i.title, i.summary ?? "", i.folder_name, i.source_url, ...(i.tags ?? [])].join(" ").toLowerCase().includes(kw)
     );
   }, [items, keyword]);
 
-  async function handleCreateFolder(e: FormEvent) {
-    e.preventDefault();
-    const name = newFolderName.trim();
-    if (!name) return;
-    setCreatingFolder(true); setActionError(null);
-    try {
-      await client.createFolder(name);
-      setNewFolderName(""); setShowNewFolder(false);
-      await loadFolders();
-      setFeedback(`已创建文件夹「${name}」`);
-      setTimeout(() => setFeedback(null), 2500);
-    } catch {
-      setActionError("创建失败，请重试");
-    } finally {
-      setCreatingFolder(false);
-    }
+  function updateFilter(key: "tag", value: string) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next);
   }
 
   const currentFolder = folderEntries.find((f) => f.id === folderId);
 
   return (
-    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-      {/* Left: folder sidebar */}
-      <div style={{
-        width: 200, flexShrink: 0, borderRight: "1px solid rgba(172,179,183,0.18)",
-        display: "flex", flexDirection: "column", overflowY: "auto", padding: "16px 12px",
-        gap: 2,
-      }}>
-        {/* All items */}
-        <Link
-          to="/library"
-          style={{
-            display: "flex", alignItems: "center", gap: 9, padding: "9px 10px",
-            borderRadius: "var(--radius-sm)", fontSize: 13.5, fontWeight: !folderId ? 600 : 500,
-            color: !folderId ? "var(--primary)" : "var(--on-surface-v)",
-            background: !folderId ? "var(--surface-lowest)" : "transparent",
-            boxShadow: !folderId ? "var(--shadow-card)" : "none",
-            textDecoration: "none", transition: "all 140ms ease",
-          }}
-          onMouseEnter={(e) => { if (folderId) (e.currentTarget as HTMLAnchorElement).style.background = "var(--surface-container)"; }}
-          onMouseLeave={(e) => { if (folderId) (e.currentTarget as HTMLAnchorElement).style.background = ""; }}
-        >
-          <span className="icon icon-sm">inbox_all</span>
-          全部内容
-          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--outline)", fontWeight: 400 }}>
-            {folderEntries.reduce((sum, f) => sum + f.item_count, 0)}
-          </span>
-        </Link>
-
-        {/* Divider */}
-        <div style={{ height: 1, background: "rgba(172,179,183,0.18)", margin: "8px 4px" }} />
-
-        {/* Folder list */}
-        {folderEntries.map((f) => (
-          <Link
-            key={f.id}
-            to={`/folders/${f.id}`}
-            style={{
-              display: "flex", alignItems: "center", gap: 9, padding: "9px 10px",
-              borderRadius: "var(--radius-sm)", fontSize: 13.5,
-              fontWeight: folderId === f.id ? 600 : 500,
-              color: folderId === f.id ? "var(--primary)" : "var(--on-surface-v)",
-              background: folderId === f.id ? "var(--surface-lowest)" : "transparent",
-              boxShadow: folderId === f.id ? "var(--shadow-card)" : "none",
-              textDecoration: "none", transition: "all 140ms ease",
-              overflow: "hidden",
-            }}
-            onMouseEnter={(e) => { if (folderId !== f.id) (e.currentTarget as HTMLAnchorElement).style.background = "var(--surface-container)"; }}
-            onMouseLeave={(e) => { if (folderId !== f.id) (e.currentTarget as HTMLAnchorElement).style.background = ""; }}
-          >
-            <span className="icon icon-sm" style={{ flexShrink: 0 }}>folder</span>
-            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {f.name}
-            </span>
-            {f.item_count > 0 && (
-              <span style={{ fontSize: 11, color: "var(--outline)", fontWeight: 400, flexShrink: 0 }}>
-                {f.item_count}
-              </span>
-            )}
-          </Link>
-        ))}
-
-        {folderEntries.length === 0 && (
-          <p style={{ fontSize: 12, color: "var(--outline)", padding: "4px 10px", lineHeight: 1.5, fontStyle: "italic" }}>
-            还没有文件夹
-          </p>
-        )}
-
-        {/* New folder */}
-        <div style={{ marginTop: 8 }}>
-          {!showNewFolder ? (
-            <button
-              type="button"
-              onClick={() => setShowNewFolder(true)}
-              style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
-                width: "100%", border: "1.5px dashed rgba(172,179,183,0.4)", borderRadius: "var(--radius-sm)",
-                background: "transparent", cursor: "pointer", fontSize: 13, color: "var(--outline)",
-                transition: "all 140ms ease",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--primary)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--primary)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(172,179,183,0.4)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--outline)"; }}
-            >
-              <span className="icon icon-sm">create_new_folder</span>
-              新建文件夹
-            </button>
-          ) : (
-            <form onSubmit={(e) => void handleCreateFolder(e)} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <input
-                className="input"
-                style={{ fontSize: 13, padding: "7px 10px" }}
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                placeholder="文件夹名称"
-                autoFocus
-              />
-              <div style={{ display: "flex", gap: 5 }}>
-                <button className="btn btn-primary btn-sm" type="submit" disabled={creatingFolder} style={{ flex: 1, justifyContent: "center", fontSize: 12 }}>
-                  {creatingFolder ? "创建中…" : "创建"}
-                </button>
-                <button className="btn btn-ghost btn-sm" type="button" onClick={() => { setShowNewFolder(false); setNewFolderName(""); }} style={{ fontSize: 12 }}>
-                  取消
-                </button>
-              </div>
-              {actionError && <p style={{ fontSize: 11, color: "var(--error)", margin: 0 }}>{actionError}</p>}
-            </form>
-          )}
-        </div>
-
-        {feedback && (
-          <p style={{ fontSize: 11.5, color: "var(--success)", fontWeight: 600, padding: "4px 10px", margin: 0 }}>
-            ✓ {feedback}
-          </p>
-        )}
-      </div>
-
-      {/* Right: article list */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* Top bar */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "14px 28px", borderBottom: "1px solid rgba(172,179,183,0.18)",
+          padding: "14px 28px", borderBottom: "1px solid rgba(var(--outline-rgb),0.18)",
           background: "var(--surface-lowest)", flexShrink: 0,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -237,6 +119,15 @@ export function LibraryPage() {
               {currentFolder?.name ?? "全部内容"}
             </h2>
             <span style={{ fontSize: 12, color: "var(--outline)" }}>{visibleItems.length} 条</span>
+          </div>
+          <div className="btn-group" style={{ gap: 8, alignItems: "center" }}>
+            <input
+              className="input"
+              value={tagFilter}
+              onChange={(event) => updateFilter("tag", event.target.value)}
+              placeholder="标签过滤"
+              style={{ width: 120, height: 34, fontSize: 12 }}
+            />
           </div>
         </div>
 
@@ -253,8 +144,8 @@ export function LibraryPage() {
               <div className="empty-state-icon">
                 <span className="icon icon-lg">{folderId ? "folder_open" : "local_library"}</span>
               </div>
-              <h3>{keyword ? "没有匹配内容" : folderId ? "这个文件夹还是空的" : "知识库还是空的"}</h3>
-              <p>{keyword ? "换个关键词试试。" : "从「稍后阅读」存入文件夹后，内容会出现在这里。"}</p>
+              <h3>{keyword ? "没有匹配内容" : folderId ? "这个收藏夹还是空的" : "知识库还是空的"}</h3>
+            <p>{keyword ? "换个关键词试试。" : "从「稍后阅读」收藏到知识库后，内容会出现在这里。"}</p>
             </div>
           )}
 
@@ -262,13 +153,15 @@ export function LibraryPage() {
             <LibraryRow key={item.id} item={item} />
           ))}
         </div>
-      </div>
     </div>
   );
 }
 
 function LibraryRow({ item }: { item: ApiItemSummary }) {
   const isVideo = item.content_type === "bilibili_video";
+  const progress = normalizeProgress(item.progress_percent);
+  const showProgress = progress > 0 && progress < 100;
+
 
   return (
     <Link
@@ -278,7 +171,7 @@ function LibraryRow({ item }: { item: ApiItemSummary }) {
       <div
         style={{
           display: "flex", alignItems: "flex-start", gap: 0,
-          padding: "0 28px", borderBottom: "1px solid rgba(172,179,183,0.12)",
+          padding: "0 28px", borderBottom: "1px solid rgba(var(--outline-rgb),0.12)",
           transition: "background 120ms ease",
         }}
         onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-container)"; }}
@@ -301,6 +194,37 @@ function LibraryRow({ item }: { item: ApiItemSummary }) {
             </span>
             <span style={{ fontSize: 11, color: "var(--outline-v)" }}>·</span>
             <span className={statusChipClass(item.status)} style={{ fontSize: 11 }}>{statusLabel(item.status)}</span>
+            {showProgress && (
+              <span
+                className="chip chip-neutral"
+                style={{
+                  gap: 6,
+                  paddingInline: 8,
+                  fontSize: 11,
+                  color: "var(--on-surface-v)",
+                  borderColor: "rgba(var(--outline-rgb),0.22)",
+                  background: "rgba(var(--primary-rgb),0.05)",
+                }}
+              >
+                <span style={{
+                  width: 22,
+                  height: 4,
+                  borderRadius: 999,
+                  background: "rgba(var(--outline-rgb),0.16)",
+                  overflow: "hidden",
+                  flexShrink: 0,
+                }}>
+                  <span style={{
+                    display: "block",
+                    width: `${progress}%`,
+                    height: "100%",
+                    borderRadius: 999,
+                    background: "var(--primary)",
+                  }} />
+                </span>
+                {progress}%
+              </span>
+            )}
           </div>
 
           <h3 style={{

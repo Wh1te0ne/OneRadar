@@ -3,44 +3,21 @@ from __future__ import annotations
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.session import SessionLocal
-from app.schemas.auth import AuthUser, LoginResponse, LogoutResponse, WorkspaceBootstrapResponse
+from app.schemas.auth import AuthUser, WorkspaceBootstrapResponse
 from app.schemas.folders import FolderEntry
 from app.services.db_access import get_primary_user
-from app.services.folders_service import INBOX_FOLDER_ID, INBOX_FOLDER_NAME, get_folder_item_count, get_or_create_inbox_folder
+from app.services.folders_service import (
+    INBOX_FOLDER_ID,
+    INBOX_FOLDER_NAME,
+    get_folder_item_count,
+    get_or_create_inbox_folder,
+)
 from app.services.store import STORE, seed_store
 
 
 def _fallback_primary_user() -> dict[str, object]:
     seed_store()
     return next(iter(STORE.users.values()))
-
-
-def login(username: str | None, password: str | None) -> LoginResponse:
-    _ = (username, password)
-    try:
-        with SessionLocal() as session:
-            user = get_primary_user(session)
-            session.commit()
-            return LoginResponse(
-                access_token="placeholder-token",
-                expires_in=86400,
-                user=AuthUser(id=str(user.id), username=user.username, created_at=user.created_at),
-            )
-    except SQLAlchemyError:
-        user = _fallback_primary_user()
-        return LoginResponse(
-            access_token="placeholder-token",
-            expires_in=86400,
-            user=AuthUser(
-                id=str(user["id"]),
-                username=str(user["username"]),
-                created_at=user["created_at"],
-            ),
-        )
-
-
-def logout() -> LogoutResponse:
-    return LogoutResponse(ok=True)
 
 
 def current_user() -> AuthUser:
@@ -51,7 +28,11 @@ def current_user() -> AuthUser:
             return AuthUser(id=str(user.id), username=user.username, created_at=user.created_at)
     except SQLAlchemyError:
         user = _fallback_primary_user()
-        return AuthUser(id=str(user["id"]), username=str(user["username"]), created_at=user["created_at"])
+        return AuthUser(
+            id=str(user["id"]),
+            username=str(user["username"]),
+            created_at=user["created_at"],
+        )
 
 
 def bootstrap_workspace() -> WorkspaceBootstrapResponse:
@@ -69,7 +50,11 @@ def bootstrap_workspace() -> WorkspaceBootstrapResponse:
                     created_at=inbox.created_at,
                     updated_at=inbox.updated_at,
                 ),
-                primary_user=AuthUser(id=str(user.id), username=user.username, created_at=user.created_at),
+                primary_user=AuthUser(
+                    id=str(user.id),
+                    username=user.username,
+                    created_at=user.created_at,
+                ),
             )
     except SQLAlchemyError:
         user = _fallback_primary_user()
