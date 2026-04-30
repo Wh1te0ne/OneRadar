@@ -647,6 +647,8 @@ export function ItemDetailPage() {
   const latestTask = itemTasks[0] ?? null;
   const visibleTask = activeTasks[0] ?? latestTask;
   const activeSummaryTask = activeTasks.find((task) => task.task_type === "generate_summary") ?? null;
+  const latestSummaryTask = itemTasks.find((task) => task.task_type === "generate_summary") ?? null;
+  const failedSummaryTask = latestSummaryTask?.status === "failed" ? latestSummaryTask : null;
   const hasActiveTask = activeTasks.length > 0 || item?.status === "pending" || item?.status === "processing";
   const taskBannerTone = visibleTask?.status === "failed" || item?.status === "failed" ? "failed" : hasActiveTask ? "active" : "idle";
   const highlightCount = item?.highlights.length ?? 0;
@@ -1110,7 +1112,7 @@ export function ItemDetailPage() {
   async function handleGenerateSummary() {
     if (!item || generatingSummary) return;
     if (activeSummaryTask) {
-      setSummaryMessage(`摘要任务已在${taskStatusLabel(activeSummaryTask.status)}，无需重复提交。`);
+      setSummaryMessage(`AI 生成中：${taskStatusLabel(activeSummaryTask.status)}，完成后会自动刷新。`);
       setSummaryError(null);
       return;
     }
@@ -1360,15 +1362,20 @@ export function ItemDetailPage() {
                   <div className="article-section-title">AI 摘要</div>
                   <button type="button" className="btn btn-secondary btn-xs" onClick={() => void handleGenerateSummary()} disabled={generatingSummary || Boolean(activeSummaryTask)}>
                     <span className="icon icon-sm">auto_awesome</span>
-                    {generatingSummary ? "提交中…" : activeSummaryTask ? "生成中" : "重新生成"}
+                    {generatingSummary ? "提交中…" : activeSummaryTask ? "AI 生成中" : failedSummaryTask ? "重试生成" : "重新生成"}
                   </button>
                 </div>
                 {summaryMessage && <div className="feedback feedback-success" style={{ marginBottom: 12 }}>{summaryMessage}</div>}
                 {summaryError && <div className="feedback feedback-error" style={{ marginBottom: 12 }}>{summaryError}</div>}
-                {hasActiveTask && visibleTask && (
+                {activeSummaryTask && (
                   <div className="ai-generating-row">
                     <span className="icon icon-sm">sync</span>
-                    <span>{taskTypeLabel(visibleTask.task_type, item.content_type)}，完成后会自动刷新摘要。</span>
+                    <span>AI 生成中：{taskStatusLabel(activeSummaryTask.status)}，完成后会自动刷新摘要。</span>
+                  </div>
+                )}
+                {!activeSummaryTask && failedSummaryTask && (
+                  <div className="feedback feedback-error" style={{ marginBottom: 12 }}>
+                    AI 生成失败{failedSummaryTask.error_message ? `：${failedSummaryTask.error_message}` : "。"} 可点击“重试生成”重新提交。
                   </div>
                 )}
                 {aiSummaries.length ? (
@@ -1380,7 +1387,7 @@ export function ItemDetailPage() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-meta">暂无摘要。</p>
+                  <p className="text-meta">{activeSummaryTask ? "AI 生成中，稍后会自动显示在这里。" : "暂无摘要。"}</p>
                 )}
               </div>
             )}

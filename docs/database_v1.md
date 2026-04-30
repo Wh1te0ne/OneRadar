@@ -82,6 +82,7 @@ erDiagram
     users ||--o{ notes : creates
     users ||--o{ collections : owns
     users ||--o{ model_providers : configures
+    users ||--o{ feed_sources : subscribes
 
     content_items ||--o{ content_snapshots : has
     content_items ||--o{ content_parsed_documents : has
@@ -97,6 +98,8 @@ erDiagram
     collections ||--o{ collection_items : contains
     content_items ||--o{ collection_items : included_in
     highlights ||--o| notes : may_anchor
+    feed_sources ||--o{ feed_entries : caches
+    feed_entries ||--o{ feed_entry_read_states : read_by
 ```
 
 ---
@@ -193,7 +196,33 @@ Podcast note:
 
 ---
 
-### 4.3 `content_snapshots`
+### 4.3 RSS discovery cache tables
+
+RSS discovery is persisted in PostgreSQL so Docker Compose deployments and desktop restarts keep loaded feeds without relying on browser-local storage.
+
+Tables:
+
+- `feed_sources`: one row per subscribed RSS URL, scoped by `user_id`. Stores source URL, site title/link/description, last loaded time, and last refresh status/error.
+- `feed_entries`: cached RSS entries for a source. Stores stable entry id, article link, title, summary, author, published time, tags, and raw item metadata. Entries remain until the source is removed.
+- `feed_entry_read_states`: per-user read markers for cached entries.
+
+Indexes:
+
+- unique index on `feed_sources(user_id, source_url)`
+- unique index on `feed_entries(feed_source_id, entry_id)`
+- index on `feed_entries(user_id, published_at desc)`
+- unique index on `feed_entry_read_states(user_id, feed_entry_id)`
+
+Rules:
+
+- Loading or refreshing a feed upserts entries and records refresh success or failure.
+- Opening an RSS article preview marks the cached feed entry as read.
+- Removing a source deletes its cached entries and read markers through cascade.
+- Saving an RSS article to 稍后阅读 creates a normal `content_items` record and persists the cleaned article body there; the feed cache remains only the discovery surface.
+
+---
+
+### 4.4 `content_snapshots`
 
 Stores raw source material and fetch results.
 
@@ -240,7 +269,7 @@ Rationale:
 
 ---
 
-### 4.4 `content_parsed_documents`
+### 4.5 `content_parsed_documents`
 
 Stores cleaned, readable article content or normalized text output.
 
@@ -285,7 +314,7 @@ Rationale:
 
 ---
 
-### 4.5 `transcripts`
+### 4.6 `transcripts`
 
 Stores subtitle or ASR output for Bilibili items.
 
@@ -336,7 +365,7 @@ Rationale:
 
 ---
 
-### 4.6 `summaries`
+### 4.7 `summaries`
 
 Stores one or more AI-generated summaries per item.
 
@@ -373,7 +402,7 @@ Rationale:
 
 ---
 
-### 4.7 `highlights`
+### 4.8 `highlights`
 
 Stores user highlights on readable text.
 
@@ -412,7 +441,7 @@ Rationale:
 
 ---
 
-### 4.8 `notes`
+### 4.9 `notes`
 
 Stores user notes, either standalone or attached to a highlight.
 
@@ -437,7 +466,7 @@ Rationale:
 
 ---
 
-### 4.9 `tags`
+### 4.10 `tags`
 
 Global tag dictionary.
 
@@ -460,7 +489,7 @@ Rationale:
 
 ---
 
-### 4.10 `content_item_tags`
+### 4.11 `content_item_tags`
 
 Join table between items and tags.
 
@@ -486,7 +515,7 @@ Rationale:
 
 ---
 
-### 4.11 `collections`
+### 4.12 `collections`
 
 User-defined groups for organization.
 
@@ -511,7 +540,7 @@ Rationale:
 
 ---
 
-### 4.12 `collection_items`
+### 4.13 `collection_items`
 
 Join table for collection membership.
 
@@ -535,7 +564,7 @@ Rationale:
 
 ---
 
-### 4.13 `reading_states`
+### 4.14 `reading_states`
 
 Per-item reading progress and UI state.
 
@@ -571,7 +600,7 @@ Rationale:
 
 ---
 
-### 4.14 `processing_tasks`
+### 4.15 `processing_tasks`
 
 Tracks asynchronous work and failures.
 
@@ -629,7 +658,7 @@ Rationale:
 
 ---
 
-### 4.15 `model_providers`
+### 4.16 `model_providers`
 
 Stores provider configuration for model access.
 
@@ -672,7 +701,7 @@ Rationale:
 ---
 
 
-### 4.16 `integration_settings`
+### 4.17 `integration_settings`
 
 Stores server-side source integration secrets and toggles that are not model providers.
 

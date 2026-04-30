@@ -1,21 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiFeedPreviewItem, ApiFeedPreviewResponse } from "../api/types";
 import { useAppState } from "../state/appState";
 
-type FeedFilter = "all" | "fresh" | "tagged";
+type FeedFilter = "today" | "week" | "all";
+type SelectedSource = "all" | string;
 
 type SavedFeedSource = {
   sourceUrl: string;
   siteTitle: string;
+  siteUrl?: string | null;
   description?: string | null;
   lastLoadedAt: string;
+  lastRefreshStatus?: string | null;
+  lastRefreshError?: string | null;
+  lastRefreshedAt?: string | null;
 };
 
 const DEFAULT_RSS_URL = "https://blog.python.org/rss.xml";
 const FEED_SOURCE_HISTORY_KEY = "oneradar.feed.sources.v1";
-const MAX_SAVED_SOURCES = 5;
+const FEED_PREVIEW_CACHE_KEY = "oneradar.feed.previewCache.v1";
+const FEED_READ_ENTRY_KEY = "oneradar.feed.readEntries.v1";
+const MAX_SAVED_SOURCES = 30;
+
+type FeedEntry = ApiFeedPreviewItem & {
+  sourceUrl: string;
+  sourceTitle: string;
+  sourceDescription?: string | null;
+};
 
 function formatPublishedAt(value?: string | null) {
   if (!value) return "未知时间";
@@ -29,6 +42,14 @@ function isRecent(value?: string | null, days = 7) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return false;
   return Date.now() - date.getTime() <= days * 24 * 60 * 60 * 1000;
+}
+
+function isToday(value?: string | null) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const today = new Date();
+  return date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
 }
 
 function loadSavedSources(): SavedFeedSource[] {
@@ -56,13 +77,85 @@ function loadSavedSources(): SavedFeedSource[] {
         return {
           sourceUrl: candidate.sourceUrl,
           siteTitle: candidate.siteTitle,
+          siteUrl: typeof candidate.siteUrl === "string" ? candidate.siteUrl : null,
           description: typeof candidate.description === "string" ? candidate.description : null,
           lastLoadedAt: typeof candidate.lastLoadedAt === "string" ? candidate.lastLoadedAt : new Date().toISOString(),
+          lastRefreshStatus: typeof candidate.lastRefreshStatus === "string" ? candidate.lastRefreshStatus : null,
+          lastRefreshError: typeof candidate.lastRefreshError === "string" ? candidate.lastRefreshError : null,
+          lastRefreshedAt: typeof candidate.lastRefreshedAt === "string" ? candidate.lastRefreshedAt : null,
         } satisfies SavedFeedSource;
       })
       .filter((entry): entry is SavedFeedSource => Boolean(entry));
   } catch {
     return [];
+  }
+}
+
+function loadCachedFeeds(): Record<string, ApiFeedPreviewResponse> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(FEED_PREVIEW_CACHE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const feeds: Record<string, ApiFeedPreviewResponse> = {};
+    Object.entries(parsed as Record<string, unknown>).forEach(([sourceUrl, value]) => {
+      if (!value || typeof value !== "object") return;
+      const candidate = value as Partial<ApiFeedPreviewResponse>;
+      if (
+        typeof candidate.source_url !== "string" ||
+        typeof candidate.site_title !== "string" ||
+        typeof candidate.fetched_at !== "string" ||
+        !Array.isArray(candidate.items)
+      ) {
+        return;
+      }
+      feeds[sourceUrl] = candidate as ApiFeedPreviewResponse;
+    });
+    return feeds;
+  } catch {
+    return {};
+  }
+}
+
+function saveCachedFeeds(feeds: Record<string, ApiFeedPreviewResponse>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(FEED_PREVIEW_CACHE_KEY, JSON.stringify(feeds));
+  } catch {
+    // RSS feed cache is best-effort local persistence.
+  }
+}
+
+function loadReadEntries(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+  try {
+    const raw = window.localStorage.getItem(FEED_READ_ENTRY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveReadEntries(entries: Set<string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(FEED_READ_ENTRY_KEY, JSON.stringify(Array.from(entries)));
+  } catch {
+    // Read markers are best-effort UI state.
   }
 }
 
@@ -78,16 +171,59 @@ function describeSavedSource(source: SavedFeedSource) {
   }
 }
 
+function compareByPublishedAt(a: FeedEntry, b: FeedEntry) {
+  const left = a.published_at ? new Date(a.published_at).getTime() : 0;
+  const right = b.published_at ? new Date(b.published_at).getTime() : 0;
+  return right - left;
+}
+
+function feedArticlePreviewPath(item: FeedEntry) {
+  const params = new URLSearchParams({
+    url: item.link,
+    title: item.title,
+    source_title: item.sourceTitle,
+  });
+  if (item.author) params.set("author", item.author);
+  if (item.published_at) params.set("published_at", item.published_at);
+  if (item.summary) params.set("summary", item.summary.slice(0, 600));
+  if (item.is_saved) params.set("is_saved", "1");
+  if (item.saved_item_id) params.set("saved_item_id", item.saved_item_id);
+  if (item.saved_uid) params.set("saved_uid", item.saved_uid);
+  return "/feed/preview?" + params.toString();
+}
+
+function feedEntryReadKey(item: FeedEntry) {
+  return `${item.sourceUrl}:${item.id || item.link}`;
+}
+
+function feedEntryReadKeys(item: FeedEntry) {
+  return Array.from(new Set([feedEntryReadKey(item), `${item.sourceUrl}:${item.link}`]));
+}
+
+function isFeedEntryRead(item: FeedEntry, readEntries: Set<string>) {
+  return feedEntryReadKeys(item).some((key) => readEntries.has(key));
+}
+
+function mergeSources(left: SavedFeedSource[], right: SavedFeedSource[]) {
+  const byUrl = new Map<string, SavedFeedSource>();
+  [...right, ...left].forEach((source) => byUrl.set(source.sourceUrl, source));
+  return Array.from(byUrl.values()).slice(0, MAX_SAVED_SOURCES);
+}
+
 export function FeedPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { apiBaseUrl } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
 
-  const [filter, setFilter] = useState<FeedFilter>("all");
+  const [filter, setFilter] = useState<FeedFilter>("week");
+  const [selectedSource, setSelectedSource] = useState<SelectedSource>("all");
   const [showAddRss, setShowAddRss] = useState(false);
   const [savedSources, setSavedSources] = useState<SavedFeedSource[]>(() => loadSavedSources());
-  const [rssUrl, setRssUrl] = useState(() => loadSavedSources()[0]?.sourceUrl ?? DEFAULT_RSS_URL);
-  const [feed, setFeed] = useState<ApiFeedPreviewResponse | null>(null);
+  const [rssUrl, setRssUrl] = useState("");
+  const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>(() => loadCachedFeeds());
+  const [readEntries, setReadEntries] = useState<Set<string>>(() => loadReadEntries());
+  const [serverHydrated, setServerHydrated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
@@ -103,57 +239,224 @@ export function FeedPage() {
     }
   }, [savedSources]);
 
-  async function loadFeed(targetUrl: string) {
+  useEffect(() => {
+    saveCachedFeeds(feeds);
+  }, [feeds]);
+
+  useEffect(() => {
+    saveReadEntries(readEntries);
+  }, [readEntries]);
+
+  useEffect(() => {
+    let cancelled = false;
+    client.getFeedState()
+      .then((state) => {
+        if (cancelled) return;
+        const localSources = loadSavedSources();
+        const localFeeds = loadCachedFeeds();
+        const localReadEntries = loadReadEntries();
+        const serverSources = state.sources.map((source) => ({
+          sourceUrl: source.source_url,
+          siteTitle: source.site_title,
+          siteUrl: source.site_url,
+          description: source.description,
+          lastLoadedAt: source.last_loaded_at,
+          lastRefreshStatus: source.last_refresh_status,
+          lastRefreshError: source.last_refresh_error,
+          lastRefreshedAt: source.last_refreshed_at,
+        }));
+        const mergedFeeds = { ...state.feeds, ...localFeeds };
+        const mergedSources = mergeSources(
+          mergeSources(serverSources, localSources),
+          Object.values(mergedFeeds).map((feed) => ({
+            sourceUrl: feed.source_url,
+            siteTitle: feed.site_title,
+            siteUrl: feed.site_url,
+            description: feed.description,
+            lastLoadedAt: feed.fetched_at,
+            lastRefreshStatus: null,
+            lastRefreshError: null,
+            lastRefreshedAt: feed.fetched_at,
+          }))
+        );
+        setFeeds(mergedFeeds);
+        setSavedSources(mergedSources);
+        setReadEntries(new Set([...state.read_entries, ...Array.from(localReadEntries)]));
+        Object.values(localFeeds).forEach((feed) => {
+          void client.cacheFeedPreview(feed).catch(() => {
+            // State sync is best effort; the local cache still keeps the UI usable.
+          });
+        });
+      })
+      .catch(() => {
+        // Keep local RSS cache if the state endpoint is unavailable.
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setServerHydrated(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  async function fetchFeed(targetUrl: string) {
     const url = targetUrl.trim();
     if (!url) {
-      setError("请先输入 RSS 地址。");
-      return;
+      throw new Error("请先输入 RSS 地址。");
     }
+    return client.getFeedPreview(url, 40);
+  }
+
+  function rememberFeed(next: ApiFeedPreviewResponse) {
+    setFeeds((current) => ({ ...current, [next.source_url]: next }));
+    setSavedSources((current) =>
+      upsertSavedSource(current, {
+        sourceUrl: next.source_url,
+        siteTitle: next.site_title,
+        siteUrl: next.site_url,
+        description: next.description,
+        lastLoadedAt: next.fetched_at,
+        lastRefreshStatus: "success",
+        lastRefreshError: null,
+        lastRefreshedAt: new Date().toISOString(),
+      })
+    );
+    void client.cacheFeedPreview(next).catch(() => {
+      // Local cache remains available when server-side state persistence fails.
+    });
+  }
+
+  async function loadFeed(targetUrl: string, options?: { select?: boolean }) {
     setLoading(true);
     setError(null);
     setImportMessage(null);
     try {
-      const next = await client.getFeedPreview(url, 20);
-      setFeed(next);
-      setRssUrl(next.source_url);
-      setSavedSources((current) =>
-        upsertSavedSource(current, {
-          sourceUrl: next.source_url,
-          siteTitle: next.site_title,
-          description: next.description,
-          lastLoadedAt: next.fetched_at,
-        })
-      );
+      const next = await fetchFeed(targetUrl);
+      rememberFeed(next);
+      setRssUrl("");
+      if (options?.select) {
+        setSelectedSource(next.source_url);
+      }
+      setShowAddRss(false);
     } catch (nextError) {
-      setFeed(null);
-      setError(nextError instanceof Error ? nextError.message : "RSS 读取失败");
+      const message = nextError instanceof Error ? nextError.message : "RSS 读取失败";
+      setError(message);
+      const failedUrl = targetUrl.trim();
+      if (failedUrl) {
+        setSavedSources((current) =>
+          upsertSavedSource(current, {
+            sourceUrl: failedUrl,
+            siteTitle: failedUrl,
+            description: null,
+            lastLoadedAt: new Date().toISOString(),
+            lastRefreshStatus: "failed",
+            lastRefreshError: message,
+            lastRefreshedAt: new Date().toISOString(),
+          })
+        );
+        void client.markFeedSourceError(failedUrl, message).catch(() => {
+          // Local source error is already visible.
+        });
+      }
     } finally {
       setLoading(false);
     }
   }
 
+  async function refreshSources(sources = savedSources) {
+    const nextSources = sources.length > 0 ? sources : [{ sourceUrl: DEFAULT_RSS_URL, siteTitle: "Python Insider", lastLoadedAt: new Date().toISOString() }];
+    setLoading(true);
+    setError(null);
+    setImportMessage(null);
+    const results = await Promise.allSettled(nextSources.map((source) => fetchFeed(source.sourceUrl)));
+    const successful = results
+      .filter((result): result is PromiseFulfilledResult<ApiFeedPreviewResponse> => result.status === "fulfilled")
+      .map((result) => result.value);
+    successful.forEach(rememberFeed);
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") return;
+      const source = nextSources[index];
+      const message = result.reason instanceof Error ? result.reason.message : "RSS 读取失败";
+      setSavedSources((current) =>
+        upsertSavedSource(current, {
+          ...source,
+          lastRefreshStatus: "failed",
+          lastRefreshError: message,
+          lastRefreshedAt: new Date().toISOString(),
+        })
+      );
+      void client.markFeedSourceError(source.sourceUrl, message, source.siteTitle).catch(() => {
+        // Local source error is already visible.
+      });
+    });
+    const failedCount = results.length - successful.length;
+    if (failedCount > 0) {
+      setError(`${failedCount} 个订阅源读取失败，已显示其余可用内容。`);
+    }
+    setLoading(false);
+  }
+
   useEffect(() => {
-    void loadFeed(rssUrl);
+    if (serverHydrated && Object.keys(feeds).length === 0) {
+      const initialSources = loadSavedSources();
+      void refreshSources(initialSources);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [serverHydrated]);
+
+  const allEntries = useMemo(() => {
+    return Object.values(feeds)
+      .flatMap((feed) =>
+        feed.items.map((item) => ({
+          ...item,
+          sourceUrl: feed.source_url,
+          sourceTitle: feed.site_title,
+          sourceDescription: feed.description,
+        }))
+      )
+      .sort(compareByPublishedAt);
+  }, [feeds]);
+
+  const sourceEntries = useMemo(() => {
+    if (selectedSource === "all") return allEntries;
+    return allEntries.filter((item) => item.sourceUrl === selectedSource);
+  }, [allEntries, selectedSource]);
 
   const filtered = useMemo(() => {
-    const items = feed?.items ?? [];
-    return items.filter((item) => {
-      if (filter === "fresh" && !isRecent(item.published_at)) return false;
-      if (filter === "tagged" && !item.tags.length) return false;
+    const timeFiltered = sourceEntries.filter((item) => {
+      if (filter === "today" && !isToday(item.published_at)) return false;
+      if (filter === "week" && !isRecent(item.published_at)) return false;
       if (!keyword) return true;
-      const haystack = [item.title, item.summary ?? "", item.author ?? "", item.tags.join(" ")].join(" ").toLowerCase();
+      const haystack = [item.title, item.summary ?? "", item.author ?? "", item.sourceTitle, item.tags.join(" ")].join(" ").toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [feed, filter, keyword]);
+    return timeFiltered;
+  }, [sourceEntries, filter, keyword]);
 
-  async function handleImport(item: ApiFeedPreviewItem) {
-    setImportingId(item.id);
+  async function handleImport(item: FeedEntry) {
+    if (item.is_saved) return;
+    const importingKey = feedEntryReadKey(item);
+    setImportingId(importingKey);
     setImportMessage(null);
     try {
       const result = await client.importItem(item.link, "article");
       setImportMessage(result.is_duplicate ? `已存在：${result.uid}` : `已加入稍后阅读：${result.uid}`);
+      setFeeds((current) => {
+        const next = { ...current };
+        const feed = next[item.sourceUrl];
+        if (!feed) return current;
+        next[item.sourceUrl] = {
+          ...feed,
+          items: feed.items.map((entry) => (
+            entry.id === item.id || entry.link === item.link
+              ? { ...entry, is_saved: true, saved_item_id: result.item_id, saved_uid: result.uid }
+              : entry
+          )),
+        };
+        return next;
+      });
     } catch (nextError) {
       setImportMessage(nextError instanceof Error ? nextError.message : "导入失败");
     } finally {
@@ -161,8 +464,38 @@ export function FeedPage() {
     }
   }
 
-  const freshCount = (feed?.items ?? []).filter((item) => isRecent(item.published_at)).length;
-  const taggedCount = (feed?.items ?? []).filter((item) => item.tags.length > 0).length;
+  function removeSource(sourceUrl: string) {
+    setSavedSources((current) => current.filter((source) => source.sourceUrl !== sourceUrl));
+    setFeeds((current) => {
+      const next = { ...current };
+      delete next[sourceUrl];
+      return next;
+    });
+    if (selectedSource === sourceUrl) {
+      setSelectedSource("all");
+    }
+    void client.deleteFeedSource(sourceUrl).catch(() => {
+      // Local removal has already happened; server sync can be retried on next mutation.
+    });
+  }
+
+  function markEntryRead(item: FeedEntry) {
+    const key = feedEntryReadKey(item);
+    setReadEntries((current) => {
+      if (isFeedEntryRead(item, current)) return current;
+      const next = new Set(current);
+      feedEntryReadKeys(item).forEach((entryKey) => next.add(entryKey));
+      return next;
+    });
+    void client.markFeedEntryRead(key).catch(() => {
+      // Optimistic local read marker is enough for immediate UI feedback.
+    });
+  }
+
+  const todayCount = sourceEntries.filter((item) => isToday(item.published_at)).length;
+  const weekCount = sourceEntries.filter((item) => isRecent(item.published_at)).length;
+  const selectedFeed = selectedSource === "all" ? null : feeds[selectedSource];
+  const selectedSourceLabel = selectedFeed?.site_title ?? savedSources.find((source) => source.sourceUrl === selectedSource)?.siteTitle ?? "全部订阅源";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -178,48 +511,47 @@ export function FeedPage() {
           gap: 16,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 2, background: "var(--surface-container)", padding: 4, borderRadius: "var(--radius-sm)" }}>
-          {([
-            ["all", "全部", (feed?.items ?? []).length],
-            ["fresh", "近 7 天", freshCount],
-            ["tagged", "有标签", taggedCount],
-          ] as [FeedFilter, string, number][]).map(([value, label, count]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setFilter(value)}
-              style={{
-                padding: "5px 14px",
-                borderRadius: "calc(var(--radius-sm) - 2px)",
-                border: "none",
-                cursor: "pointer",
-                fontSize: 13,
-                fontWeight: filter === value ? 600 : 500,
-                background: filter === value ? "var(--surface-lowest)" : "transparent",
-                color: filter === value ? "var(--primary)" : "var(--on-surface-v)",
-                boxShadow: filter === value ? "var(--shadow-card)" : "none",
-                transition: "all 140ms ease",
-              }}
-            >
-              {label} · {count}
-            </button>
-          ))}
+        <div className="source-toolbar-left">
+          <div className="source-page-title">
+            <span>RSS</span>
+            <h2>订阅源</h2>
+          </div>
+          <div className="podcast-tabbar">
+            {([
+              ["today", "今天", todayCount],
+              ["week", "近 7 天", weekCount],
+              ["all", "全部", sourceEntries.length],
+            ] as [FeedFilter, string, number][]).map(([value, label, count]) => (
+              <button
+                key={value}
+                type="button"
+                className={filter === value ? "active" : ""}
+                onClick={() => setFilter(value)}
+              >
+                {label} · {count}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          {feed && (
+          {sourceEntries.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", minWidth: 0, alignItems: "flex-end" }}>
               <span style={{ fontSize: 12, color: "var(--on-surface)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {feed.site_title}
+                {selectedSourceLabel}
               </span>
               <span style={{ fontSize: 12, color: "var(--outline)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {feed.description ?? feed.site_url ?? feed.source_url} · {formatPublishedAt(feed.fetched_at)}
+                {savedSources.length || Object.keys(feeds).length ? `${Object.keys(feeds).length} 个已加载源 · ${sourceEntries.length} 条` : "订阅源发现流"}
               </span>
             </div>
           )}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refreshSources()} disabled={loading}>
+            <span className="icon icon-sm">sync</span>
+            {loading ? "刷新中…" : "刷新"}
+          </button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAddRss((value) => !value)}>
-            <span className="icon icon-sm">rss_feed</span>
-            切换订阅源
+            <span className="icon icon-sm">add</span>
+            添加源
           </button>
         </div>
       </div>
@@ -246,11 +578,11 @@ export function FeedPage() {
               placeholder="粘贴 RSS 源地址，例如 https://blog.python.org/rss.xml"
               autoFocus
             />
-            <button className="btn btn-primary btn-sm" type="button" disabled={loading} onClick={() => void loadFeed(rssUrl)}>
+            <button className="btn btn-primary btn-sm" type="button" disabled={loading} onClick={() => void loadFeed(rssUrl, { select: true })}>
               <span className="icon icon-sm">sync</span>
-              {loading ? "读取中…" : "加载预览"}
+              {loading ? "读取中…" : "添加并查看"}
             </button>
-            <button className="btn btn-ghost btn-sm" type="button" onClick={() => setRssUrl(DEFAULT_RSS_URL)}>
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => void loadFeed(DEFAULT_RSS_URL, { select: true })}>
               <span className="icon icon-sm">public</span>
               官方示例
             </button>
@@ -263,7 +595,7 @@ export function FeedPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "var(--outline-v)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                  最近使用
+                  已订阅
                 </span>
                 <span style={{ fontSize: 12, color: "var(--outline)" }}>{savedSources.length} 个源</span>
               </div>
@@ -273,7 +605,10 @@ export function FeedPage() {
                     key={source.sourceUrl}
                     type="button"
                     className="btn btn-ghost btn-sm"
-                    onClick={() => void loadFeed(source.sourceUrl)}
+                    onClick={() => {
+                      setSelectedSource(source.sourceUrl);
+                      if (!feeds[source.sourceUrl]) void loadFeed(source.sourceUrl);
+                    }}
                     disabled={loading && rssUrl === source.sourceUrl}
                     style={{ alignItems: "flex-start", textAlign: "left" }}
                   >
@@ -294,30 +629,102 @@ export function FeedPage() {
       {importMessage && <div className="feedback feedback-success" style={{ margin: "12px 28px 0" }}>{importMessage}</div>}
       {error && <div className="feedback feedback-error" style={{ margin: "12px 28px 0" }}>{error}</div>}
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-        {loading && !feed ? (
-          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
-            <span className="icon icon-lg" style={{ color: "var(--outline)" }}>sync</span>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="empty-state" style={{ marginTop: 80 }}>
-            <div className="empty-state-icon"><span className="icon icon-lg">rss_feed</span></div>
-            <h3>{feed ? "当前筛选没有内容" : "还没有订阅内容"}</h3>
-            <p>{feed ? "换一个筛选条件或 RSS 源试试。" : "点击右上角「切换订阅源」来加载公开 RSS，或从最近使用的源里直接选一个。"}</p>
-          </div>
-        ) : (
-          filtered.map((item) => (
-            <FeedRow key={item.id} item={item} isImporting={importingId === item.id} onImport={() => void handleImport(item)} />
-          ))
-        )}
+      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", minHeight: 0, flex: 1 }}>
+        <aside className="source-sidebar">
+          <button
+            type="button"
+            className={`source-item source-item-button ${selectedSource === "all" ? "active" : ""}`}
+            onClick={() => setSelectedSource("all")}
+          >
+            <span className="source-item-icon icon icon-sm">dynamic_feed</span>
+            <span className="source-item-title">全部订阅源</span>
+            <span className="source-item-count">{allEntries.length}</span>
+          </button>
+          {savedSources.map((source) => {
+            const loadedFeed = feeds[source.sourceUrl];
+            const count = loadedFeed?.items.length ?? 0;
+            return (
+              <div
+                key={source.sourceUrl}
+                className={`source-item ${selectedSource === source.sourceUrl ? "active" : ""} ${source.lastRefreshStatus === "failed" ? "source-item-failed" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="source-item-main"
+                  title={source.lastRefreshStatus === "failed" && source.lastRefreshError ? source.lastRefreshError : undefined}
+                  onClick={() => {
+                    setSelectedSource(source.sourceUrl);
+                    if (!loadedFeed) void loadFeed(source.sourceUrl);
+                  }}
+                >
+                  <span className="source-item-icon icon icon-sm">rss_feed</span>
+                  <span className="source-item-title">{loadedFeed?.site_title ?? source.siteTitle}</span>
+                  <span className="source-item-count">{source.lastRefreshStatus === "failed" ? "!" : count}</span>
+                </button>
+                <button className="source-item-remove" type="button" title="移除订阅源" onClick={() => removeSource(source.sourceUrl)}>
+                  <span className="icon icon-sm">close</span>
+                </button>
+              </div>
+            );
+          })}
+          <button type="button" className="btn btn-ghost btn-sm" style={{ width: "100%", marginTop: 12, justifyContent: "center" }} onClick={() => setShowAddRss(true)}>
+            <span className="icon icon-sm">add</span>
+            添加订阅源
+          </button>
+        </aside>
+
+        <main style={{ overflowY: "auto", padding: "8px 0" }}>
+          {loading && allEntries.length === 0 ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+              <span className="icon icon-lg" style={{ color: "var(--outline)" }}>sync</span>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="empty-state" style={{ marginTop: 80 }}>
+              <div className="empty-state-icon"><span className="icon icon-lg">rss_feed</span></div>
+              <h3>{allEntries.length ? "当前筛选没有内容" : "还没有订阅内容"}</h3>
+              <p>{allEntries.length ? "换一个时间范围、搜索词或订阅源试试。" : "添加 RSS 源后，这里会按发布时间聚合显示所有更新。"}</p>
+            </div>
+          ) : (
+            filtered.map((item) => (
+              <FeedRow
+                key={`${item.sourceUrl}:${item.id}`}
+                item={item}
+                isRead={isFeedEntryRead(item, readEntries)}
+                isImporting={importingId === feedEntryReadKey(item)}
+                isSaved={Boolean(item.is_saved)}
+                onOpen={() => {
+                  markEntryRead(item);
+                  navigate(feedArticlePreviewPath(item));
+                }}
+                onImport={() => void handleImport(item)}
+              />
+            ))
+          )}
+        </main>
       </div>
     </div>
   );
 }
 
-function FeedRow({ item, isImporting, onImport }: { item: ApiFeedPreviewItem; isImporting: boolean; onImport: () => void }) {
+function FeedRow({
+  item,
+  isRead,
+  isImporting,
+  isSaved,
+  onOpen,
+  onImport,
+}: {
+  item: FeedEntry;
+  isRead: boolean;
+  isImporting: boolean;
+  isSaved: boolean;
+  onOpen: () => void;
+  onImport: () => void;
+}) {
   return (
     <div
+      role="button"
+      tabIndex={0}
       style={{
         display: "flex",
         alignItems: "flex-start",
@@ -325,35 +732,52 @@ function FeedRow({ item, isImporting, onImport }: { item: ApiFeedPreviewItem; is
         padding: "0 28px",
         borderBottom: "1px solid rgba(var(--outline-rgb),0.12)",
         transition: "background 120ms ease",
+        cursor: "pointer",
+      }}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
       }}
       onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-container)"; }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ""; }}
     >
-      <div style={{ width: 8, height: 8, borderRadius: "50%", marginTop: 20, marginRight: 14, flexShrink: 0, background: "var(--primary)" }} />
+      <div
+        aria-hidden
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          marginTop: 20,
+          marginRight: 14,
+          flexShrink: 0,
+          background: isRead ? "transparent" : "var(--primary)",
+        }}
+      />
 
       <div style={{ flex: 1, minWidth: 0, padding: "14px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-v)" }}>RSS</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-v)" }}>{item.sourceTitle}</span>
           <span style={{ fontSize: 11, color: "var(--outline-v)" }}>·</span>
           <span style={{ fontSize: 12, color: "var(--on-surface-v)" }}>{item.author ?? "未知作者"}</span>
           <span style={{ fontSize: 11, color: "var(--outline-v)" }}>·</span>
           <span style={{ fontSize: 12, color: "var(--outline)" }}>{formatPublishedAt(item.published_at)}</span>
         </div>
 
-        <a href={item.link} target="_blank" rel="noreferrer" style={{ display: "inline-block", textDecoration: "none" }}>
-          <h3
-            style={{
-              fontFamily: "Manrope, sans-serif",
-              fontSize: 15,
-              fontWeight: 700,
-              color: "var(--on-surface)",
-              margin: "0 0 5px",
-              lineHeight: 1.35,
-            }}
-          >
-            {item.title}
-          </h3>
-        </a>
+        <h3
+          style={{
+            fontFamily: "Manrope, sans-serif",
+            fontSize: 15,
+            fontWeight: 700,
+            color: "var(--on-surface)",
+            margin: "0 0 5px",
+            lineHeight: 1.35,
+          }}
+        >
+          {item.title}
+        </h3>
 
         <p
           style={{
@@ -375,15 +799,35 @@ function FeedRow({ item, isImporting, onImport }: { item: ApiFeedPreviewItem; is
             <span key={tag} className="chip chip-neutral" style={{ fontSize: 11 }}>{tag}</span>
           ))}
           {isRecent(item.published_at) && <span className="chip chip-primary" style={{ fontSize: 11 }}>最近更新</span>}
+          {isSaved && <span className="chip chip-secondary" style={{ fontSize: 11 }}>已加入</span>}
         </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, padding: "14px 0 14px 16px", flexShrink: 0 }}>
-        <a href={item.link} target="_blank" rel="noreferrer" className="topbar-icon-btn" title="打开原文" style={{ width: 28, height: 28 }}>
+        <a
+          href={item.link}
+          target="_blank"
+          rel="noreferrer"
+          className="topbar-icon-btn"
+          title="打开原文"
+          style={{ width: 28, height: 28 }}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
           <span className="icon icon-sm">open_in_new</span>
         </a>
-        <button type="button" title="加入稍后阅读" className="topbar-icon-btn" onClick={onImport} disabled={isImporting} style={{ width: 28, height: 28 }}>
-          <span className="icon icon-sm">bookmark_add</span>
+        <button
+          type="button"
+          title={isSaved ? "已加入稍后阅读" : "加入稍后阅读"}
+          className="topbar-icon-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            onImport();
+          }}
+          disabled={isImporting || isSaved}
+          style={{ width: 28, height: 28 }}
+        >
+          <span className="icon icon-sm">{isSaved ? "bookmark_added" : "bookmark_add"}</span>
         </button>
       </div>
     </div>

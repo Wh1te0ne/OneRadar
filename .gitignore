@@ -26,6 +26,7 @@ Desktop.ini
 .coverage
 *.log
 *.db
+oneradar_feed_state.json
 data/
 tmp/
 output/

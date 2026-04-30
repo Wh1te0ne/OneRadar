@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
@@ -27,6 +32,7 @@ from app.db.session import SessionLocal
 from app.schemas.annotations import HighlightEntry, NoteEntry
 from app.schemas.common import ContentType, ItemStatus, ReadingState, TaskStatus
 from app.schemas.items import (
+    BilibiliPreviewResponse,
     ImportItemResponse,
     ItemDeleteResponse,
     ItemDetailResponse,
@@ -84,6 +90,49 @@ TRACKING_QUERY_KEYS = {
 }
 
 
+def _clean_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    return cleaned or None
+
+
+def _plain_text_blocks(value: str) -> list[dict[str, object]]:
+    return [
+        {"type": "paragraph", "text": block.strip()}
+        for block in re.split(r"\n{2,}", value)
+        if block.strip()
+    ]
+
+
+def _preview_parsed_document(
+    parsed_text: str | None,
+    parser_name: str | None,
+    parser_version: str | None,
+) -> dict[str, object] | None:
+    text = (parsed_text or "").strip()
+    if not text:
+        return None
+    return {
+        "plain_text": text,
+        "structured_blocks": _plain_text_blocks(text),
+        "parser_name": _clean_optional_text(parser_name) or "feed-preview",
+        "parser_version": _clean_optional_text(parser_version) or "v1",
+    }
+
+BILIBILI_BVID_RE = re.compile(r"(BV[0-9A-Za-z]{10,})")
+BILIBILI_AV_RE = re.compile(r"(?:/video/|^)av(\d+)", re.IGNORECASE)
+
+
+def _https_url(value: object) -> str | None:
+    if not value:
+        return None
+    url = str(value)
+    if url.startswith("http://"):
+        return "https://" + url.removeprefix("http://")
+    return url
+
+
 def normalize_source_url(url: str) -> str:
     candidate = url.strip()
     if not candidate:
@@ -130,6 +179,44 @@ def normalize_source_url(url: str) -> str:
     )
 
 
+def find_saved_item_for_url(url: str) -> dict[str, str] | None:
+    normalized_url = normalize_source_url(url)
+    if not normalized_url:
+        return None
+
+    try:
+        validate_public_http_url(normalized_url)
+    except ValueError:
+        return None
+
+    try:
+        with SessionLocal() as session:
+            item = session.execute(
+                select(ContentItem).where(
+                    or_(
+                        ContentItem.normalized_url == normalized_url,
+                        ContentItem.source_url == normalized_url,
+                    )
+                )
+            ).scalars().first()
+            if item is None:
+                return None
+            return {"item_id": str(item.id), "uid": str(item.id)}
+    except SQLAlchemyError:
+        existing = next(
+            (
+                item
+                for item in STORE.items.values()
+                if str(item.get("source_url", "")) == normalized_url
+                or str(item.get("normalized_url", "")) == normalized_url
+            ),
+            None,
+        )
+        if existing is None:
+            return None
+        return {"item_id": str(existing["id"]), "uid": str(existing["id"])}
+
+
 def _normalize_content_type(source_hint: str | None, url: str) -> ContentType:
     normalized_hint = (source_hint or "").strip().casefold()
     normalized_url = url.casefold()
@@ -143,6 +230,132 @@ def _normalize_content_type(source_hint: str | None, url: str) -> ContentType:
 
 def _source_platform(content_type: ContentType) -> str:
     return "bilibili" if content_type == ContentType.bilibili_video else "web"
+
+
+def _duration_text(seconds: int | None) -> str | None:
+    if seconds is None or seconds < 0:
+        return None
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _extract_bilibili_ref(url: str) -> tuple[str, str, str]:
+    normalized_url = normalize_source_url(url)
+    if not normalized_url:
+        raise ValueError("url is required")
+    validate_public_http_url(normalized_url)
+    parsed = urlsplit(normalized_url)
+    host = parsed.hostname.casefold() if parsed.hostname else ""
+    if not any(domain in host for domain in ("bilibili.com", "b23.tv", "bili22.cn", "bili23.cn", "bili2233.cn")):
+        raise ValueError("仅支持 Bilibili 视频链接")
+
+    bvid_match = BILIBILI_BVID_RE.search(normalized_url)
+    if bvid_match:
+        bvid = bvid_match.group(1)
+        return bvid, "bvid", f"https://www.bilibili.com/video/{bvid}/"
+
+    av_match = BILIBILI_AV_RE.search(normalized_url)
+    if av_match:
+        aid = av_match.group(1)
+        return aid, "aid", f"https://www.bilibili.com/video/av{aid}/"
+
+    raise ValueError("没有识别到 BV 号或 av 号")
+
+
+def _fetch_bilibili_view_payload(video_id: str, id_type: str) -> dict[str, object]:
+    query_key = "bvid" if id_type == "bvid" else "aid"
+    request = Request(
+        f"https://api.bilibili.com/x/web-interface/view?{query_key}={video_id}",
+        headers={
+            "User-Agent": "OneRadar/0.1 (+https://localhost)",
+            "Referer": "https://www.bilibili.com/",
+        },
+    )
+    with urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_bilibili_cover(url: str) -> tuple[bytes, str]:
+    cover_url = _https_url(url)
+    if not cover_url:
+        raise ValueError("cover url is required")
+    validate_public_http_url(cover_url)
+    host = (urlsplit(cover_url).hostname or "").casefold()
+    if host != "hdslb.com" and not host.endswith(".hdslb.com"):
+        raise ValueError("仅支持 Bilibili 封面图片")
+
+    request = Request(
+        cover_url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.bilibili.com/",
+        },
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            content_type = response.headers.get_content_type() or "image/jpeg"
+            if not content_type.startswith("image/"):
+                raise ValueError("Bilibili 封面返回了非图片内容")
+            return response.read(), content_type
+    except HTTPError as exc:
+        raise ValueError(f"Bilibili 封面获取失败：{exc.code}") from exc
+    except URLError as exc:
+        raise ValueError("Bilibili 封面获取失败") from exc
+
+
+def _as_int(value: object) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _published_at_from_timestamp(value: object) -> datetime | None:
+    timestamp = _as_int(value)
+    if timestamp is None or timestamp <= 0:
+        return None
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+
+
+def preview_bilibili_item(url: str) -> BilibiliPreviewResponse:
+    video_id, id_type, canonical_url = _extract_bilibili_ref(url)
+    payload = _fetch_bilibili_view_payload(video_id, id_type)
+    if _as_int(payload.get("code")) != 0:
+        message = str(payload.get("message") or payload.get("msg") or "Bilibili 视频信息获取失败")
+        raise ValueError(message)
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("Bilibili 视频信息为空")
+
+    pages = data.get("pages")
+    page_count = len(pages) if isinstance(pages, list) else None
+    first_page = pages[0] if isinstance(pages, list) and pages and isinstance(pages[0], dict) else {}
+    owner = data.get("owner") if isinstance(data.get("owner"), dict) else {}
+    duration_seconds = _as_int(data.get("duration"))
+    aid = _as_int(data.get("aid"))
+    cid = _as_int(first_page.get("cid")) or _as_int(data.get("cid"))
+
+    return BilibiliPreviewResponse(
+        source_url=normalize_source_url(url),
+        normalized_url=canonical_url,
+        title=str(data.get("title") or "未命名视频"),
+        owner_name=str(owner.get("name")) if owner.get("name") else None,
+        owner_id=_as_int(owner.get("mid")),
+        cover_url=_https_url(data.get("pic")),
+        description=str(data.get("desc")) if data.get("desc") else None,
+        duration_seconds=duration_seconds,
+        duration_text=_duration_text(duration_seconds),
+        published_at=_published_at_from_timestamp(data.get("pubdate")),
+        bvid=str(data.get("bvid") or video_id) if id_type == "bvid" or data.get("bvid") else None,
+        aid=aid,
+        cid=cid,
+        page_count=page_count,
+        page_title=str(first_page.get("part")) if first_page.get("part") else None,
+    )
 
 
 def _default_folder_meta(folder_id: str, folder_name: str, is_inbox: bool) -> dict[str, object]:
@@ -474,7 +687,20 @@ def _item_detail_response(item: ContentItem) -> ItemDetailResponse:
     )
 
 
-def _fallback_import(url: str, source_hint: str | None) -> ImportItemResponse:
+def _fallback_import(
+    url: str,
+    source_hint: str | None,
+    *,
+    title: str | None = None,
+    site_title: str | None = None,
+    author: str | None = None,
+    published_at: datetime | None = None,
+    summary: str | None = None,
+    parsed_text: str | None = None,
+    parser_name: str | None = None,
+    parser_version: str | None = None,
+    generate_summary: bool = False,
+) -> ImportItemResponse:
     seed_store()
     normalized_url = normalize_source_url(url)
     if not normalized_url:
@@ -488,14 +714,45 @@ def _fallback_import(url: str, source_hint: str | None) -> ImportItemResponse:
             None,
         )
         if existing is not None:
+            preview_document = _preview_parsed_document(parsed_text, parser_name, parser_version)
+            initial_title = _clean_optional_text(title)
+            initial_author = _clean_optional_text(author)
+            initial_site = _clean_optional_text(site_title)
+            if preview_document or initial_title or initial_author or initial_site or published_at:
+                if initial_title:
+                    existing["title"] = initial_title
+                metadata = dict(existing.get("metadata") or {})
+                if initial_author:
+                    metadata["author_name"] = initial_author
+                if initial_site:
+                    metadata["site_name"] = initial_site
+                if published_at:
+                    metadata["published_at"] = published_at.isoformat()
+                existing["metadata"] = metadata
+                if preview_document:
+                    existing["parsed_document"] = preview_document
+                    existing["status"] = ItemStatus.completed.value
+            if preview_document and generate_summary:
+                task_id = str(uuid4())
+                STORE.tasks[task_id] = {
+                    "id": task_id,
+                    "item_id": str(existing["id"]),
+                    "task_type": "generate_summary",
+                    "status": "pending",
+                    "attempt_count": 0,
+                    "error_message": None,
+                    "created_at": now_utc(),
+                }
+            else:
+                task_id = None
             folder_id = str(existing.get("folder_id", INBOX_FOLDER_ID))
             folder_name = str(existing.get("folder_name", INBOX_FOLDER_NAME))
             return ImportItemResponse(
                 uid=str(existing["id"]),
                 item_id=str(existing["id"]),
                 existing_uid=str(existing["id"]),
-                task_id=None,
-                status="already_exists",
+                task_id=task_id,
+                status="pending" if task_id else "already_exists",
                 content_type=existing["content_type"],
                 folder_id=folder_id,
                 folder_name=folder_name,
@@ -504,22 +761,25 @@ def _fallback_import(url: str, source_hint: str | None) -> ImportItemResponse:
 
         item_id = str(uuid4())
         task_id = str(uuid4())
+        preview_document = _preview_parsed_document(parsed_text, parser_name, parser_version)
+        initial_title = _clean_optional_text(title) or "新导入内容"
+        published_iso = published_at.isoformat() if published_at else None
         item_record = {
             "id": item_id,
             "uid": item_id,
-            "title": "新导入内容",
+            "title": initial_title,
             "content_type": content_type,
             "source_url": normalized_url,
             "folder_id": INBOX_FOLDER_ID,
             "folder_name": INBOX_FOLDER_NAME,
             "is_inbox": True,
-            "status": ItemStatus.pending.value,
+            "status": ItemStatus.completed.value if preview_document else ItemStatus.pending.value,
             "metadata": {
-                "author_name": None,
-                "published_at": None,
-                "site_name": None,
+                "author_name": _clean_optional_text(author),
+                "published_at": published_iso,
+                "site_name": _clean_optional_text(site_title),
             },
-            "parsed_document": {
+            "parsed_document": preview_document or {
                 "plain_text": "",
                 "structured_blocks": [],
                 "parser_name": None,
@@ -536,16 +796,39 @@ def _fallback_import(url: str, source_hint: str | None) -> ImportItemResponse:
             "created_at": now_utc(),
             "updated_at": now_utc(),
         }
+        if summary:
+            item_record["summaries"] = [
+                {
+                    "summary_type": "one_line",
+                    "content": summary,
+                    "model_name": None,
+                    "version": 1,
+                }
+            ]
         STORE.items[item_id] = item_record
-        STORE.tasks[task_id] = {
-            "id": task_id,
-            "item_id": item_id,
-            "task_type": "fetch_meta",
-            "status": "pending",
-            "attempt_count": 0,
-            "error_message": None,
-            "created_at": now_utc(),
-        }
+        if preview_document:
+            if generate_summary:
+                STORE.tasks[task_id] = {
+                    "id": task_id,
+                    "item_id": item_id,
+                    "task_type": "generate_summary",
+                    "status": "pending",
+                    "attempt_count": 0,
+                    "error_message": None,
+                    "created_at": now_utc(),
+                }
+            else:
+                task_id = None
+        else:
+            STORE.tasks[task_id] = {
+                "id": task_id,
+                "item_id": item_id,
+                "task_type": "fetch_meta",
+                "status": "pending",
+                "attempt_count": 0,
+                "error_message": None,
+                "created_at": now_utc(),
+            }
 
     return ImportItemResponse(
         uid=item_id,
@@ -559,7 +842,20 @@ def _fallback_import(url: str, source_hint: str | None) -> ImportItemResponse:
     )
 
 
-def import_item(url: str, source_hint: str | None) -> ImportItemResponse:
+def import_item(
+    url: str,
+    source_hint: str | None,
+    *,
+    title: str | None = None,
+    site_title: str | None = None,
+    author: str | None = None,
+    published_at: datetime | None = None,
+    summary: str | None = None,
+    parsed_text: str | None = None,
+    parser_name: str | None = None,
+    parser_version: str | None = None,
+    generate_summary: bool = False,
+) -> ImportItemResponse:
     try:
         with SessionLocal() as session:
             user = get_primary_user(session)
@@ -571,6 +867,11 @@ def import_item(url: str, source_hint: str | None) -> ImportItemResponse:
                 raise ValueError("url is required")
             validate_public_http_url(normalized_url)
             content_type = _normalize_content_type(source_hint, normalized_url)
+            preview_document = _preview_parsed_document(parsed_text, parser_name, parser_version)
+            initial_title = _clean_optional_text(title) or "新导入内容"
+            initial_author = _clean_optional_text(author)
+            initial_site = _clean_optional_text(site_title)
+            initial_summary = _clean_optional_text(summary)
 
             existing = session.execute(
                 select(ContentItem).where(
@@ -579,13 +880,91 @@ def import_item(url: str, source_hint: str | None) -> ImportItemResponse:
                 )
             ).scalar_one_or_none()
             if existing is not None:
+                task: ProcessingTask | None = None
+                if preview_document or initial_title or initial_author or initial_site or published_at:
+                    if initial_title:
+                        existing.title = initial_title
+                    if initial_author:
+                        existing.author_name = initial_author
+                    if published_at:
+                        existing.published_at = published_at
+                    raw_meta = dict(existing.raw_meta or {})
+                    metadata = dict(raw_meta.get("metadata") or {})
+                    if initial_author:
+                        metadata["author_name"] = initial_author
+                    if published_at:
+                        metadata["published_at"] = published_at.isoformat()
+                    if initial_site:
+                        metadata["site_name"] = initial_site
+                        raw_meta["site_name"] = initial_site
+                    raw_meta["metadata"] = metadata
+                    if preview_document:
+                        raw_meta["parsed_document"] = preview_document
+                        existing.status = ItemStatus.completed.value
+                        parser_key = str(preview_document["parser_name"])
+                        parser_version_key = str(preview_document["parser_version"])
+                        existing_document = session.execute(
+                            select(ContentParsedDocument).where(
+                                ContentParsedDocument.content_item_id == existing.id,
+                                ContentParsedDocument.parser_name == parser_key,
+                                ContentParsedDocument.parser_version == parser_version_key,
+                            )
+                        ).scalar_one_or_none()
+                        if existing_document is None:
+                            session.add(
+                                ContentParsedDocument(
+                                    content_item_id=existing.id,
+                                    parser_name=parser_key,
+                                    parser_version=parser_version_key,
+                                    title=initial_title or existing.title,
+                                    excerpt=initial_summary,
+                                    byline=initial_author or existing.author_name,
+                                    language=None,
+                                    plain_text=str(preview_document["plain_text"]),
+                                    structured_blocks=list(preview_document["structured_blocks"]),
+                                    quality_score=None,
+                                    source_snapshot_id=None,
+                                )
+                            )
+                        else:
+                            existing_document.title = initial_title or existing_document.title
+                            existing_document.excerpt = initial_summary or existing_document.excerpt
+                            existing_document.byline = initial_author or existing_document.byline
+                            existing_document.plain_text = str(preview_document["plain_text"])
+                            existing_document.structured_blocks = list(preview_document["structured_blocks"])
+                    existing.raw_meta = raw_meta
+                if preview_document and generate_summary:
+                    task = ProcessingTask(
+                        content_item_id=existing.id,
+                        user_id=user.id,
+                        task_type="generate_summary",
+                        status=TaskStatus.pending.value,
+                        priority=0,
+                        attempt_count=0,
+                        max_attempts=3,
+                        locked_by=None,
+                        payload={
+                            "source_hint": source_hint,
+                            "url": normalized_url,
+                            "title": initial_title or existing.title,
+                            "summary": initial_summary,
+                            "parsed_document": preview_document,
+                        },
+                        result={},
+                        error_message=None,
+                        started_at=None,
+                        finished_at=None,
+                        next_retry_at=None,
+                    )
+                    session.add(task)
+                session.commit()
                 folder_id, folder_name, _ = _item_folder_info(existing)
                 return ImportItemResponse(
                     uid=str(existing.id),
                     item_id=str(existing.id),
                     existing_uid=str(existing.id),
-                    task_id=None,
-                    status="already_exists",
+                    task_id=str(task.id) if task is not None else None,
+                    status="pending" if task is not None else "already_exists",
                     content_type=ContentType(existing.content_type),
                     folder_id=folder_id,
                     folder_name=folder_name,
@@ -600,18 +979,24 @@ def import_item(url: str, source_hint: str | None) -> ImportItemResponse:
                 source_url=normalized_url,
                 normalized_url=normalized_url,
                 external_id=None,
-                title="新导入内容",
+                title=initial_title,
                 subtitle=None,
-                author_name=None,
+                author_name=initial_author,
                 author_id=None,
                 cover_url=None,
                 duration_seconds=None,
                 language=None,
-                status=ItemStatus.pending.value,
+                published_at=published_at,
+                status=ItemStatus.completed.value if preview_document else ItemStatus.pending.value,
                 visibility="private",
                 raw_meta={
-                    "metadata": {},
-                    "parsed_document": DEFAULT_PARSED_DOCUMENT,
+                    "metadata": {
+                        "author_name": initial_author,
+                        "published_at": published_at.isoformat() if published_at else None,
+                        "site_name": initial_site,
+                    },
+                    "site_name": initial_site,
+                    "parsed_document": preview_document or DEFAULT_PARSED_DOCUMENT,
                     "transcript": None,
                     "summaries": [],
                     "highlights": [],
@@ -626,37 +1011,92 @@ def import_item(url: str, source_hint: str | None) -> ImportItemResponse:
             session.add(item)
             session.flush()
 
-            task = ProcessingTask(
-                content_item_id=item.id,
-                user_id=user.id,
-                task_type="fetch_meta",
-                status=TaskStatus.pending.value,
-                priority=0,
-                attempt_count=0,
-                max_attempts=3,
-                locked_by=None,
-                payload={"source_hint": source_hint, "url": normalized_url},
-                result={},
-                error_message=None,
-                started_at=None,
-                finished_at=None,
-                next_retry_at=None,
-            )
-            session.add(task)
+            if preview_document:
+                session.add(
+                    ContentParsedDocument(
+                        content_item_id=item.id,
+                        parser_name=str(preview_document["parser_name"]),
+                        parser_version=str(preview_document["parser_version"]),
+                        title=initial_title,
+                        excerpt=initial_summary,
+                        byline=initial_author,
+                        language=None,
+                        plain_text=str(preview_document["plain_text"]),
+                        structured_blocks=list(preview_document["structured_blocks"]),
+                        quality_score=None,
+                        source_snapshot_id=None,
+                    )
+                )
+
+            task: ProcessingTask | None = None
+            if preview_document and generate_summary:
+                task = ProcessingTask(
+                    content_item_id=item.id,
+                    user_id=user.id,
+                    task_type="generate_summary",
+                    status=TaskStatus.pending.value,
+                    priority=0,
+                    attempt_count=0,
+                    max_attempts=3,
+                    locked_by=None,
+                    payload={
+                        "source_hint": source_hint,
+                        "url": normalized_url,
+                        "title": initial_title,
+                        "summary": initial_summary,
+                        "parsed_document": preview_document,
+                    },
+                    result={},
+                    error_message=None,
+                    started_at=None,
+                    finished_at=None,
+                    next_retry_at=None,
+                )
+                session.add(task)
+            elif not preview_document:
+                task = ProcessingTask(
+                    content_item_id=item.id,
+                    user_id=user.id,
+                    task_type="fetch_meta",
+                    status=TaskStatus.pending.value,
+                    priority=0,
+                    attempt_count=0,
+                    max_attempts=3,
+                    locked_by=None,
+                    payload={"source_hint": source_hint, "url": normalized_url},
+                    result={},
+                    error_message=None,
+                    started_at=None,
+                    finished_at=None,
+                    next_retry_at=None,
+                )
+                session.add(task)
             session.commit()
             folder_id, folder_name, _ = _item_folder_info(item)
             return ImportItemResponse(
                 uid=str(item.id),
                 item_id=str(item.id),
-                task_id=str(task.id),
-                status="pending",
+                task_id=str(task.id) if task is not None else None,
+                status="pending" if task is not None else "completed",
                 content_type=content_type,
                 folder_id=folder_id,
                 folder_name=folder_name,
                 is_duplicate=False,
             )
     except SQLAlchemyError:
-        return _fallback_import(url, source_hint)
+        return _fallback_import(
+            url,
+            source_hint,
+            title=title,
+            site_title=site_title,
+            author=author,
+            published_at=published_at,
+            summary=summary,
+            parsed_text=parsed_text,
+            parser_name=parser_name,
+            parser_version=parser_version,
+            generate_summary=generate_summary,
+        )
 
 
 def _filtered_items(

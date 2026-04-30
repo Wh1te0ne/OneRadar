@@ -6,6 +6,9 @@ export type ApiFeedPreviewItem = {
   author?: string | null;
   published_at?: string | null;
   tags: string[];
+  is_saved?: boolean;
+  saved_item_id?: string | null;
+  saved_uid?: string | null;
 };
 
 export type ApiFeedPreviewResponse = {
@@ -15,6 +18,48 @@ export type ApiFeedPreviewResponse = {
   description?: string | null;
   items: ApiFeedPreviewItem[];
   fetched_at: string;
+};
+
+export type ApiFeedArticlePreviewResponse = {
+  source_url: string;
+  final_url?: string | null;
+  title: string;
+  site_title?: string | null;
+  author?: string | null;
+  published_at?: string | null;
+  summary?: string | null;
+  plain_text: string;
+  parser_name: string;
+  parser_version: string;
+  fetched_at: string;
+  is_saved: boolean;
+  saved_item_id?: string | null;
+  saved_uid?: string | null;
+  can_generate_ai: boolean;
+};
+
+export type ApiFeedSourceEntry = {
+  source_url: string;
+  site_title: string;
+  site_url?: string | null;
+  description?: string | null;
+  last_loaded_at: string;
+  last_refresh_status?: string | null;
+  last_refresh_error?: string | null;
+  last_refreshed_at?: string | null;
+};
+
+export type ApiFeedStateResponse = {
+  sources: ApiFeedSourceEntry[];
+  feeds: Record<string, ApiFeedPreviewResponse>;
+  read_entries: string[];
+};
+
+export type ApiFeedRefreshResponse = {
+  total: number;
+  refreshed: number;
+  failed: number;
+  errors: Record<string, string>;
 };
 
 export type ApiHealth = {
@@ -270,6 +315,26 @@ export type ApiBilibiliQrcodePollResponse = {
   state: "waiting" | "scanned" | "confirmed" | "expired" | "failed";
   message: string;
   saved_cookie?: ApiBilibiliIntegrationSettings | null;
+};
+
+export type ApiBilibiliPreviewResponse = {
+  content_type: "bilibili_video";
+  source_url: string;
+  normalized_url: string;
+  title: string;
+  owner_name?: string | null;
+  owner_id?: number | null;
+  cover_url?: string | null;
+  description?: string | null;
+  duration_seconds?: number | null;
+  duration_text?: string | null;
+  published_at?: string | null;
+  bvid?: string | null;
+  aid?: number | null;
+  cid?: number | null;
+  page_count?: number | null;
+  page_title?: string | null;
+  subtitle_status: string;
 };
 
 export type ApiImportResponse = {

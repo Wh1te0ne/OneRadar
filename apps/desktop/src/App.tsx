@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useSearchParams } from "react-router-dom";
 import { createApiClient } from "./api";
 import { ConnectPage } from "./pages/ConnectPage";
+import { FeedArticlePreviewPage } from "./pages/FeedArticlePreviewPage";
 import { FeedPage } from "./pages/FeedPage";
 import { ImportPage } from "./pages/ImportPage";
 import { InboxPage } from "./pages/InboxPage";
@@ -14,7 +15,7 @@ import { useAppState } from "./state/appState";
 type PrimaryContext = "feed" | "podcasts" | "inbox" | "library" | "import" | "settings";
 
 function inferPrimaryContext(pathname: string, search: string): PrimaryContext {
-  if (pathname === "/" || pathname === "/feed") return "feed";
+  if (pathname === "/" || pathname === "/feed" || pathname.startsWith("/feed/")) return "feed";
   if (pathname === "/podcasts") return "podcasts";
   if (pathname === "/inbox") return "inbox";
   if (pathname === "/import") return "import";
@@ -62,8 +63,8 @@ function connectionLabel(state: "idle" | "checking" | "connected" | "unavailable
 }
 
 const navItems = [
-  { to: "/feed", label: "订阅源", icon: "rss_feed", ctx: "feed" as PrimaryContext },
   { to: "/inbox", label: "稍后阅读", icon: "bookmarks", ctx: "inbox" as PrimaryContext },
+  { to: "/feed", label: "订阅源", icon: "rss_feed", ctx: "feed" as PrimaryContext },
   { to: "/podcasts", label: "播客", icon: "podcasts", ctx: "podcasts" as PrimaryContext },
   { to: "/import", label: "Bilibili", icon: "smart_display", ctx: "import" as PrimaryContext },
 ];
@@ -295,6 +296,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/feed" replace />} />
             <Route path="/feed" element={<FeedPage />} />
+            <Route path="/feed/preview" element={<FeedArticlePreviewPage />} />
             <Route path="/podcasts" element={<PodcastsPage />} />
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/library" element={<LibraryPage />} />

@@ -12,6 +12,15 @@ from app.schemas.organization import CollectionEntry, TagEntry
 class ImportItemRequest(BaseModel):
     url: str = Field(min_length=1)
     source_hint: str | None = None
+    title: str | None = None
+    site_title: str | None = None
+    author: str | None = None
+    published_at: datetime | None = None
+    summary: str | None = None
+    parsed_text: str | None = None
+    parser_name: str | None = None
+    parser_version: str | None = None
+    generate_summary: bool = False
 
 
 class ImportItemResponse(BaseModel):
@@ -24,6 +33,30 @@ class ImportItemResponse(BaseModel):
     folder_id: str = "inbox"
     folder_name: str = "稍后阅读"
     is_duplicate: bool = False
+
+
+class BilibiliPreviewRequest(BaseModel):
+    url: str = Field(min_length=1)
+
+
+class BilibiliPreviewResponse(BaseModel):
+    content_type: ContentType = ContentType.bilibili_video
+    source_url: str
+    normalized_url: str
+    title: str
+    owner_name: str | None = None
+    owner_id: int | None = None
+    cover_url: str | None = None
+    description: str | None = None
+    duration_seconds: int | None = None
+    duration_text: str | None = None
+    published_at: datetime | None = None
+    bvid: str | None = None
+    aid: int | None = None
+    cid: int | None = None
+    page_count: int | None = None
+    page_title: str | None = None
+    subtitle_status: str = "确认加入后检测字幕"
 
 
 class ItemListEntry(BaseModel):

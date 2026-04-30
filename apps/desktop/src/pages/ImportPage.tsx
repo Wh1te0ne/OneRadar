@@ -3,6 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { createApiClient } from "../api";
 import type {
   ApiBilibiliIntegrationSettings,
+  ApiBilibiliPreviewResponse,
   ApiBilibiliQrcodeGenerateResponse,
   ApiBilibiliQrcodePollResponse,
   ApiImportResponse
@@ -37,14 +38,26 @@ function qrcodeStatusText(status: QrcodeStatus, message?: string | null) {
   return "未开始";
 }
 
+function apiRootUrl(baseUrl: string) {
+  const normalized = baseUrl.trim().replace(/\/+$/, "");
+  return normalized.endsWith("/api") ? normalized.slice(0, -4) : normalized;
+}
+
+function bilibiliCoverSrc(baseUrl: string, coverUrl: string) {
+  const params = new URLSearchParams({ url: coverUrl });
+  return `${apiRootUrl(baseUrl)}/api/items/bilibili/cover?${params.toString()}`;
+}
+
 export function ImportPage() {
   const { apiBaseUrl, loadFolders } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
 
   const [importUrl, setImportUrl] = useState("");
-  const [importBusy, setImportBusy] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ApiImportResponse | null>(null);
+  const [preview, setPreview] = useState<ApiBilibiliPreviewResponse | null>(null);
 
   const [integration, setIntegration] = useState<ApiBilibiliIntegrationSettings | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -109,18 +122,34 @@ export function ImportPage() {
     return () => window.clearInterval(timer);
   }, [qrcodeExpiresAt, qrcodeStatus]);
 
-  async function handleImport(e: FormEvent<HTMLFormElement>) {
+  async function handlePreview(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const url = importUrl.trim();
     if (!url) { setImportError("请先粘贴一个链接。"); return; }
-    setImportBusy(true); setImportError(null); setImportResult(null);
+    setPreviewBusy(true); setImportError(null); setImportResult(null);
     try {
-      const r = await client.importItem(url, "bilibili_video");
-      setImportResult(r); setImportUrl(""); await loadFolders();
+      const r = await client.previewBilibiliVideo(url);
+      setPreview(r);
+      setImportUrl(r.normalized_url);
     } catch (e) {
-      setImportError(e instanceof Error ? e.message : "导入失败");
+      setPreview(null);
+      setImportError(e instanceof Error ? e.message : "视频预览失败");
     } finally {
-      setImportBusy(false);
+      setPreviewBusy(false);
+    }
+  }
+
+  async function handleConfirmImport() {
+    if (!preview) return;
+    setConfirmBusy(true); setImportError(null); setImportResult(null);
+    try {
+      const r = await client.importItem(preview.normalized_url, "bilibili_video");
+      setImportResult(r);
+      await loadFolders();
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "加入稍后阅读失败");
+    } finally {
+      setConfirmBusy(false);
     }
   }
 
@@ -172,65 +201,31 @@ export function ImportPage() {
 
       <div className="workspace-grid bilibili-import-grid" style={{ marginBottom: 24 }}>
         <div className="card bilibili-import-card">
-          <div className="import-hero bilibili-import-hero" style={{ marginBottom: 24 }}>
-            <div className="import-hero-icon">
-              <span className="icon icon-lg">smart_display</span>
-            </div>
-            <h3>Bilibili 视频链接</h3>
-            <p>支持 bilibili.com 与 b23.tv 短链</p>
+          <div className="card-header bilibili-import-header">
+            <span className="card-title">输入链接</span>
+            <span className="chip chip-neutral">bilibili.com / b23.tv</span>
           </div>
 
-          <form className="stack" onSubmit={(e) => void handleImport(e)}>
-            <div className="field">
+          <form className="bilibili-url-form" onSubmit={(e) => void handlePreview(e)}>
+            <div className="field bilibili-url-field">
               <label htmlFor="import-url">链接地址</label>
               <input
                 id="import-url"
                 className="input"
                 value={importUrl}
-                onChange={(e) => setImportUrl(e.target.value)}
+                onChange={(e) => {
+                  setImportUrl(e.target.value);
+                  setImportResult(null);
+                }}
                 placeholder="https://www.bilibili.com/video/BV…"
               />
             </div>
-
-            <div className="bilibili-flow-list">
-              {[
-                { icon: "subtitles", label: "字幕优先", desc: "先读取公开视频字幕或登录态可见字幕" },
-                { icon: "graphic_eq", label: "转写兜底", desc: "字幕不可用时提取音频并保留时间戳" },
-                { icon: "auto_stories", label: "进入阅读库", desc: "生成可阅读转写、摘要和大纲任务" },
-              ].map((t) => (
-                <div className="bilibili-flow-item" key={t.label}>
-                  <span className="icon icon-sm">{t.icon}</span>
-                  <div>
-                    <div>{t.label}</div>
-                    <p>{t.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="btn-group">
-              <button className="btn btn-bili-primary" type="submit" disabled={importBusy} style={{ flex: 1, justifyContent: "center" }}>
-                <span className="icon icon-sm">{importBusy ? "sync" : "send"}</span>
-                {importBusy ? "解析中…" : "解析视频"}
-              </button>
-            </div>
+            <button className="btn btn-bili-primary" type="submit" disabled={previewBusy}>
+              <span className="icon icon-sm">{previewBusy ? "sync" : "manage_search"}</span>
+              {previewBusy ? "解析中…" : "解析视频"}
+            </button>
           </form>
 
-          {importResult && (
-            <div className="feedback feedback-success" style={{ marginTop: 16 }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                {importResult.is_duplicate ? "链接已存在" : "✓ 已创建导入任务"}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <span className="chip chip-success">UID {importResult.uid}</span>
-                <span className="chip chip-success">状态 {importResult.status}</span>
-                <span className="chip chip-success">位置 {displayFolderName(importResult.folder_name, importResult.is_inbox)}</span>
-              </div>
-              {importResult.is_duplicate && (
-                <p style={{ fontSize: 12, marginTop: 6, marginBottom: 0 }}>该链接已存在，复用 UID {importResult.existing_uid ?? importResult.uid}。</p>
-              )}
-            </div>
-          )}
           {importError && <div className="feedback feedback-error" style={{ marginTop: 16 }}>{importError}</div>}
         </div>
 
@@ -305,6 +300,82 @@ export function ImportPage() {
             {settingsMessage && <div className="feedback feedback-success" style={{ marginTop: 12 }}>{settingsMessage}</div>}
             {settingsError && <div className="feedback feedback-error" style={{ marginTop: 12 }}>{settingsError}</div>}
           </div>
+        </div>
+
+        <div className="card bilibili-preview-card">
+          <div className="card-header bilibili-preview-header">
+            <span className="card-title">视频预览</span>
+            <span className={`chip ${preview ? "chip-success" : "chip-neutral"}`}>{preview ? "待确认" : "未解析"}</span>
+          </div>
+
+          {preview ? (
+            <div className="bilibili-preview-content">
+              {preview.cover_url ? (
+                <img className="bilibili-preview-cover" src={bilibiliCoverSrc(apiBaseUrl, preview.cover_url)} alt="" />
+              ) : (
+                <div className="bilibili-preview-cover bilibili-preview-cover-empty">
+                  <span className="icon">smart_display</span>
+                </div>
+              )}
+
+              <div className="bilibili-preview-main">
+                <h3>{preview.title}</h3>
+                <div className="bilibili-preview-meta">
+                  {preview.owner_name && <span>UP {preview.owner_name}</span>}
+                  {preview.duration_text && <span>时长 {preview.duration_text}</span>}
+                  {preview.bvid && <span>{preview.bvid}</span>}
+                </div>
+                {preview.description && <p>{preview.description}</p>}
+              </div>
+
+              <div className="bilibili-preview-facts">
+                {[
+                  { label: "UP 主", value: preview.owner_name ?? "未知" },
+                  { label: "时长", value: preview.duration_text ?? "未知" },
+                  {
+                    label: "分集",
+                    value:
+                      preview.page_count && preview.page_count > 1
+                        ? `${preview.page_count} 个分 P`
+                        : "单个视频",
+                  },
+                ].map((row) => (
+                  <div key={row.label}>
+                    <span>{row.label}</span>
+                    <strong>{row.value}</strong>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                className="btn btn-bili-primary"
+                type="button"
+                disabled={confirmBusy}
+                onClick={() => void handleConfirmImport()}
+              >
+                <span className="icon icon-sm">{confirmBusy ? "sync" : "playlist_add_check"}</span>
+                {confirmBusy ? "加入中…" : "确认加入稍后阅读"}
+              </button>
+
+              {importResult && (
+                <div className="feedback feedback-success">
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                    {importResult.is_duplicate ? "链接已存在" : "已加入稍后阅读"}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <span className="chip chip-success">UID {importResult.uid}</span>
+                    <span className="chip chip-success">状态 {importResult.status}</span>
+                    <span className="chip chip-success">位置 {displayFolderName(importResult.folder_name, importResult.folder_id === "inbox")}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bilibili-preview-empty">
+              <span className="icon icon-lg">movie_info</span>
+              <p>这里会显示封面、标题、UP 主和时长。确认是正确视频后，再加入稍后阅读并启动字幕、转写和 AI 摘要。</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

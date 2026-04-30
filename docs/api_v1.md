@@ -178,7 +178,45 @@ Response:
 
 V1 exposes a single import entrypoint for article and Bilibili URLs. Podcast episodes are imported through the podcast API because their identity comes from RSS episode metadata, not only from a pasted URL.
 
-### 6.1 Create Import Task
+### 6.1 Preview Bilibili Video
+
+The Bilibili desktop surface may preview video metadata before creating a reading item. Preview is intentionally read-only: it fetches title, cover, owner, duration, IDs, and a normalized URL, but does not create a `content_item` or enqueue AI/transcription work.
+
+```http
+POST /api/items/bilibili/preview
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "url": "https://www.bilibili.com/video/BV1xxxxxxx"
+}
+```
+
+Response:
+
+```json
+{
+  "content_type": "bilibili_video",
+  "source_url": "https://www.bilibili.com/video/BV1xxxxxxx",
+  "normalized_url": "https://www.bilibili.com/video/BV1xxxxxxx/",
+  "title": "视频标题",
+  "owner_name": "UP 主",
+  "cover_url": "https://i0.hdslb.com/...",
+  "duration_seconds": 1234,
+  "duration_text": "20:34",
+  "bvid": "BV1xxxxxxx",
+  "aid": 123,
+  "cid": 456,
+  "subtitle_status": "确认加入后检测字幕"
+}
+```
+
+The client should call the import endpoint only after the user confirms the preview is the intended video.
+
+### 6.2 Create Import Task
 
 ```http
 POST /api/items/import
@@ -189,12 +227,21 @@ Request:
 
 ```json
 {
-  "url": "https://www.bilibili.com/video/BV1xxxxxxx",
-  "source_hint": "bilibili"
+  "url": "https://example.com/article",
+  "source_hint": "article",
+  "title": "Optional preview title",
+  "site_title": "Optional RSS source",
+  "author": "Optional author",
+  "published_at": "2026-04-30T08:30:00Z",
+  "summary": "Optional RSS summary",
+  "parsed_text": "Optional cleaned reader text from preview",
+  "parser_name": "feed-preview",
+  "parser_version": "v1",
+  "generate_summary": true
 }
 ```
 
-`source_hint` is optional. If omitted, the backend infers the source from the URL.
+`source_hint` is optional. If omitted, the backend infers the source from the URL. The optional preview fields are used by RSS preview saves so the backend can persist the already-cleaned reader text immediately and queue AI summary generation only after an explicit save.
 
 Response:
 
@@ -564,6 +611,51 @@ POST /api/podcasts/episodes/import
 ```
 
 Creates a `podcast_episode` content item in Inbox / later reading. The request includes feed URL, episode title, GUID, publish time, enclosure URL, and optional enclosure metadata. Dedupe is based on feed URL plus GUID, falling back to enclosure URL. Only this explicit import step may download and persist audio.
+
+## 6.4 RSS Preview APIs
+
+RSS subscriptions are a discovery surface, not an automatic ingestion path.
+
+```http
+GET /api/feeds/preview?url=https://blog.python.org/rss.xml&limit=40
+```
+
+Returns feed metadata and recent entries without creating content items. Each entry includes `is_saved`, `saved_item_id`, and `saved_uid` when its article URL already exists in saved items. HN-style descriptions with explicit `Article URL` and `Comments URL` use the article URL as the entry link.
+
+```http
+GET /api/feeds/article-preview?url=https://example.com/post&title=Fallback
+```
+
+Fetches a single RSS article URL and returns a transient clean reader preview. This endpoint does not create a `content_item` and does not enqueue parsing or AI tasks. It returns `is_saved`, `saved_item_id`, `saved_uid`, and `can_generate_ai=true` only when the URL already exists as a saved item. The desktop client should call `POST /api/items/import` only when the user explicitly adds the article to 稍后阅读.
+
+```http
+GET /api/feeds/state
+POST /api/feeds/cache
+POST /api/feeds/read
+POST /api/feeds/refresh
+POST /api/feeds/sources/error
+DELETE /api/feeds/sources?url=https://blog.python.org/rss.xml
+```
+
+Persists the RSS discovery surface in the primary database. `POST /api/feeds/cache` upserts a loaded source and its current entries. `POST /api/feeds/read` marks a cached entry as read. `POST /api/feeds/refresh` refreshes all saved RSS sources server-side and returns `{ total, refreshed, failed, errors }`. `POST /api/feeds/sources/error` records a refresh failure without deleting the previous cached entries. Deleting a source removes its cached entries and read markers.
+
+The API process also runs the same refresh logic on a timer when `ONERADAR_FEED_REFRESH_ENABLED=true`. The default interval is controlled by `ONERADAR_FEED_REFRESH_INTERVAL_SECONDS` and defaults to 1800 seconds.
+
+## 6.5 Direct API Use Cases
+
+The desktop client is only one consumer of the backend. These endpoints are stable enough for local scripts or future integrations:
+
+- Add an article link to 稍后阅读 and start parsing: `POST /api/items/import` with `{ "url": "...", "source_hint": "article" }`.
+- Add a Bilibili video link to 稍后阅读 and start parsing: `POST /api/items/import` with `{ "url": "...", "source_hint": "bilibili_video" }`.
+- Add a Bilibili video after preview: `POST /api/items/bilibili/preview`, then `POST /api/items/import`.
+- List knowledge-library or inbox items: `GET /api/items?inbox_only=true&page=1&page_size=20` or `GET /api/items?folder_id={folder_id}`.
+- Read a saved item with parsed text, summaries, transcript, tags, notes, and collections: `GET /api/items/{id}`.
+- List and create folders: `GET /api/items/folders`, `POST /api/items/folders`.
+- Move an item into a folder: `POST /api/items/{id}/move`.
+- Trigger or retry AI summary generation for a saved item: `POST /api/items/{id}/summaries/generate`.
+- Read or refresh RSS discovery state: `GET /api/feeds/state`, `POST /api/feeds/refresh`.
+
+The current direct-add API intentionally covers articles and Bilibili videos. Podcast import still uses podcast-specific episode metadata because there is not yet a single user-facing podcast URL format that can represent a stable episode identity.
 
 Provider API responses must never echo raw API keys. The server stores provider keys in `api_key_encrypted` and only exposes `api_key_configured` to the client.
 

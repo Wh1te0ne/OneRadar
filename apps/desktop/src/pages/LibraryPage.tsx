@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiItemSummary } from "../api";
 import { useAppState } from "../state/appState";
@@ -45,15 +45,34 @@ function sortByRecent(items: ApiItemSummary[]) {
   });
 }
 
+type ItemContextMenuState = {
+  itemId: string;
+  x: number;
+  y: number;
+};
+
+function createContextMenuState(itemId: string, x: number, y: number): ItemContextMenuState {
+  const margin = 12;
+  const menuWidth = 220;
+  const menuHeight = 132;
+  return {
+    itemId,
+    x: Math.max(margin, Math.min(x, window.innerWidth - menuWidth - margin)),
+    y: Math.max(margin, Math.min(y, window.innerHeight - menuHeight - margin)),
+  };
+}
+
 export function LibraryPage() {
   const { folderId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { apiBaseUrl, folders, workspace } = useAppState();
+  const { apiBaseUrl, folders, loadFolders, workspace } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const inboxFolderId = workspace?.default_inbox_folder?.id ?? "inbox";
 
   const [items, setItems] = useState<ApiItemSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [menuState, setMenuState] = useState<ItemContextMenuState | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const keyword = searchParams.get("q")?.trim() ?? "";
   const tagFilter = searchParams.get("tag")?.trim() ?? "";
@@ -87,6 +106,22 @@ export function LibraryPage() {
     return () => { cancelled = true; };
   }, [client, folderId, keyword, tagFilter]);
 
+  useEffect(() => {
+    if (!menuState) return;
+    const close = () => setMenuState(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuState(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menuState]);
+
   const visibleItems = useMemo(() => {
     const kw = keyword.toLowerCase();
     return items.filter((i) =>
@@ -99,6 +134,19 @@ export function LibraryPage() {
     if (value) next.set(key, value);
     else next.delete(key);
     setSearchParams(next);
+  }
+
+  async function handleDeleteItem(item: ApiItemSummary) {
+    setMenuState(null);
+    if (!window.confirm(`确定删除「${item.title}」吗？`)) return;
+    setDeleteError(null);
+    try {
+      await client.deleteItem(item.id);
+      setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+      await loadFolders();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "删除失败");
+    }
   }
 
   const currentFolder = folderEntries.find((f) => f.id === folderId);
@@ -133,6 +181,10 @@ export function LibraryPage() {
 
         {/* List */}
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+          {deleteError && (
+            <div className="feedback feedback-error" style={{ margin: "12px 28px 0" }}>{deleteError}</div>
+          )}
+
           {loading && (
             <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
               <span className="icon icon-lg" style={{ color: "var(--outline)" }}>sync</span>
@@ -150,30 +202,52 @@ export function LibraryPage() {
           )}
 
           {visibleItems.map((item) => (
-            <LibraryRow key={item.id} item={item} />
+            <LibraryRow
+              key={item.id}
+              item={item}
+              menuState={menuState?.itemId === item.id ? menuState : null}
+              onOpenMenu={(x, y) => setMenuState(createContextMenuState(item.id, x, y))}
+              onDelete={() => void handleDeleteItem(item)}
+            />
           ))}
         </div>
     </div>
   );
 }
 
-function LibraryRow({ item }: { item: ApiItemSummary }) {
+function LibraryRow({
+  item,
+  menuState,
+  onOpenMenu,
+  onDelete,
+}: {
+  item: ApiItemSummary;
+  menuState: ItemContextMenuState | null;
+  onOpenMenu: (x: number, y: number) => void;
+  onDelete: () => void;
+}) {
+  const navigate = useNavigate();
   const isVideo = item.content_type === "bilibili_video";
   const progress = normalizeProgress(item.progress_percent);
   const showProgress = progress > 0 && progress < 100;
+  const readHref = `/items/${item.id}`;
 
 
   return (
-    <Link
-      to={`/items/${item.id}`}
-      style={{ display: "block", textDecoration: "none" }}
+    <div
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onOpenMenu(event.clientX, event.clientY);
+      }}
     >
       <div
         style={{
           display: "flex", alignItems: "flex-start", gap: 0,
           padding: "0 28px", borderBottom: "1px solid rgba(var(--outline-rgb),0.12)",
           transition: "background 120ms ease",
+          cursor: "pointer",
         }}
+        onClick={() => navigate(readHref)}
         onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-container)"; }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ""; }}
       >
@@ -250,9 +324,48 @@ function LibraryRow({ item }: { item: ApiItemSummary }) {
           <span style={{ fontSize: 11.5, color: "var(--outline)" }}>
             {formatTime(item.updated_at ?? item.created_at)}
           </span>
-          <span className="icon icon-sm" style={{ color: "var(--outline-v)" }}>chevron_right</span>
+          <button
+            type="button"
+            className="topbar-icon-btn"
+            aria-label="更多操作"
+            title="更多操作"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenMenu(event.clientX, event.clientY);
+            }}
+            style={{ width: 28, height: 28 }}
+          >
+            <span className="icon icon-sm">more_horiz</span>
+          </button>
         </div>
       </div>
-    </Link>
+
+      {menuState && (
+        <div
+          className="item-context-menu"
+          style={{ left: menuState.x, top: menuState.y }}
+          onClick={(event) => event.stopPropagation()}
+          role="menu"
+        >
+          <button type="button" className="context-menu-item" onClick={() => navigate(readHref)}>
+            <span className="icon icon-sm">auto_stories</span>
+            阅读
+          </button>
+
+          {item.source_url && (
+            <a className="context-menu-item" href={item.source_url} target="_blank" rel="noreferrer">
+              <span className="icon icon-sm">open_in_new</span>
+              打开原文
+            </a>
+          )}
+
+          <button type="button" className="context-menu-item context-menu-danger" onClick={onDelete}>
+            <span className="icon icon-sm">delete</span>
+            删除
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

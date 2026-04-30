@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from html import unescape
+from html.parser import HTMLParser
 import ipaddress
 import re
 import socket
@@ -11,7 +12,8 @@ from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from xml.etree import ElementTree as ET
 
-from app.schemas.feeds import FeedPreviewItem, FeedPreviewResponse
+from app.schemas.feeds import FeedArticlePreviewResponse, FeedPreviewItem, FeedPreviewResponse
+from app.services.items_service import find_saved_item_for_url
 from app.services.url_safety import (
     is_allowed_proxy_resolution_address,
     is_blocked_public_address,
@@ -29,6 +31,8 @@ ALLOWED_FEED_CONTENT_TYPES = {
 }
 DEFAULT_FEED_LIMIT = 12
 MAX_FEED_LIMIT = 40
+MAX_ARTICLE_BYTES = 2_500_000
+HN_ARTICLE_URL_RE = re.compile(r"\bArticle URL:\s*(https?://\S+)", re.IGNORECASE)
 
 
 class UnsafeFeedUrlError(ValueError):
@@ -53,6 +57,29 @@ def _strip_html(value: str | None) -> str | None:
         return None
     text = re.sub(r"<[^>]+>", " ", value)
     return _normalize_whitespace(unescape(text))
+
+
+def _extract_hn_article_url(summary: str | None) -> str | None:
+    if not summary or "Comments URL:" not in summary or "Article URL:" not in summary:
+        return None
+    match = HN_ARTICLE_URL_RE.search(summary)
+    if not match:
+        return None
+    candidate = match.group(1).rstrip(").,;]")
+    parsed = urlsplit(candidate)
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
+        return None
+    return candidate
+
+
+def _apply_saved_state(item: FeedPreviewItem) -> FeedPreviewItem:
+    saved = find_saved_item_for_url(item.link)
+    if saved is None:
+        return item
+    item.is_saved = True
+    item.saved_item_id = saved["item_id"]
+    item.saved_uid = saved["uid"]
+    return item
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -153,6 +180,153 @@ def _read_feed_xml(source_url: str) -> tuple[str, str, str | None]:
         raise ValueError(f"feed fetch failed: {error}") from error
 
 
+def _read_article_html(source_url: str) -> tuple[str, str, str | None]:
+    _ensure_safe_fetch_target(source_url)
+    request = Request(
+        source_url,
+        headers={
+            "User-Agent": "OneRadarAPI/0.1",
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
+        },
+    )
+    opener = build_opener(_SafeRedirectHandler())
+    try:
+        with opener.open(request, timeout=12) as response:
+            final_url = getattr(response, "url", source_url)
+            _ensure_safe_fetch_target(final_url)
+            content_type = response.headers.get_content_type()
+            raw_body = response.read(MAX_ARTICLE_BYTES)
+            charset = response.headers.get_content_charset() or "utf-8"
+            html_text = raw_body.decode(charset, errors="replace")
+            return html_text, final_url, content_type
+    except (HTTPError, URLError, TimeoutError, UnsafeFeedUrlError, ValueError) as error:
+        raise ValueError(f"article fetch failed: {error}") from error
+
+
+class _ReadableHtmlParser(HTMLParser):
+    _ignored_tags = {"script", "style", "noscript", "svg", "canvas", "form", "iframe", "nav", "header", "footer"}
+    _block_tags = {"article", "main", "section", "p", "li", "blockquote", "pre", "h1", "h2", "h3", "h4", "div"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title: str | None = None
+        self.author: str | None = None
+        self.description: str | None = None
+        self.site_title: str | None = None
+        self._title_parts: list[str] = []
+        self._current_parts: list[str] = []
+        self._article_blocks: list[str] = []
+        self._body_blocks: list[str] = []
+        self._ignore_depth = 0
+        self._body_depth = 0
+        self._article_depth = 0
+        self._main_depth = 0
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        name = tag.casefold()
+        attrs_map = {key.casefold(): (value or "") for key, value in attrs}
+        if name in self._ignored_tags:
+            self._ignore_depth += 1
+            return
+        if self._ignore_depth:
+            return
+        if name == "body":
+            self._body_depth += 1
+        elif name == "article":
+            self._flush_current()
+            self._article_depth += 1
+        elif name == "main":
+            self._flush_current()
+            self._main_depth += 1
+        elif name == "title":
+            self._in_title = True
+        elif name == "meta":
+            self._capture_meta(attrs_map)
+        elif name in self._block_tags:
+            self._flush_current()
+        elif name == "br":
+            self._flush_current()
+
+    def handle_endtag(self, tag: str) -> None:
+        name = tag.casefold()
+        if name in self._ignored_tags and self._ignore_depth:
+            self._ignore_depth -= 1
+            return
+        if self._ignore_depth:
+            return
+        if name == "title":
+            self._in_title = False
+            self.title = _normalize_whitespace(" ".join(self._title_parts)) or self.title
+            self._title_parts = []
+            return
+        if name in self._block_tags or name == "br":
+            self._flush_current()
+        if name == "article" and self._article_depth:
+            self._article_depth -= 1
+        elif name == "main" and self._main_depth:
+            self._main_depth -= 1
+        elif name == "body" and self._body_depth:
+            self._body_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._ignore_depth:
+            return
+        if self._in_title:
+            self._title_parts.append(data)
+            return
+        if self._body_depth or self._article_depth or self._main_depth:
+            self._current_parts.append(data)
+
+    def close(self) -> None:
+        self._flush_current()
+        super().close()
+
+    def _capture_meta(self, attrs: dict[str, str]) -> None:
+        content = _normalize_whitespace(attrs.get("content"))
+        if not content:
+            return
+        key = (attrs.get("name") or attrs.get("property") or "").casefold()
+        if key in {"og:title", "twitter:title"} and not self.title:
+            self.title = content
+        elif key in {"author", "article:author", "byl"} and not self.author:
+            self.author = content
+        elif key in {"description", "og:description", "twitter:description"} and not self.description:
+            self.description = content
+        elif key in {"og:site_name", "application-name"} and not self.site_title:
+            self.site_title = content
+
+    def _flush_current(self) -> None:
+        text = _normalize_whitespace(" ".join(self._current_parts))
+        self._current_parts = []
+        if not text:
+            return
+        target = self._article_blocks if self._article_depth or self._main_depth else self._body_blocks
+        if not target or target[-1] != text:
+            target.append(text)
+
+    def plain_text(self) -> str | None:
+        blocks = self._article_blocks if self._article_blocks else self._body_blocks
+        cleaned: list[str] = []
+        for block in blocks:
+            if len(block) < 2:
+                continue
+            if cleaned and cleaned[-1] == block:
+                continue
+            cleaned.append(block)
+        text = "\n\n".join(cleaned).strip()
+        return text or None
+
+
+def _drop_duplicate_title_block(plain_text: str, title: str) -> str:
+    blocks = [block.strip() for block in plain_text.split("\n\n") if block.strip()]
+    if not blocks:
+        return plain_text
+    if _normalize_whitespace(blocks[0]) == _normalize_whitespace(title):
+        return "\n\n".join(blocks[1:]).strip() or plain_text
+    return plain_text
+
+
 def _parse_rss_item(item: ET.Element) -> FeedPreviewItem | None:
     title = _normalize_whitespace(_child_text(item, "title"))
     link = _normalize_whitespace(_child_text(item, "link"))
@@ -160,6 +334,7 @@ def _parse_rss_item(item: ET.Element) -> FeedPreviewItem | None:
         return None
     guid = _normalize_whitespace(_child_text(item, "guid"))
     summary = _strip_html(_child_text(item, "description", "encoded"))
+    link = _extract_hn_article_url(summary) or link
     author = _normalize_whitespace(_child_text(item, "creator", "author"))
     published_at = _parse_datetime(_child_text(item, "pubDate", "date", "published", "updated"))
     tags = [_normalize_whitespace(value) for value in _child_all_text(item, "category")]
@@ -265,6 +440,7 @@ def _parse_feed(xml_text: str, source_url: str, limit: int) -> FeedPreviewRespon
         raise ValueError("unsupported feed format")
 
     items.sort(key=lambda item: item.published_at or datetime.fromtimestamp(0, tz=UTC), reverse=True)
+    items = [_apply_saved_state(item) for item in items]
     return FeedPreviewResponse(
         source_url=source_url,
         site_title=site_title,
@@ -286,5 +462,54 @@ def preview_feed(url: str, limit: int = DEFAULT_FEED_LIMIT) -> FeedPreviewRespon
     response = _parse_feed(xml_text, final_url, normalized_limit)
     response.source_url = final_url
     return response
+
+
+def preview_feed_article(
+    url: str,
+    *,
+    title: str | None = None,
+    source_title: str | None = None,
+    author: str | None = None,
+    published_at: str | None = None,
+    summary: str | None = None,
+) -> FeedArticlePreviewResponse:
+    source_url = url.strip()
+    if not source_url:
+        raise ValueError("article url is required")
+
+    html_text, final_url, content_type = _read_article_html(source_url)
+    if content_type and "html" not in content_type and content_type not in {"text/plain", "application/octet-stream"}:
+        raise ValueError(f"unsupported article content type: {content_type}")
+
+    parser = _ReadableHtmlParser()
+    try:
+        parser.feed(html_text)
+        parser.close()
+    except Exception as error:  # HTMLParser can surface malformed entity edge cases.
+        raise ValueError(f"article parse failed: {error}") from error
+
+    fallback_summary = _strip_html(summary)
+    plain_text = parser.plain_text() or fallback_summary
+    if not plain_text:
+        raise ValueError("article preview did not contain readable text")
+
+    parsed_title = _normalize_whitespace(parser.title) or _normalize_whitespace(title) or final_url
+    plain_text = _drop_duplicate_title_block(plain_text, parsed_title)
+    saved = find_saved_item_for_url(final_url) or find_saved_item_for_url(source_url)
+    return FeedArticlePreviewResponse(
+        source_url=source_url,
+        final_url=final_url,
+        title=parsed_title,
+        site_title=_normalize_whitespace(parser.site_title) or _normalize_whitespace(source_title),
+        author=_normalize_whitespace(parser.author) or _normalize_whitespace(author),
+        published_at=_parse_datetime(published_at),
+        summary=_normalize_whitespace(parser.description) or fallback_summary,
+        plain_text=plain_text,
+        fetched_at=datetime.now(UTC),
+        is_saved=saved is not None,
+        saved_item_id=saved["item_id"] if saved else None,
+        saved_uid=saved["uid"] if saved else None,
+        can_generate_ai=saved is not None,
+    )
 
 

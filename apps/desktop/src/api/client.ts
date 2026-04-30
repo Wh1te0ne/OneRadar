@@ -1,12 +1,16 @@
 import type {
   ApiBilibiliCookieParseResponse,
   ApiBilibiliIntegrationSettings,
+  ApiBilibiliPreviewResponse,
   ApiBilibiliQrcodeGenerateResponse,
   ApiBilibiliQrcodePollResponse,
   ApiBootstrapResponse,
   ApiCollection,
   ApiCreateFolderResponse,
+  ApiFeedArticlePreviewResponse,
   ApiFeedPreviewResponse,
+  ApiFeedRefreshResponse,
+  ApiFeedStateResponse,
   ApiFolderEntry,
   ApiHealth,
   ApiHighlight,
@@ -138,6 +142,48 @@ export function createApiClient(baseUrl: string) {
       const params = new URLSearchParams({ url, limit: String(limit) });
       return request<ApiFeedPreviewResponse>(baseUrl, "/api/feeds/preview?" + params.toString());
     },
+    getFeedState: () => request<ApiFeedStateResponse>(baseUrl, "/api/feeds/state"),
+    cacheFeedPreview: (feed: ApiFeedPreviewResponse) =>
+      request<ApiFeedStateResponse>(baseUrl, "/api/feeds/cache", {
+        method: "POST",
+        body: JSON.stringify({ feed })
+      }),
+    markFeedEntryRead: (entryKey: string) =>
+      request<ApiFeedStateResponse>(baseUrl, "/api/feeds/read", {
+        method: "POST",
+        body: JSON.stringify({ entry_key: entryKey })
+      }),
+    markFeedSourceError: (sourceUrl: string, errorMessage: string, siteTitle?: string | null) =>
+      request<ApiFeedStateResponse>(baseUrl, "/api/feeds/sources/error", {
+        method: "POST",
+        body: JSON.stringify({ source_url: sourceUrl, site_title: siteTitle, error_message: errorMessage })
+      }),
+    refreshFeeds: () =>
+      request<ApiFeedRefreshResponse>(baseUrl, "/api/feeds/refresh", {
+        method: "POST"
+      }),
+    deleteFeedSource: (url: string) => {
+      const params = new URLSearchParams({ url });
+      return request<{ source_url: string; deleted: boolean }>(baseUrl, "/api/feeds/sources?" + params.toString(), {
+        method: "DELETE"
+      });
+    },
+    getFeedArticlePreview: (query: {
+      url: string;
+      title?: string | null;
+      sourceTitle?: string | null;
+      author?: string | null;
+      publishedAt?: string | null;
+      summary?: string | null;
+    }) => {
+      const params = new URLSearchParams({ url: query.url });
+      if (query.title) params.set("title", query.title);
+      if (query.sourceTitle) params.set("source_title", query.sourceTitle);
+      if (query.author) params.set("author", query.author);
+      if (query.publishedAt) params.set("published_at", query.publishedAt);
+      if (query.summary) params.set("summary", query.summary);
+      return request<ApiFeedArticlePreviewResponse>(baseUrl, "/api/feeds/article-preview?" + params.toString());
+    },
     searchPodcasts: (query: string, country = "US", limit = 12) => {
       const params = new URLSearchParams({ q: query, country, limit: String(limit) });
       return request<{ items: ApiPodcastSearchItem[] }>(baseUrl, "/api/podcasts/search?" + params.toString());
@@ -232,6 +278,10 @@ export function createApiClient(baseUrl: string) {
       return request<ApiListResponse<ApiItemSummary>>(baseUrl, "/api/items" + suffix);
     },
     getItem: (itemId: string) => request<ApiItemDetail>(baseUrl, "/api/items/" + itemId),
+    deleteItem: (itemId: string) =>
+      request<{ id: string; deleted: boolean }>(baseUrl, "/api/items/" + itemId, {
+        method: "DELETE"
+      }),
     generateItemSummary: (itemId: string) =>
       request<ApiItemTaskResponse>(baseUrl, "/api/items/" + itemId + "/summaries/generate", {
         method: "POST"
@@ -323,12 +373,36 @@ export function createApiClient(baseUrl: string) {
         method: "POST",
         body: JSON.stringify({ qrcode_key: qrcodeKey })
       }),
-    importItem: (url: string, sourceHint?: string) =>
+    previewBilibiliVideo: (url: string) =>
+      request<ApiBilibiliPreviewResponse>(baseUrl, "/api/items/bilibili/preview", {
+        method: "POST",
+        body: JSON.stringify({ url })
+      }),
+    importItem: (url: string, sourceHint?: string, options?: {
+      title?: string | null;
+      siteTitle?: string | null;
+      author?: string | null;
+      publishedAt?: string | null;
+      summary?: string | null;
+      parsedText?: string | null;
+      parserName?: string | null;
+      parserVersion?: string | null;
+      generateSummary?: boolean;
+    }) =>
       request<ApiImportResponse>(baseUrl, "/api/items/import", {
         method: "POST",
         body: JSON.stringify({
           url,
-          ...(sourceHint ? { source_hint: sourceHint } : {})
+          ...(sourceHint ? { source_hint: sourceHint } : {}),
+          ...(options?.title ? { title: options.title } : {}),
+          ...(options?.siteTitle ? { site_title: options.siteTitle } : {}),
+          ...(options?.author ? { author: options.author } : {}),
+          ...(options?.publishedAt ? { published_at: options.publishedAt } : {}),
+          ...(options?.summary ? { summary: options.summary } : {}),
+          ...(options?.parsedText ? { parsed_text: options.parsedText } : {}),
+          ...(options?.parserName ? { parser_name: options.parserName } : {}),
+          ...(options?.parserVersion ? { parser_version: options.parserVersion } : {}),
+          ...(options?.generateSummary ? { generate_summary: true } : {})
         })
       }),
     moveItem: (itemId: string, folderId: string) =>

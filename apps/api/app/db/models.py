@@ -42,6 +42,8 @@ class User(TimestampMixin, Base):
     processing_tasks: Mapped[list['ProcessingTask']] = relationship(back_populates='user')
     model_providers: Mapped[list['ModelProvider']] = relationship(back_populates='user')
     integration_settings: Mapped[list['IntegrationSetting']] = relationship(back_populates='user')
+    feed_sources: Mapped[list['FeedSource']] = relationship(back_populates='user')
+    feed_entry_read_states: Mapped[list['FeedEntryReadState']] = relationship(back_populates='user')
 
 
 class Folder(TimestampMixin, Base):
@@ -81,6 +83,78 @@ class IntegrationSetting(TimestampMixin, Base):
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
     user: Mapped[User] = relationship(back_populates='integration_settings')
+
+
+class FeedSource(TimestampMixin, Base):
+    __tablename__ = 'feed_sources'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'source_url', name='uq_feed_sources_user_source_url'),
+        Index('ix_feed_sources_user_last_loaded', 'user_id', 'last_loaded_at'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    site_title: Mapped[str] = mapped_column(Text, nullable=False)
+    site_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_refresh_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_refresh_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates='feed_sources')
+    entries: Mapped[list['FeedEntry']] = relationship(back_populates='source')
+
+
+class FeedEntry(TimestampMixin, Base):
+    __tablename__ = 'feed_entries'
+    __table_args__ = (
+        UniqueConstraint('feed_source_id', 'entry_id', name='uq_feed_entries_source_entry_id'),
+        Index('ix_feed_entries_user_published', 'user_id', 'published_at'),
+        Index('ix_feed_entries_source_published', 'feed_source_id', 'published_at'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    feed_source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('feed_sources.id', ondelete='CASCADE'), nullable=False
+    )
+    entry_id: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    link: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    author: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    raw_item: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    source: Mapped[FeedSource] = relationship(back_populates='entries')
+    read_states: Mapped[list['FeedEntryReadState']] = relationship(back_populates='entry')
+
+
+class FeedEntryReadState(TimestampMixin, Base):
+    __tablename__ = 'feed_entry_read_states'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'feed_entry_id', name='uq_feed_entry_read_states_user_entry'),
+        Index('ix_feed_entry_read_states_user_read_at', 'user_id', 'read_at'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    feed_entry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('feed_entries.id', ondelete='CASCADE'), nullable=False
+    )
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    user: Mapped[User] = relationship(back_populates='feed_entry_read_states')
+    entry: Mapped[FeedEntry] = relationship(back_populates='read_states')
 
 
 class ContentItem(TimestampMixin, Base):

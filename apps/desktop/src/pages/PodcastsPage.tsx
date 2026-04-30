@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiPodcastEpisode, ApiPodcastSearchItem, ApiPodcastSubscription } from "../api/types";
@@ -43,11 +43,15 @@ function hostOf(url?: string | null) {
 export function PodcastsPage() {
   const { apiBaseUrl } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
+  const selectedFeedRequestRef = useRef(0);
 
   const [tab, setTab] = useState<PodcastTab>("subscribed");
   const [subscriptions, setSubscriptions] = useState<ApiPodcastSubscription[]>([]);
   const [episodes, setEpisodes] = useState<ApiPodcastEpisode[]>([]);
   const [selectedSubscription, setSelectedSubscription] = useState<string>("all");
+  const [selectedFeedEpisodes, setSelectedFeedEpisodes] = useState<ApiPodcastEpisode[]>([]);
+  const [selectedFeedSubscriptionId, setSelectedFeedSubscriptionId] = useState<string | null>(null);
+  const [selectedFeedLoading, setSelectedFeedLoading] = useState(false);
   const [selectedPodcast, setSelectedPodcast] = useState<SelectedPodcast | null>(null);
   const [detailEpisodes, setDetailEpisodes] = useState<ApiPodcastEpisode[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -94,8 +98,9 @@ export function PodcastsPage() {
 
   const filteredEpisodes = useMemo(() => {
     if (selectedSubscription === "all") return episodes;
+    if (selectedFeedSubscriptionId === selectedSubscription) return selectedFeedEpisodes;
     return episodes.filter((episode) => episode.subscription_id === selectedSubscription);
-  }, [episodes, selectedSubscription]);
+  }, [episodes, selectedFeedEpisodes, selectedFeedSubscriptionId, selectedSubscription]);
 
   const subscriptionByFeedUrl = useMemo(() => {
     const map = new Map<string, ApiPodcastSubscription>();
@@ -144,7 +149,7 @@ export function PodcastsPage() {
         );
       } else {
         setTab("subscribed");
-        setSelectedSubscription(subscription.id);
+        await selectSubscription(subscription);
       }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "订阅失败");
@@ -161,6 +166,8 @@ export function PodcastsPage() {
       setFeedback(`已取消订阅「${subscription.title}」`);
       await refreshAll();
       setSelectedSubscription("all");
+      setSelectedFeedEpisodes([]);
+      setSelectedFeedSubscriptionId(null);
       setSelectedPodcast((current) =>
         current?.feed_url === subscription.feed_url ? { ...current, id: null, subscribed: false } : current
       );
@@ -178,6 +185,12 @@ export function PodcastsPage() {
     try {
       const result = await client.importPodcastEpisode(episode);
       setFeedback(result.is_duplicate ? `已在稍后阅读：${result.uid}` : `已加入稍后阅读：${result.uid}`);
+      const markImported = (current: ApiPodcastEpisode[]) =>
+        current.map((entry) =>
+          entry.id === episode.id ? { ...entry, is_imported: true, item_id: result.item_id } : entry
+        );
+      setSelectedFeedEpisodes(markImported);
+      setDetailEpisodes(markImported);
       await refreshEpisodes();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "加入稍后阅读失败");
@@ -224,10 +237,47 @@ export function PodcastsPage() {
     });
   }
 
-  function selectSubscription(subscription: ApiPodcastSubscription) {
+  async function selectSubscription(subscription: ApiPodcastSubscription) {
+    const requestId = selectedFeedRequestRef.current + 1;
+    selectedFeedRequestRef.current = requestId;
     setSelectedPodcast(null);
     setTab("subscribed");
     setSelectedSubscription(subscription.id);
+    setSelectedFeedSubscriptionId(subscription.id);
+    setSelectedFeedEpisodes([]);
+    setSelectedFeedLoading(true);
+    setError(null);
+    try {
+      const response = await client.listPodcastFeedEpisodes({
+        feedUrl: subscription.feed_url,
+        title: subscription.title,
+        author: subscription.author,
+        imageUrl: subscription.image_url,
+        limit: 200,
+      });
+      if (selectedFeedRequestRef.current === requestId) {
+        setSelectedFeedEpisodes(response.items);
+      }
+    } catch (nextError) {
+      if (selectedFeedRequestRef.current === requestId) {
+        setSelectedFeedSubscriptionId(null);
+        setError(nextError instanceof Error ? nextError.message : "播客单集读取失败");
+      }
+    } finally {
+      if (selectedFeedRequestRef.current === requestId) {
+        setSelectedFeedLoading(false);
+      }
+    }
+  }
+
+  function selectAllSubscriptions() {
+    selectedFeedRequestRef.current += 1;
+    setSelectedPodcast(null);
+    setTab("subscribed");
+    setSelectedSubscription("all");
+    setSelectedFeedEpisodes([]);
+    setSelectedFeedSubscriptionId(null);
+    setSelectedFeedLoading(false);
   }
 
   function closePodcast() {
@@ -238,49 +288,49 @@ export function PodcastsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div style={{ padding: "22px 28px 16px", borderBottom: "1px solid rgba(var(--outline-rgb),0.14)", background: "var(--surface-lowest)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20 }}>
-          <div>
-            <p className="page-eyebrow">播客</p>
-            <h2 style={{ margin: "4px 0 6px", fontSize: 28, letterSpacing: 0 }}>订阅与单集入库</h2>
-            <p style={{ margin: 0, color: "var(--on-surface-v)", fontSize: 13 }}>
-              订阅只负责发现新集；只有加入稍后阅读的单集才会下载音频并进入处理队列。
-            </p>
+      <div className="podcast-toolbar">
+        <div className="source-toolbar-left">
+          <div className="source-page-title">
+            <span>Podcast</span>
+            <h2>播客</h2>
           </div>
-          <form onSubmit={handleSearch} style={{ display: "flex", gap: 8, minWidth: 360 }}>
+          {!selectedPodcast && (
+            <div className="podcast-tabbar">
+              {([
+                ["subscribed", "已订阅", subscriptions.length],
+                ["search", "搜索结果", searchResults.length],
+              ] as [PodcastTab, string, number][]).map(([value, label, count]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={tab === value ? "active" : ""}
+                  onClick={() => setTab(value)}
+                >
+                  {label} · {count}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="podcast-toolbar-actions">
+          <form onSubmit={handleSearch} className="podcast-search-form">
             <input
               className="input"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="搜索播客名称"
-              style={{ flex: 1 }}
             />
             <button className="btn btn-primary" type="submit" disabled={busy}>
               <span className="icon icon-sm">search</span>
               搜索
             </button>
           </form>
-        </div>
-
-        {!selectedPodcast && <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 18 }}>
-          {([
-            ["subscribed", "已订阅", subscriptions.length],
-            ["search", "搜索结果", searchResults.length],
-          ] as [PodcastTab, string, number][]).map(([value, label, count]) => (
-            <button
-              key={value}
-              type="button"
-              className={`btn btn-sm ${tab === value ? "btn-primary" : "btn-ghost"}`}
-              onClick={() => setTab(value)}
-            >
-              {label} · {count}
-            </button>
-          ))}
           <button className="btn btn-ghost btn-sm" type="button" onClick={() => void refreshAll()} disabled={busy}>
             <span className="icon icon-sm">sync</span>
             刷新
           </button>
-        </div>}
+        </div>
       </div>
 
       {feedback && <div className="feedback feedback-success" style={{ margin: "12px 28px 0" }}>{feedback}</div>}
@@ -314,23 +364,23 @@ export function PodcastsPage() {
         />
       ) : tab === "subscribed" ? (
         <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", minHeight: 0, flex: 1 }}>
-          <aside style={{ borderRight: "1px solid rgba(var(--outline-rgb),0.12)", padding: "18px 18px 24px 28px", overflowY: "auto" }}>
+          <aside className="source-sidebar">
             <button
               type="button"
-              className={`podcast-source ${selectedSubscription === "all" ? "active" : ""}`}
-              onClick={() => setSelectedSubscription("all")}
+              className={`source-item source-item-button ${selectedSubscription === "all" ? "active" : ""}`}
+              onClick={selectAllSubscriptions}
             >
-              <span className="icon icon-sm">dynamic_feed</span>
-              <span>全部新集</span>
-              <span>{episodes.length}</span>
+              <span className="source-item-icon icon icon-sm">dynamic_feed</span>
+              <span className="source-item-title">全部新集</span>
+              <span className="source-item-count">{episodes.length}</span>
             </button>
             {subscriptions.map((subscription) => (
-              <div key={subscription.id} className={`podcast-source ${selectedSubscription === subscription.id ? "active" : ""}`}>
-                <button type="button" onClick={() => selectSubscription(subscription)}>
-                  {subscription.image_url ? <img src={subscription.image_url} alt="" /> : <span className="icon icon-sm">podcasts</span>}
-                  <span>{subscription.title}</span>
+              <div key={subscription.id} className={`source-item ${selectedSubscription === subscription.id ? "active" : ""}`}>
+                <button type="button" className="source-item-main" onClick={() => void selectSubscription(subscription)}>
+                  {subscription.image_url ? <img className="source-item-avatar" src={subscription.image_url} alt="" /> : <span className="source-item-icon icon icon-sm">podcasts</span>}
+                  <span className="source-item-title">{subscription.title}</span>
                 </button>
-                <button type="button" title="取消订阅" onClick={() => void handleUnsubscribe(subscription)}>
+                <button className="source-item-remove" type="button" title="取消订阅" onClick={() => void handleUnsubscribe(subscription)}>
                   <span className="icon icon-sm">close</span>
                 </button>
               </div>
@@ -338,7 +388,13 @@ export function PodcastsPage() {
           </aside>
 
           <main style={{ overflowY: "auto", padding: "8px 0" }}>
-            {filteredEpisodes.length === 0 ? (
+            {selectedFeedLoading ? (
+              <div className="empty-state" style={{ marginTop: 80 }}>
+                <div className="empty-state-icon"><span className="icon icon-lg">sync</span></div>
+                <h3>正在读取单集</h3>
+                <p>从这个播客的 RSS 拉取更多历史 episode。</p>
+              </div>
+            ) : filteredEpisodes.length === 0 ? (
               <div className="empty-state" style={{ marginTop: 80 }}>
                 <div className="empty-state-icon"><span className="icon icon-lg">podcasts</span></div>
                 <h3>{subscriptions.length ? "暂时没有可显示的单集" : "还没有订阅播客"}</h3>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiItemSummary } from "../api";
@@ -42,6 +42,21 @@ function fallbackSummary(item: ApiItemSummary) {
   return item.content_type === "bilibili_video" ? "视频条目，等待处理。" : "文章条目，等待处理。";
 }
 
+function normalizeQuickAddUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function isBilibiliUrl(value: string) {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === "b23.tv" || host.endsWith(".b23.tv") || host === "bilibili.com" || host.endsWith(".bilibili.com");
+  } catch {
+    return false;
+  }
+}
+
 
 function normalizeProgress(progress?: number) {
   if (typeof progress !== "number" || Number.isNaN(progress)) {
@@ -51,6 +66,29 @@ function normalizeProgress(progress?: number) {
 }
 
 type SortMode = "recent" | "unread" | "type";
+type ItemContextMenuState = {
+  itemId: string;
+  x: number;
+  y: number;
+  submenuPlacement: "left" | "right";
+  submenuMaxHeight: number;
+};
+
+function createContextMenuState(itemId: string, x: number, y: number): ItemContextMenuState {
+  const margin = 12;
+  const menuWidth = 220;
+  const submenuWidth = 220;
+  const menuHeight = 172;
+  const clampedX = Math.max(margin, Math.min(x, window.innerWidth - menuWidth - margin));
+  const clampedY = Math.max(margin, Math.min(y, window.innerHeight - menuHeight - margin));
+  return {
+    itemId,
+    x: clampedX,
+    y: clampedY,
+    submenuPlacement: clampedX + menuWidth + submenuWidth + margin > window.innerWidth ? "left" : "right",
+    submenuMaxHeight: Math.max(96, window.innerHeight - clampedY - margin),
+  };
+}
 
 export function InboxPage() {
   const [searchParams] = useSearchParams();
@@ -62,6 +100,12 @@ export function InboxPage() {
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [movingId, setMovingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ id: string; msg: string } | null>(null);
+  const [quickAddUrl, setQuickAddUrl] = useState("");
+  const [quickAdding, setQuickAdding] = useState(false);
+  const [quickAddMessage, setQuickAddMessage] = useState<string | null>(null);
+  const [quickAddError, setQuickAddError] = useState<string | null>(null);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [menuState, setMenuState] = useState<ItemContextMenuState | null>(null);
 
   const customFolders = useMemo(() => folders.filter((f) => !f.is_builtin), [folders]);
   const keyword = searchParams.get("q")?.trim() ?? "";
@@ -88,6 +132,22 @@ export function InboxPage() {
     return () => { cancelled = true; };
   }, [client, keyword]);
 
+  useEffect(() => {
+    if (!menuState) return;
+    const close = () => setMenuState(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuState(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menuState]);
+
   const visibleItems = useMemo(() => {
     const kw = keyword.toLowerCase();
     let result = items.filter((item) =>
@@ -99,6 +159,7 @@ export function InboxPage() {
   }, [items, keyword, sortMode]);
 
   async function handleMoveToLibrary(itemId: string, folderId: string) {
+    setMenuState(null);
     setMovingId(itemId);
     try {
       const result = await client.moveItem(itemId, folderId);
@@ -110,6 +171,52 @@ export function InboxPage() {
       // silent
     } finally {
       setMovingId(null);
+    }
+  }
+
+  async function handleDeleteItem(item: ApiItemSummary) {
+    setMenuState(null);
+    if (!window.confirm(`确定删除「${item.title}」吗？`)) return;
+    setMovingId(item.id);
+    setQuickAddError(null);
+    setQuickAddMessage(null);
+    try {
+      await client.deleteItem(item.id);
+      setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+      await loadFolders();
+      setQuickAddMessage("已删除");
+      window.setTimeout(() => setQuickAddMessage(null), 2200);
+    } catch (error) {
+      setQuickAddError(error instanceof Error ? error.message : "删除失败");
+    } finally {
+      setMovingId(null);
+    }
+  }
+
+  async function handleQuickAdd(event: FormEvent) {
+    event.preventDefault();
+    const url = normalizeQuickAddUrl(quickAddUrl);
+    if (!url) {
+      setQuickAddError("请先粘贴链接");
+      return;
+    }
+
+    setQuickAdding(true);
+    setQuickAddMessage(null);
+    setQuickAddError(null);
+    try {
+      const sourceHint = isBilibiliUrl(url) ? "bilibili_video" : "article";
+      const result = await client.importItem(url, sourceHint);
+      setQuickAddUrl("");
+      setShowQuickAdd(false);
+      setQuickAddMessage(result.is_duplicate ? `已存在：${result.uid}` : `已加入稍后阅读：${result.uid}`);
+      setItems(await refreshInbox(keyword));
+      await loadFolders();
+      window.setTimeout(() => setQuickAddMessage(null), 2600);
+    } catch (error) {
+      setQuickAddError(error instanceof Error ? error.message : "快速添加失败");
+    } finally {
+      setQuickAdding(false);
     }
   }
 
@@ -132,7 +239,19 @@ export function InboxPage() {
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <button
+            type="button"
+            className="quick-add-trigger"
+            onClick={() => {
+              setQuickAddError(null);
+              setQuickAddMessage(null);
+              setShowQuickAdd(true);
+            }}
+          >
+            <span className="icon icon-sm">add_link</span>
+            快速添加
+          </button>
           {/* Sort */}
           <div style={{ display: "flex", gap: 2, background: "var(--surface-container)", padding: 4, borderRadius: "var(--radius-sm)" }}>
             {([ ["recent", "最新"], ["unread", "未读"], ["type", "类型"] ] as [SortMode, string][]).map(([val, label]) => (
@@ -157,8 +276,81 @@ export function InboxPage() {
         </div>
       </div>
 
+      {showQuickAdd && (
+        <div
+          className="quick-add-modal-backdrop"
+          role="presentation"
+          onClick={() => {
+            if (!quickAdding) setShowQuickAdd(false);
+          }}
+        >
+          <form
+            className="quick-add-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quick-add-title"
+            onSubmit={(event) => void handleQuickAdd(event)}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="quick-add-modal-header">
+              <div>
+                <h3 id="quick-add-title">快速添加</h3>
+                <p>Bilibili 链接会按视频处理，其他链接按文章处理。</p>
+              </div>
+              <button
+                type="button"
+                className="topbar-icon-btn"
+                aria-label="关闭"
+                title="关闭"
+                disabled={quickAdding}
+                onClick={() => setShowQuickAdd(false)}
+              >
+                <span className="icon icon-sm">close</span>
+              </button>
+            </div>
+
+            <label className="field">
+              <span>链接地址</span>
+              <input
+                className="input"
+                value={quickAddUrl}
+                onChange={(event) => {
+                  setQuickAddUrl(event.target.value);
+                  setQuickAddError(null);
+                  setQuickAddMessage(null);
+                }}
+                placeholder="https://example.com/article 或 https://www.bilibili.com/video/BV..."
+                disabled={quickAdding}
+                autoFocus
+              />
+            </label>
+
+            {quickAddError && <div className="feedback feedback-error">{quickAddError}</div>}
+
+            <div className="quick-add-modal-actions">
+              <button type="button" className="btn btn-ghost btn-sm" disabled={quickAdding} onClick={() => setShowQuickAdd(false)}>
+                取消
+              </button>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={quickAdding || !quickAddUrl.trim()}>
+                <span className="icon icon-sm">{quickAdding ? "sync" : "add_link"}</span>
+                {quickAdding ? "添加中…" : "加入稍后阅读"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* List */}
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+        {(quickAddMessage || quickAddError) && (
+          <div
+            className={`feedback ${quickAddError ? "feedback-error" : "feedback-success"}`}
+            style={{ margin: "12px 28px 0" }}
+          >
+            {quickAddError ?? quickAddMessage}
+          </div>
+        )}
+
         {loadError && (
           <div className="feedback feedback-error" style={{ margin: "16px 28px" }}>{loadError}</div>
         )}
@@ -192,7 +384,10 @@ export function InboxPage() {
             folders={customFolders}
             isMoving={movingId === item.id}
             feedbackMsg={feedback?.id === item.id ? feedback.msg : null}
+            menuState={menuState?.itemId === item.id ? menuState : null}
+            onOpenMenu={(x, y) => setMenuState(createContextMenuState(item.id, x, y))}
             onMoveToFolder={(folderId) => void handleMoveToLibrary(item.id, folderId)}
+            onDelete={() => void handleDeleteItem(item)}
           />
         ))}
       </div>
@@ -205,44 +400,28 @@ function InboxRow({
   folders,
   isMoving,
   feedbackMsg,
+  menuState,
+  onOpenMenu,
   onMoveToFolder,
+  onDelete,
 }: {
   item: ApiItemSummary;
   folders: { id: string; name: string }[];
   isMoving: boolean;
   feedbackMsg: string | null;
+  menuState: ItemContextMenuState | null;
+  onOpenMenu: (x: number, y: number) => void;
   onMoveToFolder: (folderId: string) => void;
+  onDelete: () => void;
 }) {
   const navigate = useNavigate();
-  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
   const isVideo = item.content_type === "bilibili_video";
   const progress = normalizeProgress(item.progress_percent);
   const showProgress = progress > 0 && progress < 100;
   const readHref = `/items/${item.id}?from=inbox`;
 
-  useEffect(() => {
-    if (!menuPosition) return;
-    const close = () => setMenuPosition(null);
-    window.addEventListener("click", close);
-    window.addEventListener("scroll", close, true);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("scroll", close, true);
-    };
-  }, [menuPosition]);
-
-  function openMenu(x: number, y: number) {
-    const menuWidth = 220;
-    const menuHeight = 132;
-    setMenuPosition({
-      x: Math.min(x, window.innerWidth - menuWidth - 12),
-      y: Math.min(y, window.innerHeight - menuHeight - 12),
-    });
-  }
-
   function handleMove(folderId: string) {
-    setMenuPosition(null);
     onMoveToFolder(folderId);
   }
 
@@ -255,7 +434,7 @@ function InboxRow({
       }}
       onContextMenu={(e) => {
         e.preventDefault();
-        openMenu(e.clientX, e.clientY);
+        onOpenMenu(e.clientX, e.clientY);
       }}
     >
       {/* Main row */}
@@ -344,7 +523,7 @@ function InboxRow({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              openMenu(e.clientX, e.clientY);
+              onOpenMenu(e.clientX, e.clientY);
             }}
             style={{ width: 28, height: 28 }}
           >
@@ -359,10 +538,10 @@ function InboxRow({
         </div>
       )}
 
-      {menuPosition && (
+      {menuState && (
         <div
           className="item-context-menu"
-          style={{ left: menuPosition.x, top: menuPosition.y }}
+          style={{ left: menuState.x, top: menuState.y }}
           onClick={(e) => e.stopPropagation()}
           role="menu"
         >
@@ -378,7 +557,11 @@ function InboxRow({
                 {isMoving ? "收藏中…" : "收藏到知识库"}
                 <span className="icon icon-sm context-menu-arrow">chevron_right</span>
               </button>
-              <div className="item-context-submenu" role="menu">
+              <div
+                className={`item-context-submenu ${menuState.submenuPlacement === "left" ? "submenu-left" : ""}`}
+                role="menu"
+                style={{ maxHeight: menuState.submenuMaxHeight }}
+              >
                 {folders.map((folder) => (
                   <button
                     key={folder.id}
@@ -408,6 +591,11 @@ function InboxRow({
               打开原文
             </a>
           )}
+
+          <button type="button" className="context-menu-item context-menu-danger" onClick={onDelete}>
+            <span className="icon icon-sm">delete</span>
+            删除
+          </button>
         </div>
       )}
     </div>

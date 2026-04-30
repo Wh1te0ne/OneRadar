@@ -1,3 +1,6 @@
+import asyncio
+from contextlib import asynccontextmanager, suppress
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,10 +15,32 @@ from app.api.routers.providers import router as providers_router
 from app.api.routers.settings import router as settings_router
 from app.api.routers.tasks import router as tasks_router
 from app.core.config import get_settings
+from app.services.feed_refresh_service import run_feed_refresh_loop
 
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name, version=settings.version)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _ = app
+    refresh_task: asyncio.Task[None] | None = None
+    if settings.feed_refresh_enabled:
+        refresh_task = asyncio.create_task(
+            run_feed_refresh_loop(
+                settings.feed_refresh_interval_seconds,
+                settings.feed_refresh_startup_delay_seconds,
+            )
+        )
+    try:
+        yield
+    finally:
+        if refresh_task is not None:
+            refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh_task
+
+
+app = FastAPI(title=settings.app_name, version=settings.version, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

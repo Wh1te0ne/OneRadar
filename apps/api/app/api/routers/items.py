@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from app.schemas.common import ReadingState
 from app.schemas.folders import (
@@ -11,6 +11,8 @@ from app.schemas.folders import (
     MoveItemResponse,
 )
 from app.schemas.items import (
+    BilibiliPreviewRequest,
+    BilibiliPreviewResponse,
     ImportItemRequest,
     ImportItemResponse,
     ItemDeleteResponse,
@@ -26,10 +28,12 @@ from app.services.folders_service import list_folders as list_folders_service
 from app.services.folders_service import move_item_to_folder as move_item_to_folder_service
 from app.services.folders_service import update_folder as update_folder_service
 from app.services.items_service import delete_item as delete_item_service
+from app.services.items_service import fetch_bilibili_cover as fetch_bilibili_cover_service
 from app.services.items_service import generate_item_summary as generate_item_summary_service
 from app.services.items_service import get_item as get_item_service
 from app.services.items_service import import_item as import_item_service
 from app.services.items_service import list_items as list_items_service
+from app.services.items_service import preview_bilibili_item as preview_bilibili_item_service
 from app.services.items_service import reprocess_item as reprocess_item_service
 from app.services.items_service import update_reading_state as update_reading_state_service
 
@@ -61,7 +65,40 @@ def delete_folder(folder_id: str) -> FolderDeleteResponse:
 
 @router.post("/import")
 def import_item(payload: ImportItemRequest) -> ImportItemResponse:
-    return import_item_service(payload.url, payload.source_hint)
+    return import_item_service(
+        payload.url,
+        payload.source_hint,
+        title=payload.title,
+        site_title=payload.site_title,
+        author=payload.author,
+        published_at=payload.published_at,
+        summary=payload.summary,
+        parsed_text=payload.parsed_text,
+        parser_name=payload.parser_name,
+        parser_version=payload.parser_version,
+        generate_summary=payload.generate_summary,
+    )
+
+
+@router.post("/bilibili/preview")
+def preview_bilibili_item(payload: BilibiliPreviewRequest) -> BilibiliPreviewResponse:
+    try:
+        return preview_bilibili_item_service(payload.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/bilibili/cover")
+def bilibili_cover(url: str) -> Response:
+    try:
+        content, media_type = fetch_bilibili_cover_service(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("")
