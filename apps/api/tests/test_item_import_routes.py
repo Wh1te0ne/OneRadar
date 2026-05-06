@@ -237,6 +237,33 @@ def test_delete_moves_item_to_recently_deleted_and_restore_purge(client, monkeyp
     assert client.get(f"/api/items/{item_id}").status_code == 404
 
 
+def test_import_ignores_recently_deleted_duplicates(client, monkeypatch) -> None:
+    def failing_session_local():
+        raise SQLAlchemyError("database unavailable")
+
+    monkeypatch.setattr(items_service, "SessionLocal", failing_session_local)
+
+    source_url = "https://example.com/articles/reimport-after-delete"
+    first_response = client.post(
+        "/api/items/import",
+        json={"url": source_url, "source_hint": "article"},
+    )
+    assert first_response.status_code == 200
+    first_body = first_response.json()
+
+    delete_response = client.delete(f"/api/items/{first_body['item_id']}")
+    assert delete_response.status_code == 200
+
+    second_response = client.post(
+        "/api/items/import",
+        json={"url": source_url, "source_hint": "article"},
+    )
+    assert second_response.status_code == 200
+    second_body = second_response.json()
+    assert second_body["is_duplicate"] is False
+    assert second_body["item_id"] != first_body["item_id"]
+
+
 def test_generate_summary_route_creates_task(client, monkeypatch) -> None:
     def failing_session_local():
         raise SQLAlchemyError("database unavailable")

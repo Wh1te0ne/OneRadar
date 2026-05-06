@@ -261,14 +261,15 @@ def find_saved_item_for_url(url: str) -> dict[str, str] | None:
 
     try:
         with SessionLocal() as session:
-            item = session.execute(
+            items = session.execute(
                 select(ContentItem).where(
                     or_(
                         ContentItem.normalized_url == normalized_url,
                         ContentItem.source_url == normalized_url,
                     )
                 )
-            ).scalars().first()
+            ).scalars().all()
+            item = next((candidate for candidate in items if not _is_deleted_item(candidate)), None)
             if item is None:
                 return None
             return {"item_id": str(item.id), "uid": str(item.id)}
@@ -277,8 +278,11 @@ def find_saved_item_for_url(url: str) -> dict[str, str] | None:
             (
                 item
                 for item in STORE.items.values()
-                if str(item.get("source_url", "")) == normalized_url
-                or str(item.get("normalized_url", "")) == normalized_url
+                if not _is_deleted_store_record(item)
+                and (
+                    str(item.get("source_url", "")) == normalized_url
+                    or str(item.get("normalized_url", "")) == normalized_url
+                )
             ),
             None,
         )
@@ -783,7 +787,11 @@ def _fallback_import(
 
     with STORE.lock:
         existing = next(
-            (item for item in STORE.items.values() if item["source_url"] == normalized_url),
+            (
+                item
+                for item in STORE.items.values()
+                if item["source_url"] == normalized_url and not _is_deleted_store_record(item)
+            ),
             None,
         )
         if existing is not None:
@@ -946,12 +954,13 @@ def import_item(
             initial_site = _clean_optional_text(site_title)
             initial_summary = _clean_optional_text(summary)
 
-            existing = session.execute(
+            existing_items = session.execute(
                 select(ContentItem).where(
                     ContentItem.user_id == user.id,
                     ContentItem.normalized_url == normalized_url,
                 )
-            ).scalar_one_or_none()
+            ).scalars().all()
+            existing = next((candidate for candidate in existing_items if not _is_deleted_item(candidate)), None)
             if existing is not None:
                 task: ProcessingTask | None = None
                 if preview_document or initial_title or initial_author or initial_site or published_at:
