@@ -72,6 +72,11 @@ DEFAULT_READING_STATE = {
 }
 
 TRASH_RETENTION_DAYS = 7
+ACTIVE_TASK_STATUSES = {
+    TaskStatus.pending.value,
+    TaskStatus.running.value,
+    TaskStatus.retrying.value,
+}
 
 TRACKING_QUERY_KEYS = {
     "fbclid",
@@ -1608,6 +1613,17 @@ def delete_item(item_id: str) -> ItemDeleteResponse:
                 **(item.raw_meta or {}),
                 "deleted_at": deleted_at.isoformat(),
             }
+            tasks = session.execute(
+                select(ProcessingTask).where(
+                    ProcessingTask.content_item_id == item.id,
+                    ProcessingTask.status.in_(ACTIVE_TASK_STATUSES),
+                )
+            ).scalars()
+            for task in tasks:
+                task.status = TaskStatus.canceled.value
+                task.error_message = "content item was deleted"
+                task.finished_at = deleted_at
+                task.next_retry_at = None
             session.commit()
             return ItemDeleteResponse(uid=str(item.id), deleted=True)
     except (SQLAlchemyError, ValueError) as exc:
@@ -1617,6 +1633,11 @@ def delete_item(item_id: str) -> ItemDeleteResponse:
             if record is not None:
                 record["deleted_at"] = now_utc()
                 record["updated_at"] = now_utc()
+                for task in STORE.tasks.values():
+                    if str(task.get("item_id")) == item_id and str(task.get("status")) in ACTIVE_TASK_STATUSES:
+                        task["status"] = TaskStatus.canceled.value
+                        task["error_message"] = "content item was deleted"
+                        task["updated_at"] = now_utc()
         if record is None:
             raise ValueError("item not found") from exc
         return ItemDeleteResponse(uid=item_id, deleted=True)

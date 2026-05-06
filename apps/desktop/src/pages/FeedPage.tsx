@@ -366,7 +366,12 @@ export function FeedPage() {
   }
 
   async function refreshSources(sources = savedSources) {
-    const nextSources = sources.length > 0 ? sources : [{ sourceUrl: DEFAULT_RSS_URL, siteTitle: "Python Insider", lastLoadedAt: new Date().toISOString() }];
+    const nextSources = sources;
+    if (nextSources.length === 0) {
+      setError(null);
+      setImportMessage(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     setImportMessage(null);

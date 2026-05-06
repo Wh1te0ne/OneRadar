@@ -31,6 +31,7 @@ RUNNING_STATUS = 'running'
 RETRYING_STATUS = 'retrying'
 SUCCESS_STATUS = 'success'
 FAILED_STATUS = 'failed'
+CANCELED_STATUS = 'canceled'
 SUPPORTED_TASK_TYPES = {'fetch_meta', 'reprocess_item', 'generate_summary'}
 
 metadata = MetaData()
@@ -225,6 +226,12 @@ def _coerce_datetime(value: Any) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _is_deleted_raw_meta(raw_meta: Any) -> bool:
+    if not isinstance(raw_meta, dict):
+        return False
+    return _coerce_datetime(raw_meta.get('deleted_at')) is not None
 
 
 def claim_next_task(engine: Engine) -> dict[str, Any] | None:
@@ -585,6 +592,21 @@ def complete_task(engine: Engine, task: dict[str, Any], item: dict[str, Any], re
     published_at = _coerce_datetime(content_item_payload.get('published_at'))
 
     with engine.begin() as conn:
+        current_item = conn.execute(select(content_items).where(content_items.c.id == item['id'])).mappings().first()
+        if current_item is None or _is_deleted_raw_meta(current_item.get('raw_meta')):
+            conn.execute(
+                update(processing_tasks)
+                .where(processing_tasks.c.id == task['id'])
+                .values(
+                    status=CANCELED_STATUS,
+                    error_message='content item was deleted',
+                    finished_at=now,
+                    next_retry_at=None,
+                    updated_at=now,
+                )
+            )
+            return
+
         snapshot_id = _upsert_content_snapshot(
             conn,
             item['id'],
@@ -642,6 +664,23 @@ def complete_task(engine: Engine, task: dict[str, Any], item: dict[str, Any], re
 
 def fail_task(engine: Engine, task: dict[str, Any], item: dict[str, Any] | None, error_message: str) -> None:
     now = now_utc()
+    if item is not None:
+        with engine.begin() as conn:
+            current_item = conn.execute(select(content_items).where(content_items.c.id == item['id'])).mappings().first()
+            if current_item is None or _is_deleted_raw_meta(current_item.get('raw_meta')):
+                conn.execute(
+                    update(processing_tasks)
+                    .where(processing_tasks.c.id == task['id'])
+                    .values(
+                        status=CANCELED_STATUS,
+                        error_message='content item was deleted',
+                        finished_at=now,
+                        next_retry_at=None,
+                        updated_at=now,
+                    )
+                )
+                return
+
     attempt_count = int(task['attempt_count'])
     max_attempts = int(task['max_attempts'])
     retryable = attempt_count < max_attempts

@@ -196,9 +196,19 @@ def test_delete_moves_item_to_recently_deleted_and_restore_purge(client, monkeyp
     assert import_response.status_code == 200
     item_id = import_response.json()["item_id"]
 
+    task_response = client.post(f"/api/items/{item_id}/summaries/generate")
+    assert task_response.status_code == 200
+    task_id = task_response.json()["task_id"]
+
     delete_response = client.delete(f"/api/items/{item_id}")
     assert delete_response.status_code == 200
     assert delete_response.json()["deleted"] is True
+
+    canceled_task_response = client.get(f"/api/tasks/{task_id}")
+    assert canceled_task_response.status_code == 200
+    canceled_task = canceled_task_response.json()
+    assert canceled_task["status"] == "canceled"
+    assert canceled_task["error_message"] == "content item was deleted"
 
     list_response = client.get("/api/items?page=1&page_size=20")
     assert list_response.status_code == 200
