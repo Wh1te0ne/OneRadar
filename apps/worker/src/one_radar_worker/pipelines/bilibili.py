@@ -721,7 +721,7 @@ class BilibiliPipeline:
                 )
             )
         parsed_document = {
-            'parser_name': 'bilibili_subtitle_first',
+            'parser_name': 'bilibili_asr_first',
             'parser_version': 'v0_spike',
             'title': metadata.title,
             'excerpt': metadata.description[:280] if metadata.description else None,

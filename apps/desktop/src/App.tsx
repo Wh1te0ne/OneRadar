@@ -175,12 +175,12 @@ export default function App() {
   const libraryHeader = (
     <>
       <div className="sidebar-divider" />
-      <div className="sidebar-section-header">
-        <div className="sidebar-section-title">
+      <div className={`sidebar-section-header ${ctx === "library" && location.pathname === "/library" ? "active" : ""}`}>
+        <Link to="/library" className="sidebar-section-link" aria-label="知识库">
           <span className="icon icon-sm">local_library</span>
-          <span>知识库</span>
+          <span className="sidebar-section-text">知识库</span>
           {libraryCount > 0 && <span className="sidebar-section-count">{libraryCount}</span>}
-        </div>
+        </Link>
         <button
           type="button"
           className="sidebar-create-folder-btn"
@@ -258,18 +258,6 @@ export default function App() {
             <>
               {libraryHeader}
               <div className="sidebar-folders">
-                <Link
-                  to="/library"
-                  className={`nav-link ${ctx === "library" && location.pathname === "/library" ? "active" : ""}`}
-                >
-                  <span className="icon icon-sm">local_library</span>
-                  <span className="nav-link-label" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    全部内容
-                  </span>
-                  {libraryCount > 0 && (
-                    <span className="nav-link-badge">{libraryCount}</span>
-                  )}
-                </Link>
                 {sidebarFolders.map((folder) => {
                   const active = location.pathname === `/folders/${folder.id}`;
                   return (
@@ -314,13 +302,6 @@ export default function App() {
           {sidebarFolders.length === 0 && (
             <>
               {libraryHeader}
-              <Link
-                to="/library"
-                className={`nav-link ${ctx === "library" ? "active" : ""}`}
-              >
-                <span className="icon icon-sm">local_library</span>
-                <span className="nav-link-label">全部内容</span>
-              </Link>
               <p className="sidebar-empty-hint">还没有收藏夹</p>
             </>
           )}

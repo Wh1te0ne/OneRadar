@@ -11,7 +11,8 @@ from one_radar_worker.pipelines.bilibili import (
     BilibiliVideoMetadata,
     BilibiliVideoRef,
 )
-from one_radar_worker.pipelines.common import PipelineContext
+from one_radar_worker.pipelines.common import PipelineContext, PipelineRunResult, PipelineStepResult
+from one_radar_worker.processor import _pipeline_failure_message
 from one_radar_worker.media_audio import AudioExtractionResult
 from one_radar_worker.media_visual import (
     VisualFrameExtractionResult,
@@ -19,6 +20,20 @@ from one_radar_worker.media_visual import (
     VisualVideoExtractionResult,
 )
 from one_radar_worker.tasks import TaskType
+
+
+def test_pipeline_failure_message_prefers_actionable_bilibili_step():
+    result = PipelineRunResult(
+        ok=False,
+        steps=[
+            PipelineStepResult("fetch_metadata", True, "Metadata fetched", {}),
+            PipelineStepResult("extract_audio", True, "Audio extracted for ASR", {}),
+            PipelineStepResult("transcribe_audio", False, "Transcription provider is not configured", {}),
+            PipelineStepResult("build_transcript_view", False, "Metadata-only reader payload prepared", {}),
+        ],
+    )
+
+    assert _pipeline_failure_message(result) == "Transcription provider is not configured"
 
 
 def test_bilibili_pipeline_uses_asr_when_subtitles_are_unavailable(monkeypatch):

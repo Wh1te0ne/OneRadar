@@ -281,18 +281,30 @@ button, input, select, textarea { font: inherit; }
   border: 1px solid rgba(var(--outline-rgb), 0.12);
 }
 
-.sidebar-section-title {
+.sidebar-section-link {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 1;
   color: var(--on-surface);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0;
+  text-decoration: none;
 }
 
-.sidebar-section-title .icon {
+.sidebar-section-header.active,
+.sidebar-section-header:hover {
+  background: var(--surface-container);
+  border-color: rgba(var(--outline-rgb), 0.18);
+}
+
+.sidebar-section-header.active .sidebar-section-link {
+  color: var(--primary);
+}
+
+.sidebar-section-link .icon {
   color: var(--primary);
 }
 

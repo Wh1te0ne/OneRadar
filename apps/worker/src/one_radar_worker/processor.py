@@ -104,6 +104,15 @@ def _select_pipeline(item: dict[str, object]):
 
 
 def _pipeline_failure_message(result) -> str:
+    preferred_failure_steps = {
+        'fetch_metadata',
+        'extract_audio',
+        'transcribe_audio',
+        'generate_summary',
+    }
+    for step in result.steps:
+        if step.step_name in preferred_failure_steps and not step.ok and step.message:
+            return step.message
     for step in reversed(result.steps):
         if not step.ok and step.message:
             return step.message
