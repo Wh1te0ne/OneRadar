@@ -7,8 +7,6 @@ services:
       POSTGRES_DB: ${ONERADAR_POSTGRES_DB:-oneradar}
       POSTGRES_USER: ${ONERADAR_POSTGRES_USER:-oneradar}
       POSTGRES_PASSWORD: ${ONERADAR_POSTGRES_PASSWORD:-oneradar}
-    ports:
-      - "5432:5432"
     volumes:
       - ${ONERADAR_DATA_ROOT:-../../data}/postgres:/var/lib/postgresql/data
 
@@ -17,8 +15,6 @@ services:
     container_name: oneradar-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
     volumes:
       - ${ONERADAR_DATA_ROOT:-../../data}/redis:/data
 

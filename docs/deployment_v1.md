@@ -50,6 +50,8 @@ Baseline services:
 - `postgres`
 - `redis`
 
+Only `web` and `api` should publish host ports in the baseline production stack. PostgreSQL and Redis remain reachable only on the Docker internal network and persist through host bind mounts.
+
 Optional later services:
 
 - reverse proxy for TLS and stable external routing
