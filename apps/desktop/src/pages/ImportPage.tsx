@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { createApiClient } from "../api";
 import type {
@@ -6,7 +7,8 @@ import type {
   ApiBilibiliPreviewResponse,
   ApiBilibiliQrcodeGenerateResponse,
   ApiBilibiliQrcodePollResponse,
-  ApiImportResponse
+  ApiImportResponse,
+  ApiTaskEntry
 } from "../api";
 import { useAppState } from "../state/appState";
 import { displayFolderName } from "../utils/display";
@@ -38,6 +40,18 @@ function qrcodeStatusText(status: QrcodeStatus, message?: string | null) {
   return "未开始";
 }
 
+function taskStatusText(status: ApiTaskEntry["status"]) {
+  switch (status) {
+    case "pending": return "排队中";
+    case "running": return "处理中";
+    case "retrying": return "等待重试";
+    case "success": return "已完成";
+    case "failed": return "失败";
+    case "canceled": return "已取消";
+    default: return status;
+  }
+}
+
 function apiRootUrl(baseUrl: string) {
   const normalized = baseUrl.trim().replace(/\/+$/, "");
   return normalized.endsWith("/api") ? normalized.slice(0, -4) : normalized;
@@ -57,6 +71,7 @@ export function ImportPage() {
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ApiImportResponse | null>(null);
+  const [importTask, setImportTask] = useState<ApiTaskEntry | null>(null);
   const [preview, setPreview] = useState<ApiBilibiliPreviewResponse | null>(null);
 
   const [integration, setIntegration] = useState<ApiBilibiliIntegrationSettings | null>(null);
@@ -83,6 +98,36 @@ export function ImportPage() {
   }
 
   useEffect(() => { void loadIntegrationSettings(); }, [client]);
+
+  useEffect(() => {
+    if (!importResult?.item_id) {
+      setImportTask(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadTask = async () => {
+      try {
+        const response = await client.listTasks(100);
+        if (cancelled) return;
+        const nextTask = response.items.find((task) =>
+          importResult.task_id ? task.id === importResult.task_id : task.item_id === importResult.item_id
+        );
+        setImportTask(nextTask ?? null);
+      } catch {
+        if (!cancelled) {
+          setImportTask(null);
+        }
+      }
+    };
+
+    void loadTask();
+    const interval = window.setInterval(() => void loadTask(), 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [client, importResult]);
 
   useEffect(() => {
     if (!qrcodePayload || !["waiting", "scanned"].includes(qrcodeStatus)) return;
@@ -126,7 +171,7 @@ export function ImportPage() {
     e.preventDefault();
     const url = importUrl.trim();
     if (!url) { setImportError("请先粘贴一个链接。"); return; }
-    setPreviewBusy(true); setImportError(null); setImportResult(null);
+    setPreviewBusy(true); setImportError(null); setImportResult(null); setImportTask(null);
     try {
       const r = await client.previewBilibiliVideo(url);
       setPreview(r);
@@ -196,7 +241,7 @@ export function ImportPage() {
       <div className="page-header">
         <p className="page-eyebrow">Bilibili</p>
         <h2 className="page-title">视频解析</h2>
-        <p className="page-lead">粘贴 Bilibili 视频链接，系统会优先获取字幕；没有可用字幕时再进入音频转写，并保留时间戳。</p>
+        <p className="page-lead">粘贴 Bilibili 视频链接，确认加入稍后阅读后，后台会下载音频并生成 ASR 转写，字幕仅作为参考信息。</p>
       </div>
 
       <div className="workspace-grid bilibili-import-grid" style={{ marginBottom: 24 }}>
@@ -305,7 +350,9 @@ export function ImportPage() {
         <div className="card bilibili-preview-card">
           <div className="card-header bilibili-preview-header">
             <span className="card-title">视频预览</span>
-            <span className={`chip ${preview ? "chip-success" : "chip-neutral"}`}>{preview ? "待确认" : "未解析"}</span>
+            <span className={`chip ${importResult ? "chip-status-processing" : preview ? "chip-success" : "chip-neutral"}`}>
+              {importResult ? "已加入" : preview ? "待确认" : "未解析"}
+            </span>
           </div>
 
           {preview ? (
@@ -350,11 +397,11 @@ export function ImportPage() {
               <button
                 className="btn btn-bili-primary"
                 type="button"
-                disabled={confirmBusy}
+                disabled={confirmBusy || Boolean(importResult)}
                 onClick={() => void handleConfirmImport()}
               >
                 <span className="icon icon-sm">{confirmBusy ? "sync" : "playlist_add_check"}</span>
-                {confirmBusy ? "加入中…" : "确认加入稍后阅读"}
+                {confirmBusy ? "加入中…" : importResult ? "已加入稍后阅读" : "确认加入稍后阅读"}
               </button>
 
               {importResult && (
@@ -367,13 +414,24 @@ export function ImportPage() {
                     <span className="chip chip-success">状态 {importResult.status}</span>
                     <span className="chip chip-success">位置 {displayFolderName(importResult.folder_name, importResult.folder_id === "inbox")}</span>
                   </div>
+                  <div className="text-caption" style={{ marginTop: 8 }}>
+                    {importTask
+                      ? `后台任务：${taskStatusText(importTask.status)}${importTask.error_message ? ` - ${importTask.error_message}` : ""}`
+                      : importResult.task_id
+                        ? "后台任务已创建，正在等待状态同步。"
+                        : "已存在的条目不会重复创建任务。"}
+                  </div>
+                  <Link className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} to={`/items/${importResult.item_id}?from=import`}>
+                    <span className="icon icon-sm">open_in_new</span>
+                    打开条目查看进度
+                  </Link>
                 </div>
               )}
             </div>
           ) : (
             <div className="bilibili-preview-empty">
               <span className="icon icon-lg">movie_info</span>
-              <p>这里会显示封面、标题、UP 主和时长。确认是正确视频后，再加入稍后阅读并启动字幕、转写和 AI 摘要。</p>
+              <p>这里会显示封面、标题、UP 主和时长。确认是正确视频后，再加入稍后阅读并启动音频转写。</p>
             </div>
           )}
         </div>

@@ -128,7 +128,108 @@ def test_bilibili_pipeline_uses_asr_when_subtitles_are_unavailable(monkeypatch):
     assert "sk-secret" not in json.dumps(result.data, ensure_ascii=False)
 
 
-def test_bilibili_pipeline_runs_visual_enhancement_after_subtitle(monkeypatch):
+def test_bilibili_pipeline_prefers_asr_even_when_subtitles_are_available(monkeypatch):
+    video_ref = BilibiliVideoRef(
+        source_url="https://www.bilibili.com/video/BV1subtitle",
+        normalized_url="https://www.bilibili.com/video/BV1subtitle",
+        bvid="BV1subtitle",
+        aid=None,
+        page=1,
+    )
+    metadata = BilibiliVideoMetadata(
+        bvid="BV1subtitle",
+        aid=123,
+        cid=456,
+        page=1,
+        title="Subtitle Video",
+        description="Only a short description",
+        owner_name="Author",
+        owner_id="42",
+        cover_url=None,
+        duration_seconds=60,
+        published_at=None,
+        part_title=None,
+    )
+    subtitle = BilibiliTranscriptPayload(
+        transcript_type="subtitle",
+        language="zh-CN",
+        full_text="https://github.com/example\n欢迎 Star",
+        segments=[
+            {"start_ms": 0, "end_ms": 3000, "text": "https://github.com/example", "speaker": None},
+            {"start_ms": 3000, "end_ms": 5000, "text": "欢迎 Star", "speaker": None},
+        ],
+    )
+
+    monkeypatch.setattr(bilibili, "_normalize_video_ref", lambda raw_url, cookie_values=None: video_ref)
+    monkeypatch.setattr(
+        bilibili,
+        "_fetch_metadata",
+        lambda video_ref, cookie_values=None: BilibiliFetchResult("fetch_metadata", True, "metadata-url", {"data": {}}),
+    )
+    monkeypatch.setattr(bilibili, "_extract_video_metadata", lambda video_ref, payload: metadata)
+    monkeypatch.setattr(
+        bilibili,
+        "_fetch_subtitle_catalog",
+        lambda video_ref, metadata, cookie_values=None: BilibiliFetchResult(
+            "fetch_subtitles",
+            True,
+            "subtitle-url",
+            {"data": {"subtitle": {"subtitles": [{"subtitle_url": "https://example.test/sub.json", "lan": "zh-CN"}]}}},
+        ),
+    )
+    monkeypatch.setattr(bilibili, "_fetch_subtitle_transcript", lambda track, referer, cookie_values=None: subtitle)
+
+    class FakeAudioExtractor:
+        def extract(self, *, source_url, referer, cookie_values, item_id):
+            return AudioExtractionResult(
+                ok=True,
+                audio_path="E:/OneRadar/tmp/audio.m4a",
+                mime_type="audio/mp4",
+                tool_name="fake-yt-dlp",
+                metadata={"size_bytes": 12},
+            )
+
+    class FakeTranscriptionAdapter:
+        def transcribe(self, *, audio_path, mime_type, provider_config, language):
+            return BilibiliTranscriptPayload(
+                transcript_type="asr",
+                language="zh-CN",
+                full_text="这是来自音频转写的完整正文",
+                segments=[
+                    {"start_ms": 0, "end_ms": 3000, "text": "这是来自音频转写的完整正文", "speaker": None},
+                ],
+                provider_name="OpenAI Compatible",
+                model_name="asr-model",
+            )
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url=video_ref.source_url,
+        task_type=TaskType.FETCH_META,
+        payload={
+            "transcription_provider": {
+                "provider_name": "OpenAI Compatible",
+                "provider_type": "openai_compatible",
+                "base_url": "https://api.example.test/v1",
+                "api_key": "sk-secret",
+                "model_name": "asr-model",
+            }
+        },
+    )
+
+    result = BilibiliPipeline(
+        audio_extractor=FakeAudioExtractor(),
+        transcription_adapter=FakeTranscriptionAdapter(),
+    ).run(context)
+
+    assert result.ok is True
+    persistable = result.data["persistable"]
+    assert persistable["transcript"]["transcript_type"] == "asr"
+    assert persistable["parsed_document"]["plain_text"] == "这是来自音频转写的完整正文"
+    assert "github.com/example" not in persistable["parsed_document"]["plain_text"]
+
+
+def test_bilibili_pipeline_runs_visual_enhancement_after_asr(monkeypatch):
     video_ref = BilibiliVideoRef(
         source_url="https://www.bilibili.com/video/BV1visual",
         normalized_url="https://www.bilibili.com/video/BV1visual",
@@ -150,7 +251,7 @@ def test_bilibili_pipeline_runs_visual_enhancement_after_subtitle(monkeypatch):
         published_at=None,
         part_title=None,
     )
-    transcript = BilibiliTranscriptPayload(
+    subtitle = BilibiliTranscriptPayload(
         transcript_type="subtitle",
         language="zh-CN",
         full_text="这里讲到了架构图。",
@@ -176,7 +277,22 @@ def test_bilibili_pipeline_runs_visual_enhancement_after_subtitle(monkeypatch):
             {"data": {"subtitle": {"subtitles": [{"subtitle_url": "https://example.test/sub.json", "lan": "zh-CN"}]}}},
         ),
     )
-    monkeypatch.setattr(bilibili, "_fetch_subtitle_transcript", lambda track, referer, cookie_values=None: transcript)
+    monkeypatch.setattr(bilibili, "_fetch_subtitle_transcript", lambda track, referer, cookie_values=None: subtitle)
+
+    class FakeAudioExtractor:
+        def extract(self, *, source_url, referer, cookie_values, item_id):
+            return AudioExtractionResult(ok=True, audio_path="audio.m4a", mime_type="audio/mp4", tool_name="fake", metadata={})
+
+    class FakeTranscriptionAdapter:
+        def transcribe(self, *, audio_path, mime_type, provider_config, language):
+            return BilibiliTranscriptPayload(
+                transcript_type="asr",
+                language="zh-CN",
+                full_text="这里讲到了架构图。",
+                segments=[{"start_ms": 0, "end_ms": 3000, "text": "这里讲到了架构图。", "speaker": None}],
+                provider_name="OpenAI Compatible",
+                model_name="asr-model",
+            )
 
     class FakeFrameExtractor:
         def extract_frames(self, *, source_url, referer, cookie_values, item_id, duration_seconds):
@@ -210,6 +326,13 @@ def test_bilibili_pipeline_runs_visual_enhancement_after_subtitle(monkeypatch):
         task_type=TaskType.FETCH_META,
         payload={
             "visual_enhancement": {"enabled": True},
+            "transcription_provider": {
+                "provider_name": "OpenAI Compatible",
+                "provider_type": "openai_compatible",
+                "base_url": "https://api.example.test/v1",
+                "api_key": "sk-secret",
+                "model_name": "asr-model",
+            },
             "visual_understanding_provider": {
                 "provider_name": "OpenAI Compatible",
                 "provider_type": "openai_compatible",
@@ -221,6 +344,8 @@ def test_bilibili_pipeline_runs_visual_enhancement_after_subtitle(monkeypatch):
     )
 
     result = BilibiliPipeline(
+        audio_extractor=FakeAudioExtractor(),
+        transcription_adapter=FakeTranscriptionAdapter(),
         visual_video_extractor=FakeVideoExtractor(),
         visual_frame_extractor=FakeFrameExtractor(),
         visual_understanding_adapter=FakeVisualAdapter(),
@@ -265,7 +390,7 @@ def test_bilibili_pipeline_prefers_direct_video_visual_enhancement(monkeypatch):
         published_at=None,
         part_title=None,
     )
-    transcript = BilibiliTranscriptPayload(
+    subtitle = BilibiliTranscriptPayload(
         transcript_type="subtitle",
         language="zh-CN",
         full_text="这里展示了一个操作演示。",
@@ -291,7 +416,22 @@ def test_bilibili_pipeline_prefers_direct_video_visual_enhancement(monkeypatch):
             {"data": {"subtitle": {"subtitles": [{"subtitle_url": "https://example.test/sub.json", "lan": "zh-CN"}]}}},
         ),
     )
-    monkeypatch.setattr(bilibili, "_fetch_subtitle_transcript", lambda track, referer, cookie_values=None: transcript)
+    monkeypatch.setattr(bilibili, "_fetch_subtitle_transcript", lambda track, referer, cookie_values=None: subtitle)
+
+    class FakeAudioExtractor:
+        def extract(self, *, source_url, referer, cookie_values, item_id):
+            return AudioExtractionResult(ok=True, audio_path="audio.m4a", mime_type="audio/mp4", tool_name="fake", metadata={})
+
+    class FakeTranscriptionAdapter:
+        def transcribe(self, *, audio_path, mime_type, provider_config, language):
+            return BilibiliTranscriptPayload(
+                transcript_type="asr",
+                language="zh-CN",
+                full_text="这里展示了一个操作演示。",
+                segments=[{"start_ms": 0, "end_ms": 3000, "text": "这里展示了一个操作演示。", "speaker": None}],
+                provider_name="OpenAI Compatible",
+                model_name="asr-model",
+            )
 
     class FakeVideoExtractor:
         def extract_clip(self, *, source_url, referer, cookie_values, item_id, duration_seconds):
@@ -332,6 +472,13 @@ def test_bilibili_pipeline_prefers_direct_video_visual_enhancement(monkeypatch):
         task_type=TaskType.FETCH_META,
         payload={
             "visual_enhancement": {"enabled": True},
+            "transcription_provider": {
+                "provider_name": "OpenAI Compatible",
+                "provider_type": "openai_compatible",
+                "base_url": "https://api.example.test/v1",
+                "api_key": "sk-secret",
+                "model_name": "asr-model",
+            },
             "visual_understanding_provider": {
                 "provider_name": "OpenAI Compatible",
                 "provider_type": "openai_compatible",
@@ -343,6 +490,8 @@ def test_bilibili_pipeline_prefers_direct_video_visual_enhancement(monkeypatch):
     )
 
     result = BilibiliPipeline(
+        audio_extractor=FakeAudioExtractor(),
+        transcription_adapter=FakeTranscriptionAdapter(),
         visual_video_extractor=FakeVideoExtractor(),
         visual_frame_extractor=FailingFrameExtractor(),
         visual_understanding_adapter=FakeVisualAdapter(),

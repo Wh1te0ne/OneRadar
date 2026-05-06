@@ -54,6 +54,7 @@ PREFERRED_SUBTITLE_LANGS = (
     'en-US',
     'en',
 )
+SUBTITLE_TRANSCRIPTS_ENABLED = False
 
 
 @dataclass(slots=True)
@@ -503,85 +504,89 @@ class BilibiliPipeline:
         metadata = _extract_video_metadata(video_ref, metadata_fetch.response_data)
         subtitle_catalog_fetch = _fetch_subtitle_catalog(video_ref, metadata, cookie_values=cookie_values)
         selected_track = _select_subtitle_track(subtitle_catalog_fetch.response_data) if subtitle_catalog_fetch.ok else None
-        transcript = _fetch_subtitle_transcript(selected_track, video_ref.normalized_url, cookie_values=cookie_values) if selected_track else None
+        subtitle_transcript = (
+            _fetch_subtitle_transcript(selected_track, video_ref.normalized_url, cookie_values=cookie_values)
+            if selected_track and SUBTITLE_TRANSCRIPTS_ENABLED
+            else None
+        )
+        transcript: BilibiliTranscriptPayload | None = None
         steps.append(
             PipelineStepResult(
                 'fetch_subtitles',
-                transcript is not None,
-                'Subtitle transcript fetched' if transcript else 'No subtitle transcript available',
+                subtitle_transcript is not None,
+                'Subtitle transcript fetched'
+                if subtitle_transcript
+                else 'Subtitle transcript is ignored by default; ASR is the canonical transcript source',
                 {
                     'catalog': subtitle_catalog_fetch.to_dict(),
                     'selected_track': selected_track.to_dict() if selected_track else None,
-                    'has_transcript': transcript is not None,
+                    'has_transcript': subtitle_transcript is not None,
+                    'subtitle_transcripts_enabled': SUBTITLE_TRANSCRIPTS_ENABLED,
                 },
             )
         )
-        if transcript is None:
-            audio_extractor = self.audio_extractor or BilibiliAudioExtractor()
-            audio_result = audio_extractor.extract(
-                source_url=video_ref.normalized_url,
-                referer=video_ref.normalized_url,
-                cookie_values=cookie_values,
-                item_id=context.item_id,
+        audio_extractor = self.audio_extractor or BilibiliAudioExtractor()
+        audio_result = audio_extractor.extract(
+            source_url=video_ref.normalized_url,
+            referer=video_ref.normalized_url,
+            cookie_values=cookie_values,
+            item_id=context.item_id,
+        )
+        steps.append(
+            PipelineStepResult(
+                'extract_audio',
+                audio_result.ok,
+                'Audio extracted for ASR' if audio_result.ok else (audio_result.error_message or 'Audio extraction failed'),
+                {
+                    'tool_name': audio_result.tool_name,
+                    'mime_type': audio_result.mime_type,
+                    'has_audio': bool(audio_result.audio_path),
+                    'metadata': audio_result.metadata,
+                },
             )
+        )
+        provider_config = dict(context.payload.get('transcription_provider') or {})
+        if not audio_result.ok or not audio_result.audio_path:
+            steps.append(PipelineStepResult('transcribe_audio', False, 'Audio extraction did not produce an input file', {}))
+        elif not is_transcription_configured(provider_config):
             steps.append(
                 PipelineStepResult(
-                    'extract_audio',
-                    audio_result.ok,
-                    'Audio extracted for ASR' if audio_result.ok else (audio_result.error_message or 'Audio extraction failed'),
-                    {
-                        'tool_name': audio_result.tool_name,
-                        'mime_type': audio_result.mime_type,
-                        'has_audio': bool(audio_result.audio_path),
-                        'metadata': audio_result.metadata,
-                    },
+                    'transcribe_audio',
+                    False,
+                    'Transcription provider is not configured',
+                    _provider_step_data(provider_config),
                 )
             )
-            provider_config = dict(context.payload.get('transcription_provider') or {})
-            if not audio_result.ok or not audio_result.audio_path:
-                steps.append(PipelineStepResult('transcribe_audio', False, 'Audio extraction did not produce an input file', {}))
-            elif not is_transcription_configured(provider_config):
+        else:
+            adapter = self.transcription_adapter or select_transcription_adapter(provider_config)
+            try:
+                transcript = adapter.transcribe(
+                    audio_path=audio_result.audio_path,
+                    mime_type=audio_result.mime_type,
+                    provider_config=provider_config,
+                    language=str(context.payload.get('language') or 'zh-CN'),
+                )
+            except TranscriptionError as error:
                 steps.append(
                     PipelineStepResult(
                         'transcribe_audio',
                         False,
-                        'Transcription provider is not configured',
+                        str(error),
                         _provider_step_data(provider_config),
                     )
                 )
             else:
-                adapter = self.transcription_adapter or select_transcription_adapter(provider_config)
-                try:
-                    transcript = adapter.transcribe(
-                        audio_path=audio_result.audio_path,
-                        mime_type=audio_result.mime_type,
-                        provider_config=provider_config,
-                        language=str(context.payload.get('language') or 'zh-CN'),
+                steps.append(
+                    PipelineStepResult(
+                        'transcribe_audio',
+                        True,
+                        'ASR transcript generated',
+                        {
+                            **_provider_step_data(provider_config),
+                            'segment_count': len(transcript.segments),
+                        },
                     )
-                except TranscriptionError as error:
-                    steps.append(
-                        PipelineStepResult(
-                            'transcribe_audio',
-                            False,
-                            str(error),
-                            _provider_step_data(provider_config),
-                        )
-                    )
-                else:
-                    steps.append(
-                        PipelineStepResult(
-                            'transcribe_audio',
-                            True,
-                            'ASR transcript generated',
-                            {
-                                **_provider_step_data(provider_config),
-                                'segment_count': len(transcript.segments),
-                            },
-                        )
-                    )
-        else:
-            steps.append(PipelineStepResult('extract_audio', False, 'Skipped because subtitle transcript is available', {}))
-            steps.append(PipelineStepResult('transcribe_audio', False, 'Skipped because subtitle transcript is available', {}))
+                )
 
         visual_result: VisualUnderstandingResult | None = None
         visual_source_type = 'none'
@@ -804,4 +809,4 @@ class BilibiliPipeline:
                 },
             )
         )
-        return PipelineRunResult(ok=bool(transcript or metadata.description or metadata.title), steps=steps, data=result)
+        return PipelineRunResult(ok=bool(transcript), steps=steps, data=result)

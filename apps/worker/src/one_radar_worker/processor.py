@@ -103,6 +103,13 @@ def _select_pipeline(item: dict[str, object]):
     raise ValueError(f'unsupported content type: {content_type}')
 
 
+def _pipeline_failure_message(result) -> str:
+    for step in reversed(result.steps):
+        if not step.ok and step.message:
+            return step.message
+    return 'content pipeline did not produce usable output'
+
+
 def run_task(engine, task: dict[str, object]) -> TaskResult:
     item = load_content_item(engine, str(task['content_item_id']))
     if item is None:
@@ -148,7 +155,7 @@ def run_task(engine, task: dict[str, object]) -> TaskResult:
             'content_type': str(item.get('content_type') or ''),
         }
         if not result.ok:
-            raise ValueError('content pipeline did not produce usable output')
+            raise ValueError(_pipeline_failure_message(result))
 
         complete_task(engine, task, item, result_payload)
         return TaskResult(

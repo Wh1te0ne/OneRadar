@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${ONERADAR_POSTGRES_USER:-oneradar}
       POSTGRES_PASSWORD: ${ONERADAR_POSTGRES_PASSWORD:-oneradar}
     volumes:
-      - ${ONERADAR_DATA_ROOT:-../../data}/postgres:/var/lib/postgresql/data
+      - ${ONERADAR_DATA_ROOT:-../../data/local}/postgres:/var/lib/postgresql/data
 
   redis:
     image: redis:7
@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - ${ONERADAR_DATA_ROOT:-../../data}/redis:/data
+      - ${ONERADAR_DATA_ROOT:-../../data/local}/redis:/data
 
   api:
     build:
@@ -42,16 +42,16 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ${ONERADAR_DATA_ROOT:-../../data}/storage:/app/data
+      - ${ONERADAR_DATA_ROOT:-../../data/local}/storage:/app/data
 
   web:
     build:
       context: ../../
       dockerfile: apps/desktop/Dockerfile
-      args:
-        VITE_ONERADAR_DEFAULT_API_URL: ${VITE_ONERADAR_DEFAULT_API_URL:-http://127.0.0.1:8000}
     container_name: oneradar-web
     restart: unless-stopped
+    environment:
+      ONERADAR_PUBLIC_API_URL: ${ONERADAR_PUBLIC_API_URL:-}
     depends_on:
       - api
     ports:
@@ -79,4 +79,4 @@ services:
       - postgres
       - redis
     volumes:
-      - ${ONERADAR_DATA_ROOT:-../../data}/storage:/app/data
+      - ${ONERADAR_DATA_ROOT:-../../data/local}/storage:/app/data
