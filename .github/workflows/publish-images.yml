@@ -62,4 +62,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VITE_ONERADAR_DEFAULT_API_URL=${{ vars.ONERADAR_PUBLIC_API_URL || 'http://192.168.100.55:8000' }}
+            VITE_ONERADAR_DEFAULT_API_URL=${{ vars.ONERADAR_PUBLIC_API_URL || 'http://192.168.100.55:18000' }}
