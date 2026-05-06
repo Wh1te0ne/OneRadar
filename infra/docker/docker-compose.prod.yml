@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: oneradar-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ONERADAR_POSTGRES_DB:-oneradar}
+      POSTGRES_USER: ${ONERADAR_POSTGRES_USER:-oneradar}
+      POSTGRES_PASSWORD: ${ONERADAR_POSTGRES_PASSWORD:?set ONERADAR_POSTGRES_PASSWORD}
+    volumes:
+      - ${ONERADAR_DATA_ROOT:?set ONERADAR_DATA_ROOT}/postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: oneradar-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${ONERADAR_DATA_ROOT:?set ONERADAR_DATA_ROOT}/redis:/data
+
+  api:
+    image: ${ONERADAR_API_IMAGE:-ghcr.io/wh1te0ne/oneradar-api:main}
+    container_name: oneradar-api
+    restart: unless-stopped
+    environment:
+      ONERADAR_ENV: ${ONERADAR_ENV:-production}
+      ONERADAR_LOG_LEVEL: ${ONERADAR_LOG_LEVEL:-INFO}
+      ONERADAR_API_HOST: ${ONERADAR_API_HOST:-0.0.0.0}
+      ONERADAR_API_PORT: ${ONERADAR_API_PORT:-8000}
+      ONERADAR_API_SECRET_KEY: ${ONERADAR_API_SECRET_KEY:?set ONERADAR_API_SECRET_KEY}
+      ONERADAR_DATABASE_URL: ${ONERADAR_DATABASE_URL:?set ONERADAR_DATABASE_URL}
+      ONERADAR_REDIS_URL: ${ONERADAR_REDIS_URL:-redis://redis:6379/0}
+      ONERADAR_STORAGE_ROOT: ${ONERADAR_STORAGE_ROOT:-/app/data/storage}
+      ONERADAR_FEED_REFRESH_ENABLED: ${ONERADAR_FEED_REFRESH_ENABLED:-true}
+      ONERADAR_FEED_REFRESH_INTERVAL_SECONDS: ${ONERADAR_FEED_REFRESH_INTERVAL_SECONDS:-1800}
+      ONERADAR_FEED_REFRESH_STARTUP_DELAY_SECONDS: ${ONERADAR_FEED_REFRESH_STARTUP_DELAY_SECONDS:-20}
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "${ONERADAR_API_PORT:-8000}:8000"
+    volumes:
+      - ${ONERADAR_DATA_ROOT:?set ONERADAR_DATA_ROOT}/storage:/app/data
+
+  web:
+    image: ${ONERADAR_WEB_IMAGE:-ghcr.io/wh1te0ne/oneradar-web:main}
+    container_name: oneradar-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${ONERADAR_WEB_PORT:-8081}:80"
+
+  worker:
+    image: ${ONERADAR_WORKER_IMAGE:-ghcr.io/wh1te0ne/oneradar-worker:main}
+    container_name: oneradar-worker
+    restart: unless-stopped
+    environment:
+      ONERADAR_ENV: ${ONERADAR_ENV:-production}
+      ONERADAR_LOG_LEVEL: ${ONERADAR_LOG_LEVEL:-INFO}
+      ONERADAR_API_SECRET_KEY: ${ONERADAR_API_SECRET_KEY:?set ONERADAR_API_SECRET_KEY}
+      ONERADAR_DATABASE_URL: ${ONERADAR_DATABASE_URL:?set ONERADAR_DATABASE_URL}
+      ONERADAR_REDIS_URL: ${ONERADAR_REDIS_URL:-redis://redis:6379/0}
+      ONERADAR_STORAGE_ROOT: ${ONERADAR_STORAGE_ROOT:-/app/data/storage}
+      ONERADAR_WORKER_CONCURRENCY: ${ONERADAR_WORKER_CONCURRENCY:-2}
+      ONERADAR_BBDOWN_BIN: ${ONERADAR_BBDOWN_BIN:-BBDown}
+      ONERADAR_FFMPEG_BIN: ${ONERADAR_FFMPEG_BIN:-ffmpeg}
+      ONERADAR_YTDLP_BIN: ${ONERADAR_YTDLP_BIN:-yt-dlp}
+      ONERADAR_MEDIA_CACHE_ROOT: ${ONERADAR_MEDIA_CACHE_ROOT:-/tmp}
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ${ONERADAR_DATA_ROOT:?set ONERADAR_DATA_ROOT}/storage:/app/data

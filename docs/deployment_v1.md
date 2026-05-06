@@ -41,7 +41,20 @@ Future Windows desktop and Android clients should connect to the server API, but
 
 ## Production Deployment Shape
 
-Production should deploy from the GitHub repository onto the target NAS with Docker Compose.
+Production should run prebuilt GHCR images on the target NAS with Docker Compose.
+
+The NAS runtime directory should not be a source checkout. It should contain only:
+
+- `docker-compose.yml`
+- `.env`
+- `data/`
+
+Normal updates should be:
+
+```bash
+docker compose --env-file .env pull
+docker compose --env-file .env up -d
+```
 
 Baseline services:
 
@@ -82,7 +95,7 @@ The current layout is:
 ```text
 /vol1/1000/Workspace/OneRadar
   .env
-  infra/docker/docker-compose.yml
+  docker-compose.yml
   data/
     postgres/
     redis/
@@ -115,19 +128,20 @@ The intended update flow is:
 
 1. Develop and test locally.
 2. Commit and push to the private GitHub repository.
-3. SSH to the production NAS.
-4. Pull the target branch or release tag.
-5. Rebuild and restart Docker Compose services.
-6. Run a health check against the API.
+3. GitHub Actions builds and publishes GHCR images.
+4. SSH to the production NAS.
+5. Run `docker compose --env-file .env pull`.
+6. Run `docker compose --env-file .env up -d`.
+7. Run a health check against the API.
 
 Initial command shape, to be refined once the server path and compose wrapper are finalized:
 
 ```powershell
 ssh wh1teone@192.168.100.55
 cd /vol1/1000/Workspace/OneRadar
-git pull
-docker compose --env-file .env -f infra/docker/docker-compose.yml up -d --build
-docker compose --env-file .env -f infra/docker/docker-compose.yml ps
+docker compose --env-file .env pull
+docker compose --env-file .env up -d
+docker compose --env-file .env ps
 ```
 
 ## Open Decisions
