@@ -40,7 +40,8 @@ Read these before changing code or architecture:
 1. `docs/prd_v1_desktop_reader.md`
 2. `docs/codebase_requirements.md`
 3. `docs/implementation_todo.md`
-4. `docs/reference_landscape.md`
+4. `docs/deployment_v1.md`
+5. `docs/reference_landscape.md`
 
 ## Initial Bootstrap Goal
 

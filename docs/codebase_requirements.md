@@ -88,6 +88,7 @@ E:\OneRadar
     architecture_v1.md
     api_v1.md
     database_v1.md
+    deployment_v1.md
   apps/
     desktop/
     api/
@@ -112,6 +113,7 @@ These documents are mandatory context anchors:
 - `docs/codebase_requirements.md`: source of truth for engineering constraints.
 - `docs/implementation_todo.md`: source of truth for active priorities and completion status.
 - `docs/reference_landscape.md`: source of truth for external references and reusable components.
+- `docs/deployment_v1.md`: source of truth for local/GitHub/production deployment assumptions.
 
 Rule:
 

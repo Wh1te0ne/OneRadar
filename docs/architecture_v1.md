@@ -496,6 +496,7 @@ V1 deployment should assume:
 - One Windows desktop client.
 - Docker Compose on the server side.
 - Local persistent storage mounted into the server runtime.
+- Local Windows development and testing, GitHub as the private source-control and release coordination point, and the production server as the durable web/server runtime.
 
 ### 9.1 Server Topology
 
@@ -534,6 +535,8 @@ The server deployment must persist:
 - Configuration files.
 
 If the deployment is reset, the product should not lose user-owned content unless the user explicitly deletes storage.
+
+Production deployment assumptions and persistent data rules are tracked in `docs/deployment_v1.md`.
 
 ## 10. Phased Implementation Notes
 

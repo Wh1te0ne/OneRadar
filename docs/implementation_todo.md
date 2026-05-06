@@ -178,10 +178,13 @@ Local development now has `infra/scripts/dev.ps1`, which starts the API, worker,
 ## P0 Deployment And Operations
 
 - [x] Write Docker Compose for API, worker, Postgres, and Redis.
-- [ ] Define persistent volume layout.
+- [x] Define persistent volume layout.
 - [x] Add example `.env` template.
 - [x] Document local development startup.
-- [ ] Document production deployment assumptions.
+- [x] Document production deployment assumptions.
+
+Deployment note:
+`docs/deployment_v1.md` now records the intended split between local development/testing, private GitHub source control, and Docker Compose based production on the remote server. Tracked docs intentionally omit live passwords and direct future agents to ignored local files for machine-specific access notes.
 
 ## P0 Testing
 

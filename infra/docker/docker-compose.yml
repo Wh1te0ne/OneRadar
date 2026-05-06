@@ -10,14 +10,17 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${ONERADAR_DATA_ROOT:-../../data}/postgres:/var/lib/postgresql/data
 
   redis:
     image: redis:7
     container_name: oneradar-redis
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    volumes:
+      - ${ONERADAR_DATA_ROOT:-../../data}/redis:/data
 
   api:
     build:
@@ -25,18 +28,25 @@ services:
       dockerfile: apps/api/Dockerfile
     container_name: oneradar-api
     restart: unless-stopped
-    env_file:
-      - ../../.env.example
     environment:
+      ONERADAR_ENV: ${ONERADAR_ENV:-production}
+      ONERADAR_LOG_LEVEL: ${ONERADAR_LOG_LEVEL:-INFO}
+      ONERADAR_API_HOST: ${ONERADAR_API_HOST:-0.0.0.0}
+      ONERADAR_API_PORT: ${ONERADAR_API_PORT:-8000}
+      ONERADAR_API_SECRET_KEY: ${ONERADAR_API_SECRET_KEY:-change-me}
       ONERADAR_DATABASE_URL: ${ONERADAR_DATABASE_URL:-postgresql+psycopg://oneradar:oneradar@postgres:5432/oneradar}
       ONERADAR_REDIS_URL: ${ONERADAR_REDIS_URL:-redis://redis:6379/0}
+      ONERADAR_STORAGE_ROOT: ${ONERADAR_STORAGE_ROOT:-/app/data/storage}
+      ONERADAR_FEED_REFRESH_ENABLED: ${ONERADAR_FEED_REFRESH_ENABLED:-true}
+      ONERADAR_FEED_REFRESH_INTERVAL_SECONDS: ${ONERADAR_FEED_REFRESH_INTERVAL_SECONDS:-1800}
+      ONERADAR_FEED_REFRESH_STARTUP_DELAY_SECONDS: ${ONERADAR_FEED_REFRESH_STARTUP_DELAY_SECONDS:-20}
     depends_on:
       - postgres
       - redis
     ports:
       - "8000:8000"
     volumes:
-      - ../../data:/app/data
+      - ${ONERADAR_DATA_ROOT:-../../data}/storage:/app/data
 
   worker:
     build:
@@ -44,16 +54,20 @@ services:
       dockerfile: apps/worker/Dockerfile
     container_name: oneradar-worker
     restart: unless-stopped
-    env_file:
-      - ../../.env.example
     environment:
+      ONERADAR_ENV: ${ONERADAR_ENV:-production}
+      ONERADAR_LOG_LEVEL: ${ONERADAR_LOG_LEVEL:-INFO}
+      ONERADAR_API_SECRET_KEY: ${ONERADAR_API_SECRET_KEY:-change-me}
       ONERADAR_DATABASE_URL: ${ONERADAR_DATABASE_URL:-postgresql+psycopg://oneradar:oneradar@postgres:5432/oneradar}
       ONERADAR_REDIS_URL: ${ONERADAR_REDIS_URL:-redis://redis:6379/0}
+      ONERADAR_STORAGE_ROOT: ${ONERADAR_STORAGE_ROOT:-/app/data/storage}
+      ONERADAR_WORKER_CONCURRENCY: ${ONERADAR_WORKER_CONCURRENCY:-2}
+      ONERADAR_BBDOWN_BIN: ${ONERADAR_BBDOWN_BIN:-BBDown}
+      ONERADAR_FFMPEG_BIN: ${ONERADAR_FFMPEG_BIN:-ffmpeg}
+      ONERADAR_YTDLP_BIN: ${ONERADAR_YTDLP_BIN:-yt-dlp}
+      ONERADAR_MEDIA_CACHE_ROOT: ${ONERADAR_MEDIA_CACHE_ROOT:-/tmp}
     depends_on:
       - postgres
       - redis
     volumes:
-      - ../../data:/app/data
-
-volumes:
-  postgres_data:
+      - ${ONERADAR_DATA_ROOT:-../../data}/storage:/app/data
