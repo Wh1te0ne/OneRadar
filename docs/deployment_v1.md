@@ -50,7 +50,7 @@ Baseline services:
 - `postgres`
 - `redis`
 
-Only `web` and `api` should publish host ports in the baseline production stack. PostgreSQL and Redis remain reachable only on the Docker internal network and persist through host bind mounts.
+Only `web` and `api` should publish host ports in the baseline production stack. PostgreSQL and Redis remain reachable only on the Docker internal network and persist through host bind mounts. The web host port is controlled by `ONERADAR_WEB_PORT`.
 
 Optional later services:
 
@@ -94,6 +94,7 @@ Production `.env` should set:
 ```text
 ONERADAR_DATA_ROOT=/root/Project/OneRadar/data
 ONERADAR_STORAGE_ROOT=/app/data/storage
+ONERADAR_WEB_PORT=8081
 VITE_ONERADAR_DEFAULT_API_URL=http://101.96.202.98:8000
 ```
 
