@@ -232,6 +232,24 @@ def _build_blocks(title: str | None, excerpt: str | None, paragraphs: list[str])
     return blocks
 
 
+def _title_from_body(body_text: str) -> str | None:
+    for line in body_text.splitlines():
+        candidate = re.sub(r"^[#>\-\*\s]+", "", line).strip()
+        if not candidate:
+            continue
+        if len(candidate) > 160:
+            return None
+        return candidate
+    return None
+
+
+def _usable_title(title: str | None, body_text: str) -> str | None:
+    cleaned = (title or "").strip()
+    if cleaned and cleaned not in {"新导入内容", "未命名内容", "New imported content", "Untitled"}:
+        return cleaned
+    return _title_from_body(body_text)
+
+
 def _score_quality(title: str | None, body_text: str, html: str, site_name: str | None, excerpt: str | None) -> PipelineQualityScore:
     score = 0.0
     reasons: list[str] = []
@@ -515,7 +533,7 @@ class ArticlePipeline:
             body_text = draft.body_text.strip()
             if not body_text:
                 continue
-            title = draft.title if draft.title else None
+            title = _usable_title(draft.title, body_text)
             site_name = draft.site_name if draft.site_name else None
             byline = draft.byline if draft.byline else None
             language = draft.language if draft.language else None
@@ -539,7 +557,11 @@ class ArticlePipeline:
             return candidates
 
         fallback_body = _clean_text(_html_to_text(html) or re.sub(r"<[^>]+>", " ", html))
-        fallback_title = _extract_meta_content(html, "og:title") or _extract_tag_value(html, r"<title[^>]*>(.*?)</title>")
+        fallback_title = (
+            _extract_meta_content(html, "og:title")
+            or _extract_tag_value(html, r"<title[^>]*>(.*?)</title>")
+            or _title_from_body(fallback_body)
+        )
         fallback_excerpt = _extract_meta_content(html, "description") or _extract_meta_content(html, "og:description")
         fallback_site_name = _extract_meta_content(html, "og:site_name")
         fallback_blocks = _build_blocks(fallback_title, fallback_excerpt, _split_paragraphs(fallback_body))
@@ -699,6 +721,4 @@ def _demo_article_payload(source_url: str) -> dict[str, Any]:
         ),
         "source_url": source_url,
     }
-
-
 

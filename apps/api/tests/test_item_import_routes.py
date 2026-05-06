@@ -183,6 +183,50 @@ def test_update_reading_state_route_fallback_contract(client, monkeypatch) -> No
     assert list_response.json()["items"][0]["is_read"] is True
 
 
+def test_delete_moves_item_to_recently_deleted_and_restore_purge(client, monkeypatch) -> None:
+    def failing_session_local():
+        raise SQLAlchemyError("database unavailable")
+
+    monkeypatch.setattr(items_service, "SessionLocal", failing_session_local)
+
+    import_response = client.post(
+        "/api/items/import",
+        json={"url": "https://example.com/articles/delete-me", "source_hint": "article"},
+    )
+    assert import_response.status_code == 200
+    item_id = import_response.json()["item_id"]
+
+    delete_response = client.delete(f"/api/items/{item_id}")
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] is True
+
+    list_response = client.get("/api/items?page=1&page_size=20")
+    assert list_response.status_code == 200
+    assert all(item["id"] != item_id for item in list_response.json()["items"])
+
+    detail_response = client.get(f"/api/items/{item_id}")
+    assert detail_response.status_code == 404
+
+    trash_response = client.get("/api/items/trash?page_size=20")
+    assert trash_response.status_code == 200
+    trash_items = trash_response.json()["items"]
+    assert any(item["id"] == item_id and item["deleted_at"] and item["delete_expires_at"] for item in trash_items)
+
+    restore_response = client.post(f"/api/items/trash/{item_id}/restore")
+    assert restore_response.status_code == 200
+    assert restore_response.json()["deleted"] is False
+
+    list_response = client.get("/api/items?page=1&page_size=20")
+    assert any(item["id"] == item_id for item in list_response.json()["items"])
+
+    delete_response = client.delete(f"/api/items/{item_id}")
+    assert delete_response.status_code == 200
+    purge_response = client.delete(f"/api/items/trash/{item_id}/purge")
+    assert purge_response.status_code == 200
+    assert purge_response.json()["deleted"] is True
+    assert client.get(f"/api/items/{item_id}").status_code == 404
+
+
 def test_generate_summary_route_creates_task(client, monkeypatch) -> None:
     def failing_session_local():
         raise SQLAlchemyError("database unavailable")

@@ -650,7 +650,10 @@ The desktop client is only one consumer of the backend. These endpoints are stab
 - Add a Bilibili video after preview: `POST /api/items/bilibili/preview`, then `POST /api/items/import`.
 - List knowledge-library or inbox items: `GET /api/items?inbox_only=true&page=1&page_size=20` or `GET /api/items?folder_id={folder_id}`.
 - Read a saved item with parsed text, summaries, transcript, tags, notes, and collections: `GET /api/items/{id}`.
-- List and create folders: `GET /api/items/folders`, `POST /api/items/folders`.
+- Soft-delete an item into 最近删除: `DELETE /api/items/{id}`. Deleted items are hidden from normal lists and retained for 7 days.
+- List 最近删除: `GET /api/items/trash?page=1&page_size=100`.
+- Restore or permanently purge a deleted item: `POST /api/items/trash/{id}/restore`, `DELETE /api/items/trash/{id}/purge`.
+- List, create, rename, and delete folders: `GET /api/items/folders`, `POST /api/items/folders`, `PATCH /api/items/folders/{id}`, `DELETE /api/items/folders/{id}`.
 - Move an item into a folder: `POST /api/items/{id}/move`.
 - Trigger or retry AI summary generation for a saved item: `POST /api/items/{id}/summaries/generate`.
 - Read or refresh RSS discovery state: `GET /api/feeds/state`, `POST /api/feeds/refresh`.

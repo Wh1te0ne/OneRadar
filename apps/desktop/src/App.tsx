@@ -10,9 +10,12 @@ import { ItemDetailPage } from "./pages/ItemDetailPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { PodcastsPage } from "./pages/PodcastsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { TrashPage } from "./pages/TrashPage";
+import { ConfirmDialog } from "./components/ConfirmDialog";
+import { Toast, type ToastState } from "./components/Toast";
 import { useAppState } from "./state/appState";
 
-type PrimaryContext = "feed" | "podcasts" | "inbox" | "library" | "import" | "settings";
+type PrimaryContext = "feed" | "podcasts" | "inbox" | "library" | "import" | "settings" | "trash";
 
 function inferPrimaryContext(pathname: string, search: string): PrimaryContext {
   if (pathname === "/" || pathname === "/feed" || pathname.startsWith("/feed/")) return "feed";
@@ -20,6 +23,7 @@ function inferPrimaryContext(pathname: string, search: string): PrimaryContext {
   if (pathname === "/inbox") return "inbox";
   if (pathname === "/import") return "import";
   if (pathname === "/settings" || pathname === "/connect") return "settings";
+  if (pathname === "/trash") return "trash";
   if (pathname === "/library" || pathname.startsWith("/folders/")) return "library";
   if (pathname.startsWith("/items/") || pathname.startsWith("/reader/")) {
     const from = new URLSearchParams(search).get("from");
@@ -36,6 +40,7 @@ function isActive(pathname: string, to: string, ctx: PrimaryContext) {
   if (to === "/podcasts") return ctx === "podcasts";
   if (to === "/inbox") return ctx === "inbox";
   if (to === "/library") return ctx === "library";
+  if (to === "/trash") return ctx === "trash";
   if (to === "/import") return ctx === "import";
   if (ctx === "settings") return false;
   return pathname === to || pathname.startsWith(`${to}/`);
@@ -53,15 +58,6 @@ function searchPlaceholder(pathname: string) {
   return "搜索知识库…";
 }
 
-function connectionLabel(state: "idle" | "checking" | "connected" | "unavailable") {
-  switch (state) {
-    case "checking": return "连接中";
-    case "connected": return "服务端在线";
-    case "unavailable": return "服务端不可用";
-    default: return "等待连接";
-  }
-}
-
 const navItems = [
   { to: "/inbox", label: "稍后阅读", icon: "bookmarks", ctx: "inbox" as PrimaryContext },
   { to: "/feed", label: "订阅源", icon: "rss_feed", ctx: "feed" as PrimaryContext },
@@ -76,8 +72,12 @@ export default function App() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
-  const [folderMessage, setFolderMessage] = useState<string | null>(null);
-  const [folderError, setFolderError] = useState<string | null>(null);
+  const [folderMenu, setFolderMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<{ id: string; name: string } | null>(null);
+  const [renameFolderName, setRenameFolderName] = useState("");
+  const [deletingFolder, setDeletingFolder] = useState<{ id: string; name: string; item_count: number } | null>(null);
+  const [folderBusy, setFolderBusy] = useState(false);
+  const [toast, setToast] = useState<ToastState>(null);
   const { apiBaseUrl, connectionState, folders, loadFolders, workspace } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
 
@@ -92,6 +92,22 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("oneradar.sidebar.collapsed", String(sidebarCollapsed));
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!folderMenu) return;
+    const close = () => setFolderMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [folderMenu]);
+
+  function showToast(message: string, tone: NonNullable<ToastState>["tone"] = "info") {
+    setToast({ message, tone });
+    window.setTimeout(() => setToast(null), 2600);
+  }
 
   function handleSearchChange(value: string) {
     const next = new URLSearchParams(searchParams);
@@ -109,18 +125,50 @@ export default function App() {
     if (!name) return;
 
     setCreatingFolder(true);
-    setFolderError(null);
     try {
       await client.createFolder(name);
       await loadFolders();
       setNewFolderName("");
       setShowNewFolder(false);
-      setFolderMessage(`已创建收藏夹「${name}」`);
-      window.setTimeout(() => setFolderMessage(null), 2500);
+      showToast(`已创建收藏夹「${name}」`, "success");
     } catch {
-      setFolderError("创建收藏夹失败，请重试");
+      showToast("创建收藏夹失败，请重试", "error");
     } finally {
       setCreatingFolder(false);
+    }
+  }
+
+  async function handleRenameFolder(e: FormEvent) {
+    e.preventDefault();
+    if (!renamingFolder) return;
+    const name = renameFolderName.trim();
+    if (!name) return;
+    setFolderBusy(true);
+    try {
+      await client.updateFolder(renamingFolder.id, name);
+      await loadFolders();
+      setRenamingFolder(null);
+      setRenameFolderName("");
+      showToast(`已重命名为「${name}」`, "success");
+    } catch {
+      showToast("重命名失败，请重试", "error");
+    } finally {
+      setFolderBusy(false);
+    }
+  }
+
+  async function handleDeleteFolder() {
+    if (!deletingFolder) return;
+    setFolderBusy(true);
+    try {
+      const result = await client.deleteFolder(deletingFolder.id);
+      await loadFolders();
+      setDeletingFolder(null);
+      showToast(result.moved_item_count > 0 ? `已删除收藏夹，${result.moved_item_count} 条内容移回稍后阅读` : "已删除收藏夹", "success");
+    } catch {
+      showToast("删除收藏夹失败，请重试", "error");
+    } finally {
+      setFolderBusy(false);
     }
   }
 
@@ -138,7 +186,6 @@ export default function App() {
           className="sidebar-create-folder-btn"
           onClick={() => {
             setShowNewFolder((next) => !next);
-            setFolderError(null);
           }}
           aria-label="新建收藏夹"
           title="新建收藏夹"
@@ -162,7 +209,6 @@ export default function App() {
             onClick={() => {
               setShowNewFolder(false);
               setNewFolderName("");
-              setFolderError(null);
             }}
             title="取消"
             aria-label="取消"
@@ -171,8 +217,6 @@ export default function App() {
           </button>
         </form>
       )}
-      {folderMessage && <div className="sidebar-folder-feedback success">{folderMessage}</div>}
-      {folderError && <div className="sidebar-folder-feedback error">{folderError}</div>}
     </>
   );
 
@@ -229,19 +273,38 @@ export default function App() {
                 {sidebarFolders.map((folder) => {
                   const active = location.pathname === `/folders/${folder.id}`;
                   return (
-                    <Link
+                    <div
                       key={folder.id}
-                      to={`/folders/${folder.id}`}
-                      className={`nav-link ${active ? "active" : ""}`}
+                      className={`nav-link sidebar-folder-row ${active ? "active" : ""}`}
                     >
-                      <span className="icon icon-sm">folder</span>
-                      <span className="nav-link-label" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {folder.name}
-                      </span>
-                      {folder.item_count > 0 && (
-                        <span className="nav-link-badge">{folder.item_count}</span>
-                      )}
-                    </Link>
+                      <Link to={`/folders/${folder.id}`} className="sidebar-folder-link">
+                        <span className="icon icon-sm">folder</span>
+                        <span className="nav-link-label" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {folder.name}
+                        </span>
+                        {folder.item_count > 0 && (
+                          <span className="nav-link-badge">{folder.item_count}</span>
+                        )}
+                      </Link>
+                      <button
+                        type="button"
+                        className="sidebar-folder-menu-btn"
+                        aria-label="收藏夹操作"
+                        title="收藏夹操作"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setFolderMenu((current) => current?.id === folder.id ? null : {
+                            id: folder.id,
+                            x: Math.min(rect.right + 6, window.innerWidth - 192),
+                            y: Math.min(rect.top, window.innerHeight - 112),
+                          });
+                        }}
+                      >
+                        <span className="icon icon-sm">more_horiz</span>
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -263,10 +326,10 @@ export default function App() {
           )}
 
           <div className="sidebar-footer">
-            <div className="sidebar-status">
-              <div className={`status-dot status-${connectionState}`} />
-              <span className="status-text">{connectionLabel(connectionState)}</span>
-            </div>
+            <Link to="/trash" className={`nav-link sidebar-footer-link ${ctx === "trash" ? "active" : ""}`}>
+              <span className="icon">delete</span>
+              <span className="nav-link-label">最近删除</span>
+            </Link>
           </div>
       </aside>
 
@@ -299,6 +362,7 @@ export default function App() {
             <Route path="/feed/preview" element={<FeedArticlePreviewPage />} />
             <Route path="/podcasts" element={<PodcastsPage />} />
             <Route path="/inbox" element={<InboxPage />} />
+            <Route path="/trash" element={<TrashPage />} />
             <Route path="/library" element={<LibraryPage />} />
             <Route path="/folders/:folderId" element={<LibraryPage />} />
             <Route path="/import" element={<ImportPage />} />
@@ -310,6 +374,94 @@ export default function App() {
           </Routes>
         </div>
       </main>
+      {folderMenu && (() => {
+        const folder = sidebarFolders.find((candidate) => candidate.id === folderMenu.id);
+        if (!folder) return null;
+        return (
+          <div
+            className="sidebar-folder-menu"
+            style={{ left: folderMenu.x, top: folderMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="context-menu-item"
+              onClick={() => {
+                setFolderMenu(null);
+                setRenamingFolder({ id: folder.id, name: folder.name });
+                setRenameFolderName(folder.name);
+              }}
+            >
+              <span className="icon icon-sm">edit</span>
+              重命名
+            </button>
+            <button
+              type="button"
+              className="context-menu-item context-menu-danger"
+              onClick={() => {
+                setFolderMenu(null);
+                setDeletingFolder({ id: folder.id, name: folder.name, item_count: folder.item_count });
+              }}
+            >
+              <span className="icon icon-sm">delete</span>
+              删除收藏夹
+            </button>
+          </div>
+        );
+      })()}
+      {renamingFolder && (
+        <div className="confirm-dialog-backdrop" role="presentation" onClick={() => !folderBusy && setRenamingFolder(null)}>
+          <form
+            className="confirm-dialog folder-rename-dialog"
+            role="dialog"
+            aria-modal="true"
+            onSubmit={(event) => void handleRenameFolder(event)}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="confirm-dialog-icon">
+              <span className="icon icon-sm">folder</span>
+            </div>
+            <div className="confirm-dialog-copy">
+              <h3>重命名收藏夹</h3>
+              <label className="field">
+                <span>收藏夹名称</span>
+                <input
+                  className="input"
+                  value={renameFolderName}
+                  onChange={(event) => setRenameFolderName(event.target.value)}
+                  disabled={folderBusy}
+                  autoFocus
+                />
+              </label>
+            </div>
+            <div className="confirm-dialog-actions">
+              <button type="button" className="btn btn-ghost btn-sm" disabled={folderBusy} onClick={() => setRenamingFolder(null)}>取消</button>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={folderBusy || !renameFolderName.trim()}>
+                <span className="icon icon-sm">{folderBusy ? "sync" : "check"}</span>
+                保存
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {deletingFolder && (
+        <ConfirmDialog
+          title="删除收藏夹"
+          body={
+            deletingFolder.item_count > 0
+              ? `确定删除「${deletingFolder.name}」吗？其中 ${deletingFolder.item_count} 条内容会移回稍后阅读。`
+              : `确定删除「${deletingFolder.name}」吗？`
+          }
+          confirmLabel="删除"
+          danger
+          busy={folderBusy}
+          onCancel={() => {
+            if (!folderBusy) setDeletingFolder(null);
+          }}
+          onConfirm={() => void handleDeleteFolder()}
+        />
+      )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

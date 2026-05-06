@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiItemSummary } from "../api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Toast, type ToastState } from "../components/Toast";
 import { useAppState } from "../state/appState";
 
 function statusChipClass(status: ApiItemSummary["status"]) {
@@ -49,16 +51,23 @@ type ItemContextMenuState = {
   itemId: string;
   x: number;
   y: number;
+  submenuPlacement: "left" | "right";
+  submenuMaxHeight: number;
 };
 
 function createContextMenuState(itemId: string, x: number, y: number): ItemContextMenuState {
   const margin = 12;
   const menuWidth = 220;
-  const menuHeight = 132;
+  const submenuWidth = 220;
+  const menuHeight = 164;
+  const clampedX = Math.max(margin, Math.min(x, window.innerWidth - menuWidth - margin));
+  const clampedY = Math.max(margin, Math.min(y, window.innerHeight - menuHeight - margin));
   return {
     itemId,
-    x: Math.max(margin, Math.min(x, window.innerWidth - menuWidth - margin)),
-    y: Math.max(margin, Math.min(y, window.innerHeight - menuHeight - margin)),
+    x: clampedX,
+    y: clampedY,
+    submenuPlacement: clampedX + menuWidth + submenuWidth + margin > window.innerWidth ? "left" : "right",
+    submenuMaxHeight: Math.max(96, window.innerHeight - clampedY - margin),
   };
 }
 
@@ -73,10 +82,16 @@ export function LibraryPage() {
   const [loading, setLoading] = useState(false);
   const [menuState, setMenuState] = useState<ItemContextMenuState | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [pendingDeleteItems, setPendingDeleteItems] = useState<ApiItemSummary[]>([]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [toast, setToast] = useState<ToastState>(null);
 
   const keyword = searchParams.get("q")?.trim() ?? "";
   const tagFilter = searchParams.get("tag")?.trim() ?? "";
   const folderEntries = useMemo(() => folders.filter((f) => f.id !== inboxFolderId), [folders, inboxFolderId]);
+  const movableFolders = useMemo(() => folders.filter((f) => !f.is_builtin && f.id !== inboxFolderId), [folders, inboxFolderId]);
 
   async function refreshLibrary(activeFolderId?: string, kw = "") {
     const r = await client.listItems({
@@ -129,6 +144,16 @@ export function LibraryPage() {
     );
   }, [items, keyword]);
 
+  const selectedItems = useMemo(
+    () => visibleItems.filter((item) => selectedIds.has(item.id)),
+    [selectedIds, visibleItems],
+  );
+
+  function showToast(message: string, tone: NonNullable<ToastState>["tone"] = "info") {
+    setToast({ message, tone });
+    window.setTimeout(() => setToast(null), 2600);
+  }
+
   function updateFilter(key: "tag", value: string) {
     const next = new URLSearchParams(searchParams);
     if (value) next.set(key, value);
@@ -136,16 +161,76 @@ export function LibraryPage() {
     setSearchParams(next);
   }
 
-  async function handleDeleteItem(item: ApiItemSummary) {
+  function requestDeleteItem(item: ApiItemSummary) {
     setMenuState(null);
-    if (!window.confirm(`确定删除「${item.title}」吗？`)) return;
+    setPendingDeleteItems([item]);
+  }
+
+  function requestDeleteSelected() {
+    if (selectedItems.length === 0) return;
+    setMenuState(null);
+    setPendingDeleteItems(selectedItems);
+  }
+
+  async function confirmDeleteItem() {
+    if (pendingDeleteItems.length === 0) return;
+    const itemsToDelete = pendingDeleteItems;
+    setDeleteError(null);
+    setDeletingId(itemsToDelete[0].id);
+    try {
+      await Promise.all(itemsToDelete.map((item) => client.deleteItem(item.id)));
+      const deletedIds = new Set(itemsToDelete.map((item) => item.id));
+      setItems((current) => current.filter((candidate) => !deletedIds.has(candidate.id)));
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        deletedIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      await loadFolders();
+      setPendingDeleteItems([]);
+      showToast(itemsToDelete.length > 1 ? `已移入最近删除：${itemsToDelete.length} 条` : "已移入最近删除", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "删除失败", "error");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function handleMoveToFolder(item: ApiItemSummary, targetFolderId: string) {
+    setMenuState(null);
+    setMovingId(item.id);
     setDeleteError(null);
     try {
-      await client.deleteItem(item.id);
-      setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+      await client.moveItem(item.id, targetFolderId);
+      setItems(await refreshLibrary(folderId, keyword));
       await loadFolders();
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        next.delete(item.id);
+        return next;
+      });
+      showToast("已移动到目标收藏夹", "success");
     } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : "删除失败");
+      showToast(error instanceof Error ? error.message : "移动失败", "error");
+    } finally {
+      setMovingId(null);
+    }
+  }
+
+  async function handleBulkMoveToFolder(targetFolderId: string) {
+    if (selectedItems.length === 0) return;
+    setMovingId("bulk");
+    setDeleteError(null);
+    try {
+      await Promise.all(selectedItems.map((item) => client.moveItem(item.id, targetFolderId)));
+      setItems(await refreshLibrary(folderId, keyword));
+      await loadFolders();
+      setSelectedIds(new Set());
+      showToast(`已移动 ${selectedItems.length} 条内容`, "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "批量移动失败", "error");
+    } finally {
+      setMovingId(null);
     }
   }
 
@@ -185,6 +270,35 @@ export function LibraryPage() {
             <div className="feedback feedback-error" style={{ margin: "12px 28px 0" }}>{deleteError}</div>
           )}
 
+          {selectedItems.length > 0 && (
+            <div className="bulk-action-bar">
+              <strong>已选择 {selectedItems.length} 条</strong>
+              {movableFolders.length > 0 && (
+                <select
+                  className="input"
+                  style={{ width: 150, height: 32, fontSize: 12 }}
+                  defaultValue=""
+                  disabled={movingId === "bulk"}
+                  onChange={(event) => {
+                    const target = event.target.value;
+                    event.currentTarget.value = "";
+                    if (target) void handleBulkMoveToFolder(target);
+                  }}
+                >
+                  <option value="" disabled>移动到</option>
+                  {movableFolders.map((folder) => (
+                    <option key={folder.id} value={folder.id}>{folder.name}</option>
+                  ))}
+                </select>
+              )}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSelectedIds(new Set())}>取消选择</button>
+              <button type="button" className="btn btn-danger btn-sm" onClick={requestDeleteSelected}>
+                <span className="icon icon-sm">delete</span>
+                删除
+              </button>
+            </div>
+          )}
+
           {loading && (
             <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
               <span className="icon icon-lg" style={{ color: "var(--outline)" }}>sync</span>
@@ -205,25 +319,66 @@ export function LibraryPage() {
             <LibraryRow
               key={item.id}
               item={item}
+              folders={movableFolders.filter((folder) => folder.id !== item.folder_id)}
+              isMoving={movingId === item.id}
               menuState={menuState?.itemId === item.id ? menuState : null}
+              selected={selectedIds.has(item.id)}
+              onToggleSelected={(checked) => {
+                setSelectedIds((current) => {
+                  const next = new Set(current);
+                  if (checked) next.add(item.id);
+                  else next.delete(item.id);
+                  return next;
+                });
+              }}
               onOpenMenu={(x, y) => setMenuState(createContextMenuState(item.id, x, y))}
-              onDelete={() => void handleDeleteItem(item)}
+              onMoveToFolder={(targetFolderId) => void handleMoveToFolder(item, targetFolderId)}
+              onDelete={() => requestDeleteItem(item)}
             />
           ))}
         </div>
+
+        {pendingDeleteItems.length > 0 && (
+          <ConfirmDialog
+            title="移入最近删除"
+            body={
+              pendingDeleteItems.length > 1
+                ? `确定将选中的 ${pendingDeleteItems.length} 条内容移入最近删除吗？内容会保留 7 天。`
+                : `确定将「${pendingDeleteItems[0].title}」移入最近删除吗？内容会保留 7 天。`
+            }
+            confirmLabel="删除"
+            danger
+            busy={Boolean(deletingId)}
+            onCancel={() => {
+              if (!deletingId) setPendingDeleteItems([]);
+            }}
+            onConfirm={() => void confirmDeleteItem()}
+          />
+        )}
+        <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
 
 function LibraryRow({
   item,
+  folders,
+  isMoving,
   menuState,
+  selected,
+  onToggleSelected,
   onOpenMenu,
+  onMoveToFolder,
   onDelete,
 }: {
   item: ApiItemSummary;
+  folders: { id: string; name: string }[];
+  isMoving: boolean;
   menuState: ItemContextMenuState | null;
+  selected: boolean;
+  onToggleSelected: (checked: boolean) => void;
   onOpenMenu: (x: number, y: number) => void;
+  onMoveToFolder: (folderId: string) => void;
   onDelete: () => void;
 }) {
   const navigate = useNavigate();
@@ -251,6 +406,14 @@ function LibraryRow({
         onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-container)"; }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ""; }}
       >
+        <input
+          type="checkbox"
+          className="row-select-control"
+          aria-label={`选择 ${item.title}`}
+          checked={selected}
+          onChange={(event) => onToggleSelected(event.target.checked)}
+          onClick={(event) => event.stopPropagation()}
+        />
         {/* Read indicator */}
         <div style={{
           width: 7, height: 7, borderRadius: "50%", marginTop: 20, marginRight: 14, flexShrink: 0,
@@ -348,10 +511,33 @@ function LibraryRow({
           onClick={(event) => event.stopPropagation()}
           role="menu"
         >
-          <button type="button" className="context-menu-item" onClick={() => navigate(readHref)}>
-            <span className="icon icon-sm">auto_stories</span>
-            阅读
-          </button>
+          {folders.length > 0 && (
+            <div className="context-menu-submenu">
+              <button type="button" className="context-menu-item">
+                <span className="icon icon-sm">drive_file_move</span>
+                {isMoving ? "移动中…" : "移动到"}
+                <span className="icon icon-sm context-menu-arrow">chevron_right</span>
+              </button>
+              <div
+                className={`item-context-submenu ${menuState.submenuPlacement === "left" ? "submenu-left" : ""}`}
+                role="menu"
+                style={{ maxHeight: menuState.submenuMaxHeight }}
+              >
+                {folders.map((folder) => (
+                  <button
+                    key={folder.id}
+                    type="button"
+                    className="context-menu-item"
+                    disabled={isMoving}
+                    onClick={() => onMoveToFolder(folder.id)}
+                  >
+                    <span className="icon icon-sm">folder</span>
+                    {folder.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {item.source_url && (
             <a className="context-menu-item" href={item.source_url} target="_blank" rel="noreferrer">

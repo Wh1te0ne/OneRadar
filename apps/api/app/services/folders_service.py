@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select
@@ -24,6 +25,26 @@ from app.services.store import STORE, now_utc, seed_store
 INBOX_FOLDER_ID = "inbox"
 INBOX_FOLDER_NAME = "稍后阅读"
 INBOX_NORMALIZED_NAME = "inbox"
+def _parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _is_deleted_meta(raw_meta: dict[str, object] | None) -> bool:
+    deleted_at = _parse_datetime((raw_meta or {}).get("deleted_at"))
+    return deleted_at is not None
+
+
+def _is_deleted_store_record(record: dict[str, object]) -> bool:
+    deleted_at = _parse_datetime(record.get("deleted_at"))
+    return deleted_at is not None
 
 
 def normalize_folder_identifier(folder_id: str | None) -> str:
@@ -150,10 +171,13 @@ def resolve_folder(session, folder_id: str | None) -> Folder | None:
 
 def _folder_count(session, folder: Folder) -> int:
     criterion = or_(ContentItem.folder_id == folder.id, ContentItem.folder_id.is_(None)) if folder.is_inbox else ContentItem.folder_id == folder.id
-    return int(
-        session.execute(
-            select(func.count()).select_from(ContentItem).where(ContentItem.user_id == folder.user_id, criterion)
-        ).scalar_one()
+    items = session.execute(
+        select(ContentItem).where(ContentItem.user_id == folder.user_id, criterion)
+    ).scalars().all()
+    return sum(
+        1
+        for item in items
+        if not _is_deleted_meta(item.raw_meta if isinstance(item.raw_meta, dict) else {})
     )
 
 
@@ -193,6 +217,8 @@ def list_folders() -> FolderListResponse:
         with STORE.lock:
             counts: dict[str, int] = defaultdict(int)
             for record in STORE.items.values():
+                if _is_deleted_store_record(record):
+                    continue
                 folder_id = str(record.get("folder_id", INBOX_FOLDER_ID) or INBOX_FOLDER_ID)
                 counts[folder_id] += 1
             entries = [

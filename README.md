@@ -51,9 +51,24 @@ The current repo is being bootstrapped toward:
 - a Tauri + React desktop app
 - a Docker Compose development stack
 
+## Local Development
+
+Use the bundled PowerShell script so the API, worker, and desktop UI share the same local database:
+
+```powershell
+rtk pwsh -File infra/scripts/dev.ps1
+```
+
+The script starts:
+
+- API at `http://127.0.0.1:8000/api`
+- desktop dev server at `http://127.0.0.1:5173`
+- worker against `apps/api/oneradar.db`
+
+Running only the API is not enough for imports. Article, Bilibili, podcast, and AI tasks are processed by the worker, so imported items may stay in `待处理` until the worker is running.
+
 ## Next Steps
 
 - complete app skeletons under `apps/`
-- wire local development commands
 - implement health/auth/import/provider baselines
 - add first ingestion pipeline for articles

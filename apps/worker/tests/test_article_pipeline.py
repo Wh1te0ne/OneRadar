@@ -110,3 +110,78 @@ def test_pipeline_prefers_primary_candidate_and_persists_byline(monkeypatch):
     assert persistable["parsed_document"]["author_name"] == "Primary Author"
     assert persistable["parsed_document"]["byline"] == "Primary Author"
     assert persistable["parsed_document"]["plain_text"].startswith("Primary body text")
+
+
+def test_pipeline_uses_first_body_line_when_extractor_title_is_missing(monkeypatch):
+    draft = ArticleExtractionDraft(
+        strategy="trafilatura",
+        title=None,
+        site_name=None,
+        byline=None,
+        language="en",
+        excerpt=None,
+        body_text="Voice & TTS\nHermes Agent supports text-to-speech output.",
+    )
+    fetch_result = article.ArticleFetchResult(
+        mode="live",
+        source_url="https://hermes-agent.nousresearch.com/docs/user-guide/features/tts",
+        normalized_url="https://hermes-agent.nousresearch.com/docs/user-guide/features/tts",
+        final_url="https://hermes-agent.nousresearch.com/docs/user-guide/features/tts",
+        ok=True,
+        status_code=200,
+        content_type="text/html",
+        html="<html><body><main><p>Voice & TTS</p></main></body></html>",
+    )
+
+    monkeypatch.setattr(article, "extract_article_drafts", lambda html, source_url, payload: [draft])
+    monkeypatch.setattr(article.ArticlePipeline, "_fetch_html", lambda self, normalized_url, payload: fetch_result)
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url="https://hermes-agent.nousresearch.com/docs/user-guide/features/tts",
+        task_type=TaskType.EXTRACT_ARTICLE,
+        payload={"fetch_mode": "live"},
+    )
+
+    result = article.ArticlePipeline().run(context)
+
+    persistable = result.data["persistable"]
+    assert persistable["content_item"]["title"] == "Voice & TTS"
+    assert persistable["parsed_document"]["title"] == "Voice & TTS"
+
+
+def test_pipeline_replaces_placeholder_title_with_first_body_line(monkeypatch):
+    draft = ArticleExtractionDraft(
+        strategy="trafilatura",
+        title="新导入内容",
+        site_name="Nousresearch",
+        byline=None,
+        language="en",
+        excerpt=None,
+        body_text="Voice & TTS\nHermes Agent supports text-to-speech output.",
+    )
+    fetch_result = article.ArticleFetchResult(
+        mode="live",
+        source_url="https://hermes-agent.nousresearch.com/docs/user-guide/features/tts",
+        normalized_url="https://hermes-agent.nousresearch.com/docs/user-guide/features/tts",
+        final_url="https://hermes-agent.nousresearch.com/docs/user-guide/features/tts",
+        ok=True,
+        status_code=200,
+        content_type="text/html",
+        html="<html><body><main><p>Voice & TTS</p></main></body></html>",
+    )
+
+    monkeypatch.setattr(article, "extract_article_drafts", lambda html, source_url, payload: [draft])
+    monkeypatch.setattr(article.ArticlePipeline, "_fetch_html", lambda self, normalized_url, payload: fetch_result)
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url="https://hermes-agent.nousresearch.com/docs/user-guide/features/tts",
+        task_type=TaskType.EXTRACT_ARTICLE,
+        payload={"title": "新导入内容", "fetch_mode": "live"},
+    )
+
+    result = article.ArticlePipeline().run(context)
+
+    persistable = result.data["persistable"]
+    assert persistable["content_item"]["title"] == "Voice & TTS"

@@ -32,8 +32,11 @@ from app.services.items_service import fetch_bilibili_cover as fetch_bilibili_co
 from app.services.items_service import generate_item_summary as generate_item_summary_service
 from app.services.items_service import get_item as get_item_service
 from app.services.items_service import import_item as import_item_service
+from app.services.items_service import list_deleted_items as list_deleted_items_service
 from app.services.items_service import list_items as list_items_service
+from app.services.items_service import purge_item as purge_item_service
 from app.services.items_service import preview_bilibili_item as preview_bilibili_item_service
+from app.services.items_service import restore_item as restore_item_service
 from app.services.items_service import reprocess_item as reprocess_item_service
 from app.services.items_service import update_reading_state as update_reading_state_service
 
@@ -124,6 +127,27 @@ def list_items(
         collection_id=collection_id,
         inbox_only=inbox_only,
     )
+
+
+@router.get("/trash")
+def list_deleted_items(page: int = 1, page_size: int = 100) -> ItemListResponse:
+    return list_deleted_items_service(page, page_size)
+
+
+@router.post("/trash/{item_id}/restore")
+def restore_item(item_id: str) -> ItemDeleteResponse:
+    try:
+        return restore_item_service(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/trash/{item_id}/purge")
+def purge_item(item_id: str) -> ItemDeleteResponse:
+    try:
+        return purge_item_service(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{item_id}")

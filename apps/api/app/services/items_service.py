@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -71,6 +71,8 @@ DEFAULT_READING_STATE = {
     "is_favorited": False,
 }
 
+TRASH_RETENTION_DAYS = 7
+
 TRACKING_QUERY_KEYS = {
     "fbclid",
     "gclid",
@@ -88,6 +90,69 @@ TRACKING_QUERY_KEYS = {
     "utm_term",
     "vd_source",
 }
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _deleted_at_from_meta(raw_meta: dict[str, object] | None) -> datetime | None:
+    return _parse_datetime((raw_meta or {}).get("deleted_at"))
+
+
+def _trash_expires_at(deleted_at: datetime | None) -> datetime | None:
+    return deleted_at + timedelta(days=TRASH_RETENTION_DAYS) if deleted_at is not None else None
+
+
+def _is_deleted_meta(raw_meta: dict[str, object] | None) -> bool:
+    deleted_at = _deleted_at_from_meta(raw_meta)
+    if deleted_at is None:
+        return False
+    expires_at = _trash_expires_at(deleted_at)
+    return expires_at is None or expires_at > now_utc()
+
+
+def _is_deleted_item(item: ContentItem) -> bool:
+    return _is_deleted_meta(item.raw_meta or {})
+
+
+def _is_expired_deleted_item(item: ContentItem) -> bool:
+    deleted_at = _deleted_at_from_meta(item.raw_meta or {})
+    expires_at = _trash_expires_at(deleted_at)
+    return expires_at is not None and expires_at <= now_utc()
+
+
+def _is_deleted_store_record(record: dict[str, object]) -> bool:
+    deleted_at = _parse_datetime(record.get("deleted_at"))
+    expires_at = _trash_expires_at(deleted_at)
+    return deleted_at is not None and (expires_at is None or expires_at > now_utc())
+
+
+def _is_expired_deleted_store_record(record: dict[str, object]) -> bool:
+    deleted_at = _parse_datetime(record.get("deleted_at"))
+    expires_at = _trash_expires_at(deleted_at)
+    return expires_at is not None and expires_at <= now_utc()
+
+
+def _remove_audio_artifact(raw_meta: dict[str, object] | None) -> None:
+    podcast_meta = (raw_meta or {}).get("podcast")
+    if not isinstance(podcast_meta, dict):
+        return
+    storage_path = podcast_meta.get("audio_storage_path")
+    if not isinstance(storage_path, str) or not storage_path.strip():
+        return
+    try:
+        Path(storage_path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -642,6 +707,7 @@ def _item_tags_for_list(item: ContentItem) -> list[str]:
 def _item_list_entry(item: ContentItem) -> ItemListEntry:
     reading_state = _item_reading_state(item)
     folder_id, folder_name, is_inbox = _item_folder_info(item)
+    deleted_at = _deleted_at_from_meta(item.raw_meta or {})
     return ItemListEntry(
         uid=_item_uid(item),
         id=str(item.id),
@@ -658,6 +724,8 @@ def _item_list_entry(item: ContentItem) -> ItemListEntry:
         last_read_at=reading_state.last_read_at,
         created_at=item.created_at,
         updated_at=item.updated_at,
+        deleted_at=deleted_at,
+        delete_expires_at=_trash_expires_at(deleted_at),
         summary=_preferred_summary_text(item),
         tags=_item_tags_for_list(item),
     )
@@ -1153,6 +1221,15 @@ def list_items(
                     .order_by(ContentItem.created_at.desc())
                 ).scalars()
             )
+            expired_deleted = [item for item in items if _is_expired_deleted_item(item)]
+            for item in expired_deleted:
+                _remove_audio_artifact(item.raw_meta)
+                session.delete(item)
+            if expired_deleted:
+                session.commit()
+                items = [item for item in items if item not in expired_deleted]
+
+            items = [item for item in items if not _is_deleted_item(item)]
             items = _filtered_items(items, folder_id, inbox_only)
             items = [
                 item
@@ -1176,7 +1253,22 @@ def list_items(
             )
     except SQLAlchemyError:
         seed_store()
-        items = sorted(STORE.items.values(), key=lambda record: record["created_at"], reverse=True)
+        with STORE.lock:
+            expired_ids = [
+                str(item_id)
+                for item_id, record in STORE.items.items()
+                if _is_expired_deleted_store_record(record)
+            ]
+            for item_id in expired_ids:
+                record = STORE.items.pop(item_id, None)
+                if record is not None:
+                    _remove_audio_artifact(record.get("raw_meta") if isinstance(record.get("raw_meta"), dict) else record)
+            items = [
+                record
+                for record in STORE.items.values()
+                if not _is_deleted_store_record(record)
+            ]
+        items = sorted(items, key=lambda record: record.get("updated_at") or record["created_at"], reverse=True)
         if folder_id is not None:
             target = normalize_folder_identifier(folder_id)
             if target == INBOX_FOLDER_ID:
@@ -1283,6 +1375,8 @@ def list_items(
                     last_read_at=record["reading_state"].get("last_read_at"),
                     created_at=record["created_at"],
                     updated_at=record["updated_at"],
+                    deleted_at=_parse_datetime(record.get("deleted_at")),
+                    delete_expires_at=_trash_expires_at(_parse_datetime(record.get("deleted_at"))),
                     summary=(
                         str(record.get("parsed_document", {}).get("excerpt", "")).strip()
                         or None
@@ -1320,13 +1414,26 @@ def get_item(item_id: str) -> ItemDetailResponse:
                 .where(ContentItem.id == UUID(item_id))
             ).scalar_one_or_none()
             if item is not None:
+                if _is_expired_deleted_item(item):
+                    _remove_audio_artifact(item.raw_meta)
+                    session.delete(item)
+                    session.commit()
+                    raise ValueError("item not found")
+                if _is_deleted_item(item):
+                    raise ValueError("item not found")
                 return _item_detail_response(item)
     except (SQLAlchemyError, ValueError):
         pass
 
     seed_store()
     record = STORE.items.get(item_id)
-    if record is None:
+    if record is not None and _is_expired_deleted_store_record(record):
+        with STORE.lock:
+            expired_record = STORE.items.pop(item_id, None)
+        if expired_record is not None:
+            _remove_audio_artifact(expired_record.get("raw_meta") if isinstance(expired_record.get("raw_meta"), dict) else expired_record)
+        record = None
+    if record is None or _is_deleted_store_record(record):
         raise ValueError("item not found")
     folder_id = str(record.get("folder_id", INBOX_FOLDER_ID))
     folder_name = str(record.get("folder_name", INBOX_FOLDER_NAME))
@@ -1491,24 +1598,145 @@ def update_reading_state(item_id: str, payload: ReadingStateUpdateRequest) -> Re
 
 
 def delete_item(item_id: str) -> ItemDeleteResponse:
-    def remove_audio_artifact(raw_meta: dict[str, object] | None) -> None:
-        podcast_meta = (raw_meta or {}).get("podcast")
-        if not isinstance(podcast_meta, dict):
-            return
-        storage_path = podcast_meta.get("audio_storage_path")
-        if not isinstance(storage_path, str) or not storage_path.strip():
-            return
-        try:
-            Path(storage_path).unlink(missing_ok=True)
-        except OSError:
-            pass
-
     try:
         with SessionLocal() as session:
             item = session.get(ContentItem, UUID(item_id))
             if item is None:
                 raise ValueError("item not found")
-            remove_audio_artifact(item.raw_meta)
+            deleted_at = now_utc()
+            item.raw_meta = {
+                **(item.raw_meta or {}),
+                "deleted_at": deleted_at.isoformat(),
+            }
+            session.commit()
+            return ItemDeleteResponse(uid=str(item.id), deleted=True)
+    except (SQLAlchemyError, ValueError) as exc:
+        seed_store()
+        with STORE.lock:
+            record = STORE.items.get(item_id)
+            if record is not None:
+                record["deleted_at"] = now_utc()
+                record["updated_at"] = now_utc()
+        if record is None:
+            raise ValueError("item not found") from exc
+        return ItemDeleteResponse(uid=item_id, deleted=True)
+
+
+def list_deleted_items(page: int, page_size: int) -> ItemListResponse:
+    try:
+        with SessionLocal() as session:
+            user = get_primary_user(session)
+            items = list(
+                session.execute(
+                    select(ContentItem)
+                    .options(
+                        selectinload(ContentItem.folder),
+                        selectinload(ContentItem.content_parsed_documents),
+                        selectinload(ContentItem.transcripts),
+                        selectinload(ContentItem.summaries),
+                        selectinload(ContentItem.item_tags).selectinload(ContentItemTag.tag),
+                        selectinload(ContentItem.reading_state),
+                    )
+                    .where(ContentItem.user_id == user.id)
+                    .order_by(ContentItem.updated_at.desc())
+                ).scalars()
+            )
+            expired_deleted = [item for item in items if _is_expired_deleted_item(item)]
+            for item in expired_deleted:
+                _remove_audio_artifact(item.raw_meta)
+                session.delete(item)
+            if expired_deleted:
+                session.commit()
+                items = [item for item in items if item not in expired_deleted]
+            items = [item for item in items if _is_deleted_item(item)]
+            start = (page - 1) * page_size
+            end = start + page_size
+            return ItemListResponse(
+                items=[_item_list_entry(record) for record in items[start:end]],
+                page=page,
+                page_size=page_size,
+                total=len(items),
+            )
+    except SQLAlchemyError:
+        seed_store()
+        with STORE.lock:
+            expired_ids = [
+                str(item_id)
+                for item_id, record in STORE.items.items()
+                if _is_expired_deleted_store_record(record)
+            ]
+            for item_id in expired_ids:
+                record = STORE.items.pop(item_id, None)
+                if record is not None:
+                    _remove_audio_artifact(record.get("raw_meta") if isinstance(record.get("raw_meta"), dict) else record)
+            items = [
+                record
+                for record in STORE.items.values()
+                if _is_deleted_store_record(record)
+            ]
+        items = sorted(items, key=lambda record: record.get("updated_at") or record.get("created_at"), reverse=True)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return ItemListResponse(
+            items=[
+                ItemListEntry(
+                    uid=str(record["id"]),
+                    id=str(record["id"]),
+                    title=str(record["title"]),
+                    content_type=record["content_type"],
+                    source_url=str(record["source_url"]),
+                    status=record["status"],
+                    folder_id=str(record.get("folder_id", INBOX_FOLDER_ID)),
+                    folder_name=str(record.get("folder_name", INBOX_FOLDER_NAME)),
+                    is_inbox=bool(record.get("is_inbox", True)),
+                    is_read=bool(record["reading_state"]["progress_percent"] >= 100),
+                    is_favorited=bool(record["reading_state"]["is_favorited"]),
+                    progress_percent=float(record["reading_state"].get("progress_percent", 0) or 0),
+                    last_read_at=record["reading_state"].get("last_read_at"),
+                    created_at=record["created_at"],
+                    updated_at=record["updated_at"],
+                    deleted_at=_parse_datetime(record.get("deleted_at")),
+                    delete_expires_at=_trash_expires_at(_parse_datetime(record.get("deleted_at"))),
+                    summary=str(record.get("parsed_document", {}).get("excerpt", "")).strip() or None,
+                    tags=[str(tag_value) for tag_value in record.get("tags", []) if str(tag_value).strip()],
+                )
+                for record in items[start:end]
+            ],
+            page=page,
+            page_size=page_size,
+            total=len(items),
+        )
+
+
+def restore_item(item_id: str) -> ItemDeleteResponse:
+    try:
+        with SessionLocal() as session:
+            item = session.get(ContentItem, UUID(item_id))
+            if item is None or not _is_deleted_item(item):
+                raise ValueError("item not found")
+            raw_meta = dict(item.raw_meta or {})
+            raw_meta.pop("deleted_at", None)
+            item.raw_meta = raw_meta
+            session.commit()
+            return ItemDeleteResponse(uid=str(item.id), deleted=False)
+    except (SQLAlchemyError, ValueError) as exc:
+        seed_store()
+        with STORE.lock:
+            record = STORE.items.get(item_id)
+            if record is None or not _is_deleted_store_record(record):
+                raise ValueError("item not found") from exc
+            record.pop("deleted_at", None)
+            record["updated_at"] = now_utc()
+        return ItemDeleteResponse(uid=item_id, deleted=False)
+
+
+def purge_item(item_id: str) -> ItemDeleteResponse:
+    try:
+        with SessionLocal() as session:
+            item = session.get(ContentItem, UUID(item_id))
+            if item is None:
+                raise ValueError("item not found")
+            _remove_audio_artifact(item.raw_meta)
             session.delete(item)
             session.commit()
             return ItemDeleteResponse(uid=str(item.id), deleted=True)
@@ -1518,8 +1746,7 @@ def delete_item(item_id: str) -> ItemDeleteResponse:
             record = STORE.items.pop(item_id, None)
         if record is None:
             raise ValueError("item not found") from exc
-        raw_meta = record.get("raw_meta") if isinstance(record.get("raw_meta"), dict) else record
-        remove_audio_artifact(raw_meta)
+        _remove_audio_artifact(record.get("raw_meta") if isinstance(record.get("raw_meta"), dict) else record)
         return ItemDeleteResponse(uid=item_id, deleted=True)
 
 

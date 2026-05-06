@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiItemSummary } from "../api";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Toast, type ToastState } from "../components/Toast";
 import { useAppState } from "../state/appState";
 
 function statusChipClass(status: ApiItemSummary["status"]) {
@@ -102,10 +104,13 @@ export function InboxPage() {
   const [feedback, setFeedback] = useState<{ id: string; msg: string } | null>(null);
   const [quickAddUrl, setQuickAddUrl] = useState("");
   const [quickAdding, setQuickAdding] = useState(false);
-  const [quickAddMessage, setQuickAddMessage] = useState<string | null>(null);
   const [quickAddError, setQuickAddError] = useState<string | null>(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [menuState, setMenuState] = useState<ItemContextMenuState | null>(null);
+  const [pendingDeleteItems, setPendingDeleteItems] = useState<ApiItemSummary[]>([]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [toast, setToast] = useState<ToastState>(null);
 
   const customFolders = useMemo(() => folders.filter((f) => !f.is_builtin), [folders]);
   const keyword = searchParams.get("q")?.trim() ?? "";
@@ -158,6 +163,16 @@ export function InboxPage() {
     return result;
   }, [items, keyword, sortMode]);
 
+  const selectedItems = useMemo(
+    () => visibleItems.filter((item) => selectedIds.has(item.id)),
+    [selectedIds, visibleItems],
+  );
+
+  function showToast(message: string, tone: NonNullable<ToastState>["tone"] = "info") {
+    setToast({ message, tone });
+    window.setTimeout(() => setToast(null), 2600);
+  }
+
   async function handleMoveToLibrary(itemId: string, folderId: string) {
     setMenuState(null);
     setMovingId(itemId);
@@ -166,30 +181,68 @@ export function InboxPage() {
       setFeedback({ id: itemId, msg: `已收藏到知识库：${result.folder_name}` });
       setItems(await refreshInbox(keyword));
       await loadFolders();
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+      showToast(`已收藏到知识库：${result.folder_name}`, "success");
       setTimeout(() => setFeedback(null), 2000);
     } catch {
-      // silent
+      showToast("收藏失败，请重试", "error");
     } finally {
       setMovingId(null);
     }
   }
 
-  async function handleDeleteItem(item: ApiItemSummary) {
-    setMenuState(null);
-    if (!window.confirm(`确定删除「${item.title}」吗？`)) return;
-    setMovingId(item.id);
-    setQuickAddError(null);
-    setQuickAddMessage(null);
+  async function handleBulkMoveToLibrary(folderId: string) {
+    if (selectedItems.length === 0) return;
+    setMovingId("bulk");
     try {
-      await client.deleteItem(item.id);
-      setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+      await Promise.all(selectedItems.map((item) => client.moveItem(item.id, folderId)));
+      setItems(await refreshInbox(keyword));
       await loadFolders();
-      setQuickAddMessage("已删除");
-      window.setTimeout(() => setQuickAddMessage(null), 2200);
+      setSelectedIds(new Set());
+      showToast(`已移动 ${selectedItems.length} 条内容`, "success");
     } catch (error) {
-      setQuickAddError(error instanceof Error ? error.message : "删除失败");
+      showToast(error instanceof Error ? error.message : "批量移动失败", "error");
     } finally {
       setMovingId(null);
+    }
+  }
+
+  function requestDeleteItem(item: ApiItemSummary) {
+    setMenuState(null);
+    setPendingDeleteItems([item]);
+  }
+
+  function requestDeleteSelected() {
+    if (selectedItems.length === 0) return;
+    setMenuState(null);
+    setPendingDeleteItems(selectedItems);
+  }
+
+  async function confirmDeleteItem() {
+    if (pendingDeleteItems.length === 0) return;
+    const itemsToDelete = pendingDeleteItems;
+    setDeletingId(itemsToDelete[0].id);
+    setQuickAddError(null);
+    try {
+      await Promise.all(itemsToDelete.map((item) => client.deleteItem(item.id)));
+      const deletedIds = new Set(itemsToDelete.map((item) => item.id));
+      setItems((current) => current.filter((candidate) => !deletedIds.has(candidate.id)));
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        deletedIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      await loadFolders();
+      setPendingDeleteItems([]);
+      showToast(itemsToDelete.length > 1 ? `已移入最近删除：${itemsToDelete.length} 条` : "已移入最近删除", "success");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "删除失败", "error");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -202,17 +255,15 @@ export function InboxPage() {
     }
 
     setQuickAdding(true);
-    setQuickAddMessage(null);
     setQuickAddError(null);
     try {
       const sourceHint = isBilibiliUrl(url) ? "bilibili_video" : "article";
       const result = await client.importItem(url, sourceHint);
       setQuickAddUrl("");
       setShowQuickAdd(false);
-      setQuickAddMessage(result.is_duplicate ? `已存在：${result.uid}` : `已加入稍后阅读：${result.uid}`);
+      showToast(result.is_duplicate ? `已存在：${result.uid}` : `已加入稍后阅读：${result.uid}`, "success");
       setItems(await refreshInbox(keyword));
       await loadFolders();
-      window.setTimeout(() => setQuickAddMessage(null), 2600);
     } catch (error) {
       setQuickAddError(error instanceof Error ? error.message : "快速添加失败");
     } finally {
@@ -245,7 +296,6 @@ export function InboxPage() {
             className="quick-add-trigger"
             onClick={() => {
               setQuickAddError(null);
-              setQuickAddMessage(null);
               setShowQuickAdd(true);
             }}
           >
@@ -317,7 +367,6 @@ export function InboxPage() {
                 onChange={(event) => {
                   setQuickAddUrl(event.target.value);
                   setQuickAddError(null);
-                  setQuickAddMessage(null);
                 }}
                 placeholder="https://example.com/article 或 https://www.bilibili.com/video/BV..."
                 disabled={quickAdding}
@@ -340,14 +389,52 @@ export function InboxPage() {
         </div>
       )}
 
+      {pendingDeleteItems.length > 0 && (
+        <ConfirmDialog
+          title="移入最近删除"
+          body={
+            pendingDeleteItems.length > 1
+              ? `确定将选中的 ${pendingDeleteItems.length} 条内容移入最近删除吗？内容会保留 7 天。`
+              : `确定将「${pendingDeleteItems[0].title}」移入最近删除吗？内容会保留 7 天。`
+          }
+          confirmLabel="删除"
+          danger
+          busy={Boolean(deletingId)}
+          onCancel={() => {
+            if (!deletingId) setPendingDeleteItems([]);
+          }}
+          onConfirm={() => void confirmDeleteItem()}
+        />
+      )}
+
       {/* List */}
       <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
-        {(quickAddMessage || quickAddError) && (
-          <div
-            className={`feedback ${quickAddError ? "feedback-error" : "feedback-success"}`}
-            style={{ margin: "12px 28px 0" }}
-          >
-            {quickAddError ?? quickAddMessage}
+        {selectedItems.length > 0 && (
+          <div className="bulk-action-bar">
+            <strong>已选择 {selectedItems.length} 条</strong>
+            {customFolders.length > 0 && (
+              <select
+                className="input"
+                style={{ width: 150, height: 32, fontSize: 12 }}
+                defaultValue=""
+                disabled={movingId === "bulk"}
+                onChange={(event) => {
+                  const target = event.target.value;
+                  event.currentTarget.value = "";
+                  if (target) void handleBulkMoveToLibrary(target);
+                }}
+              >
+                <option value="" disabled>移动到收藏夹</option>
+                {customFolders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>{folder.name}</option>
+                ))}
+              </select>
+            )}
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSelectedIds(new Set())}>取消选择</button>
+            <button type="button" className="btn btn-danger btn-sm" onClick={requestDeleteSelected}>
+              <span className="icon icon-sm">delete</span>
+              删除
+            </button>
           </div>
         )}
 
@@ -385,12 +472,22 @@ export function InboxPage() {
             isMoving={movingId === item.id}
             feedbackMsg={feedback?.id === item.id ? feedback.msg : null}
             menuState={menuState?.itemId === item.id ? menuState : null}
+            selected={selectedIds.has(item.id)}
+            onToggleSelected={(checked) => {
+              setSelectedIds((current) => {
+                const next = new Set(current);
+                if (checked) next.add(item.id);
+                else next.delete(item.id);
+                return next;
+              });
+            }}
             onOpenMenu={(x, y) => setMenuState(createContextMenuState(item.id, x, y))}
             onMoveToFolder={(folderId) => void handleMoveToLibrary(item.id, folderId)}
-            onDelete={() => void handleDeleteItem(item)}
+            onDelete={() => requestDeleteItem(item)}
           />
         ))}
       </div>
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
@@ -401,6 +498,8 @@ function InboxRow({
   isMoving,
   feedbackMsg,
   menuState,
+  selected,
+  onToggleSelected,
   onOpenMenu,
   onMoveToFolder,
   onDelete,
@@ -410,6 +509,8 @@ function InboxRow({
   isMoving: boolean;
   feedbackMsg: string | null;
   menuState: ItemContextMenuState | null;
+  selected: boolean;
+  onToggleSelected: (checked: boolean) => void;
   onOpenMenu: (x: number, y: number) => void;
   onMoveToFolder: (folderId: string) => void;
   onDelete: () => void;
@@ -444,6 +545,14 @@ function InboxRow({
         onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-low)"; }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ""; }}
       >
+        <input
+          type="checkbox"
+          className="row-select-control"
+          aria-label={`选择 ${item.title}`}
+          checked={selected}
+          onChange={(event) => onToggleSelected(event.target.checked)}
+          onClick={(event) => event.stopPropagation()}
+        />
         {/* Unread dot */}
         <div style={{
           width: 7, height: 7, borderRadius: "50%", marginTop: 20, marginRight: 14, flexShrink: 0,
@@ -545,11 +654,6 @@ function InboxRow({
           onClick={(e) => e.stopPropagation()}
           role="menu"
         >
-          <button type="button" className="context-menu-item" onClick={() => navigate(readHref)}>
-            <span className="icon icon-sm">auto_stories</span>
-            阅读
-          </button>
-
           {folders.length > 0 && (
             <div className="context-menu-submenu">
               <button type="button" className="context-menu-item">

@@ -119,6 +119,15 @@ export function createApiClient(baseUrl: string) {
         method: "POST",
         body: JSON.stringify({ name })
       }),
+    updateFolder: (folderId: string, name: string) =>
+      request<ApiCreateFolderResponse>(baseUrl, "/api/items/folders/" + folderId, {
+        method: "PATCH",
+        body: JSON.stringify({ name })
+      }),
+    deleteFolder: (folderId: string) =>
+      request<{ id: string; deleted: boolean; moved_item_count: number }>(baseUrl, "/api/items/folders/" + folderId, {
+        method: "DELETE"
+      }),
     listProviders: () => request<ApiListResponse<ApiProvider>>(baseUrl, "/api/providers"),
     createProvider: (payload: ApiProviderPayload) =>
       request<ApiProvider>(baseUrl, "/api/providers", {
@@ -278,8 +287,18 @@ export function createApiClient(baseUrl: string) {
       return request<ApiListResponse<ApiItemSummary>>(baseUrl, "/api/items" + suffix);
     },
     getItem: (itemId: string) => request<ApiItemDetail>(baseUrl, "/api/items/" + itemId),
+    listDeletedItems: (pageSize = 100) =>
+      request<ApiListResponse<ApiItemSummary>>(baseUrl, "/api/items/trash?page_size=" + String(pageSize)),
+    restoreItem: (itemId: string) =>
+      request<{ id?: string; uid: string; deleted: boolean }>(baseUrl, "/api/items/trash/" + itemId + "/restore", {
+        method: "POST"
+      }),
+    purgeItem: (itemId: string) =>
+      request<{ id?: string; uid: string; deleted: boolean }>(baseUrl, "/api/items/trash/" + itemId + "/purge", {
+        method: "DELETE"
+      }),
     deleteItem: (itemId: string) =>
-      request<{ id: string; deleted: boolean }>(baseUrl, "/api/items/" + itemId, {
+      request<{ id?: string; uid: string; deleted: boolean }>(baseUrl, "/api/items/" + itemId, {
         method: "DELETE"
       }),
     generateItemSummary: (itemId: string) =>

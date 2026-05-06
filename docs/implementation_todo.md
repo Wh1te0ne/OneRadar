@@ -48,7 +48,7 @@ Legend:
 - [x] Initialize worker service skeleton.
 - [x] Initialize desktop client skeleton.
 - [x] Add shared config and environment loading.
-- [ ] Add root-level scripts for local development.
+- [x] Add root-level scripts for local development.
 - [ ] Add formatting, linting, and type-check commands.
 
 ## P0 Backend Foundations
@@ -146,6 +146,7 @@ Podcast support is now a scoped RSS exception for V1. Subscriptions discover new
 
 Current note:
 Desktop now uses a Chinese-first shell with `订阅源 / 稍后阅读 / 知识库 / 播客 / Bilibili` as the primary navigation and a top-right settings entry. Feed is reserved for external information streams, Inbox is the read-later buffer, Library is the formal stored collection, 播客 is the podcast subscription and episode discovery surface, and Bilibili is the dedicated video import/auth workbench. The current desktop build supports server bootstrap, unified link import into Inbox, Inbox quick-add for article/Bilibili URLs, duplicate-import UID feedback, Bilibili cookie saving, folder creation, moving items between Inbox and folders, Library preview, article detail reading, transcript detail reading, raw-source jump-out, reading progress persistence, and theme modes. Article detail now enters an immersive reader shell that removes the sidebar and global topbar so long-form reading gets the full viewport, while metadata stays in a narrower secondary rail. Reader scroll progress now syncs back to the backend and list pages surface in-progress items so users can resume from where they left off. Video transcript timestamps are now clickable reader actions that jump to the matching segment, highlight the current location, and sync that position back into reading state. Reader content uses parallel 原文 and AI tabs so summaries do not appear as a separate block inside the source reading flow.
+Inbox and Library now support row menus, batch selection, batch move/delete, app-native confirmation dialogs, and unified toast feedback. Deleting content soft-deletes it into 最近删除 for 7 days, where it can be restored or permanently purged. The sidebar knowledge-base section also supports renaming and deleting custom folders; deleting a folder moves contained items back to 稍后阅读.
 Podcast reader content treats the audio player as the primary source surface, shows RSS episode description as `节目简介` only for podcast episodes, keeps transcript rows collapsed behind a compact expand action with timestamp jumps, and reserves the AI tab for model-generated summaries rather than source metadata. The reader now defaults to the AI tab before 原文, and AI summaries render common Markdown structure for section labels, lists, emphasis, and inline code without showing raw Markdown heading syntax. Manual summary regeneration uses long-form audio/video prompts that prioritize timestamped transcript text, include source descriptions only as supporting context, choose natural story paragraphs for casual chat/travel/story podcasts, and use conclusion/evidence/action structure for industry or knowledge podcasts.
 
 ## P0 Annotation And Organization
@@ -164,6 +165,8 @@ The backend now has first-class `highlights` and `notes` tables plus API endpoin
 Organization note:
 The backend now has first-class `tags`, `content_item_tags`, `collections`, and `collection_items` tables. Item detail responses return persisted tags and collection memberships, item lists can filter by `tag` and `collection_id`, and the desktop reader can edit comma-separated tags, create专题, join/leave专题, and filter the Library by tag or专题.
 
+Local development now has `infra/scripts/dev.ps1`, which starts the API, worker, and desktop dev server together against the same sqlite database. This prevents manual imports from staying indefinitely in `待处理` because only the API was running.
+
 ## P0 Search
 
 - [x] Implement item list search by keyword.
@@ -177,7 +180,7 @@ The backend now has first-class `tags`, `content_item_tags`, `collections`, and 
 - [x] Write Docker Compose for API, worker, Postgres, and Redis.
 - [ ] Define persistent volume layout.
 - [x] Add example `.env` template.
-- [ ] Document local development startup.
+- [x] Document local development startup.
 - [ ] Document production deployment assumptions.
 
 ## P0 Testing

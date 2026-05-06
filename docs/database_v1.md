@@ -186,6 +186,7 @@ Rationale:
 - `normalized_url` is the primary dedupe key for manually submitted links.
 - `status` is useful for inbox and retry UX.
 - `raw_meta` holds source-specific metadata without forcing schema churn.
+- Current implementation stores soft-delete state in `raw_meta.deleted_at` and treats it as a 7-day 最近删除 marker. Normal item lists, folder counts, and detail reads exclude unexpired deleted items; the trash endpoint exposes them for restore or permanent purge. This avoids schema churn during the V1 spike, but a future migration may promote `deleted_at` to a typed column if deletion workflows become more central.
 
 Podcast note:
 

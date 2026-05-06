@@ -75,6 +75,8 @@ class ItemListEntry(BaseModel):
     last_read_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    deleted_at: datetime | None = None
+    delete_expires_at: datetime | None = None
     summary: str | None = None
     tags: list[str] = Field(default_factory=list)
 

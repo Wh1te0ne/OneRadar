@@ -40,6 +40,15 @@ function providerTypeLabel(t: string) {
   }
 }
 
+function connectionLabel(state: "idle" | "checking" | "connected" | "unavailable") {
+  switch (state) {
+    case "checking": return "连接中";
+    case "connected": return "服务端在线";
+    case "unavailable": return "服务端不可用";
+    default: return "等待连接";
+  }
+}
+
 function capabilityOf(provider: ApiProvider): ProviderCapability {
   if (provider.capability === "asr" || provider.capability === "llm") return provider.capability;
   if ((provider.transcription_model || provider.transcription_app_id) && !provider.chat_model) return "asr";
@@ -105,7 +114,7 @@ function applyProviderDefaults(form: ProviderFormState, providerType: ProviderKi
 }
 
 export function SettingsPage() {
-  const { apiBaseUrl, folders, lastError, loadFolders, loadProviders, providers, resolvedTheme, themeMode, setThemeMode, workspace } = useAppState();
+  const { apiBaseUrl, connectionState, folders, lastError, loadFolders, loadProviders, providers, resolvedTheme, themeMode, setThemeMode, workspace } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const [bilibiliIntegration, setBilibiliIntegration] = useState<ApiBilibiliIntegrationSettings | null>(null);
   const [integrationLoading, setIntegrationLoading] = useState(true);
@@ -422,12 +431,17 @@ export function SettingsPage() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             {[
               { label: "工作区名称", value: workspace?.workspace_name ?? "OneRadar", icon: "badge" },
+              { label: "服务端状态", value: connectionLabel(connectionState), icon: "cloud_done", status: connectionState },
               { label: "服务端地址", value: apiBaseUrl, icon: "dns" },
               { label: "界面语言", value: "中文", icon: "translate" },
               { label: "单用户模式", value: workspace?.single_user_mode ? "是" : "—", icon: "person" },
             ].map((item) => (
               <div key={item.label} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", background: "var(--surface-container)", borderRadius: "var(--radius-sm)" }}>
-                <span className="icon" style={{ color: "var(--outline)", marginTop: 1 }}>{item.icon}</span>
+                {item.status ? (
+                  <span className={`status-dot status-${item.status}`} style={{ marginTop: 7 }} />
+                ) : (
+                  <span className="icon" style={{ color: "var(--outline)", marginTop: 1 }}>{item.icon}</span>
+                )}
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "var(--outline)", textTransform: "uppercase", marginBottom: 4 }}>{item.label}</div>
                   <div style={{ fontSize: 14, fontWeight: 500, color: "var(--on-surface)", wordBreak: "break-all" }}>{item.value}</div>

@@ -168,6 +168,8 @@ export type ApiItemSummary = {
   last_read_at?: string | null;
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
+  delete_expires_at?: string | null;
   summary?: string;
   tags?: string[];
 };
