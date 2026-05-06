@@ -64,7 +64,7 @@ Baseline services:
 - `postgres`
 - `redis`
 
-Only `web` and `api` should publish host ports in the baseline production stack. PostgreSQL and Redis remain reachable only on the Docker internal network and persist through host bind mounts. The web host port is controlled by `ONERADAR_WEB_PORT`.
+Only `web` should publish a host port in the baseline production stack. The web container proxies `/api` to the API container on the Docker internal network, so browsers only need the web URL. API, PostgreSQL, and Redis remain reachable only on the Docker internal network and persist through host bind mounts. The web host port is controlled by `ONERADAR_WEB_PORT`.
 
 Optional later services:
 
@@ -108,10 +108,16 @@ Production `.env` should set:
 ```text
 ONERADAR_DATA_ROOT=/vol1/1000/Workspace/OneRadar/data
 ONERADAR_STORAGE_ROOT=/app/data/storage
-ONERADAR_API_PORT=18000
 ONERADAR_WEB_PORT=8081
-ONERADAR_PUBLIC_API_URL=http://192.168.100.55:18000
 ```
+
+With the baseline NAS deployment, the browser entrypoint is:
+
+```text
+http://192.168.100.55:8081
+```
+
+The browser should call API paths on the same origin, for example `http://192.168.100.55:8081/api/health`. `ONERADAR_PUBLIC_API_URL` is optional and should normally stay unset; set it only when intentionally routing the frontend to a separately exposed API origin.
 
 ## Secret Handling
 
@@ -133,7 +139,7 @@ The intended update flow is:
 4. SSH to the production NAS.
 5. Run `docker compose --env-file .env pull`.
 6. Run `docker compose --env-file .env up -d`.
-7. Run a health check against the API.
+7. Run a health check through the web entrypoint at `/api/health`.
 
 Initial command shape, to be refined once the server path and compose wrapper are finalized:
 
@@ -143,11 +149,11 @@ cd /vol1/1000/Workspace/OneRadar
 docker compose --env-file .env pull
 docker compose --env-file .env up -d
 docker compose --env-file .env ps
+curl http://192.168.100.55:8081/api/health
 ```
 
 ## Open Decisions
 
-- Whether to expose API directly or behind a reverse proxy.
 - TLS certificate strategy.
 - Backup schedule and restore drill.
 - Whether production deploys from `main`, tags, or a dedicated release branch.

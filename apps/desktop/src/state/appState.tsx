@@ -3,8 +3,9 @@ import { ApiError, createApiClient } from "../api/client";
 import type { ApiBootstrapResponse, ApiFolderEntry, ApiHealth, ApiProvider } from "../api/types";
 
 const STORAGE_KEY = "oneradar.desktop.state";
+const RUNTIME_API_URL = window.__ONERADAR_CONFIG__?.apiBaseUrl;
 const DEFAULT_API_URL =
-  window.__ONERADAR_CONFIG__?.apiBaseUrl ??
+  RUNTIME_API_URL ??
   import.meta.env.VITE_ONERADAR_DEFAULT_API_URL ??
   (import.meta.env.DEV ? "" : "http://127.0.0.1:8000");
 
@@ -38,6 +39,20 @@ type AppStateValue = {
 
 const AppStateContext = createContext<AppStateValue | null>(null);
 
+function shouldPreferRuntimeApiUrl(savedApiBaseUrl?: string): boolean {
+  if (RUNTIME_API_URL === undefined) {
+    return false;
+  }
+  if (!savedApiBaseUrl) {
+    return true;
+  }
+  return [
+    "http://127.0.0.1:8000",
+    "http://192.168.100.55:8000",
+    "http://192.168.100.55:18000"
+  ].includes(savedApiBaseUrl);
+}
+
 function loadSavedState(): SavedState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -46,7 +61,7 @@ function loadSavedState(): SavedState {
     }
     const parsed = JSON.parse(raw) as Partial<SavedState>;
     return {
-      apiBaseUrl: parsed.apiBaseUrl || DEFAULT_API_URL,
+      apiBaseUrl: shouldPreferRuntimeApiUrl(parsed.apiBaseUrl) ? DEFAULT_API_URL : parsed.apiBaseUrl || DEFAULT_API_URL,
       themeMode: parsed.themeMode === "light" || parsed.themeMode === "dark" ? parsed.themeMode : "system"
     };
   } catch {

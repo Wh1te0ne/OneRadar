@@ -26,7 +26,7 @@ services:
       ONERADAR_ENV: ${ONERADAR_ENV:-production}
       ONERADAR_LOG_LEVEL: ${ONERADAR_LOG_LEVEL:-INFO}
       ONERADAR_API_HOST: ${ONERADAR_API_HOST:-0.0.0.0}
-      ONERADAR_API_PORT: ${ONERADAR_API_PORT:-8000}
+      ONERADAR_API_PORT: 8000
       ONERADAR_API_SECRET_KEY: ${ONERADAR_API_SECRET_KEY:?set ONERADAR_API_SECRET_KEY}
       ONERADAR_DATABASE_URL: ${ONERADAR_DATABASE_URL:?set ONERADAR_DATABASE_URL}
       ONERADAR_REDIS_URL: ${ONERADAR_REDIS_URL:-redis://redis:6379/0}
@@ -37,8 +37,8 @@ services:
     depends_on:
       - postgres
       - redis
-    ports:
-      - "${ONERADAR_API_PORT:-8000}:8000"
+    expose:
+      - "8000"
     volumes:
       - ${ONERADAR_DATA_ROOT:?set ONERADAR_DATA_ROOT}/storage:/app/data
 
@@ -47,7 +47,7 @@ services:
     container_name: oneradar-web
     restart: unless-stopped
     environment:
-      ONERADAR_PUBLIC_API_URL: ${ONERADAR_PUBLIC_API_URL:?set ONERADAR_PUBLIC_API_URL}
+      ONERADAR_PUBLIC_API_URL: ${ONERADAR_PUBLIC_API_URL:-}
     depends_on:
       - api
     ports:

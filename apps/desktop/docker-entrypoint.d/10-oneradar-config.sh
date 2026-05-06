@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-api_base_url="${ONERADAR_PUBLIC_API_URL:-${VITE_ONERADAR_DEFAULT_API_URL:-http://127.0.0.1:8000}}"
+api_base_url="${ONERADAR_PUBLIC_API_URL:-}"
 
 escaped_api_base_url=$(printf '%s' "$api_base_url" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
