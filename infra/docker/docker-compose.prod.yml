@@ -46,6 +46,8 @@ services:
     image: ${ONERADAR_WEB_IMAGE:-ghcr.io/wh1te0ne/oneradar-web:main}
     container_name: oneradar-web
     restart: unless-stopped
+    environment:
+      ONERADAR_PUBLIC_API_URL: ${ONERADAR_PUBLIC_API_URL:?set ONERADAR_PUBLIC_API_URL}
     depends_on:
       - api
     ports:

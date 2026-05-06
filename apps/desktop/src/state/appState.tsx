@@ -3,7 +3,10 @@ import { ApiError, createApiClient } from "../api/client";
 import type { ApiBootstrapResponse, ApiFolderEntry, ApiHealth, ApiProvider } from "../api/types";
 
 const STORAGE_KEY = "oneradar.desktop.state";
-const DEFAULT_API_URL = import.meta.env.VITE_ONERADAR_DEFAULT_API_URL ?? (import.meta.env.DEV ? "" : "http://127.0.0.1:8000");
+const DEFAULT_API_URL =
+  window.__ONERADAR_CONFIG__?.apiBaseUrl ??
+  import.meta.env.VITE_ONERADAR_DEFAULT_API_URL ??
+  (import.meta.env.DEV ? "" : "http://127.0.0.1:8000");
 
 type ThemeMode = "system" | "light" | "dark";
 type ResolvedTheme = "light" | "dark";
