@@ -48,6 +48,19 @@ services:
     volumes:
       - ${ONERADAR_DATA_ROOT:-../../data}/storage:/app/data
 
+  web:
+    build:
+      context: ../../
+      dockerfile: apps/desktop/Dockerfile
+      args:
+        VITE_ONERADAR_DEFAULT_API_URL: ${VITE_ONERADAR_DEFAULT_API_URL:-http://127.0.0.1:8000}
+    container_name: oneradar-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
   worker:
     build:
       context: ../../

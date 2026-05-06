@@ -184,7 +184,7 @@ Local development now has `infra/scripts/dev.ps1`, which starts the API, worker,
 - [x] Document production deployment assumptions.
 
 Deployment note:
-`docs/deployment_v1.md` now records the intended split between local development/testing, private GitHub source control, and Docker Compose based production on the remote server. Tracked docs intentionally omit live passwords and direct future agents to ignored local files for machine-specific access notes.
+`docs/deployment_v1.md` now records the intended split between local development/testing, private GitHub source control, and Docker Compose based production on the remote server. Tracked docs intentionally omit live passwords and direct future agents to ignored local files for machine-specific access notes. The production Compose stack now includes explicit bind-mounted data directories for Postgres, Redis, and application artifacts, plus an Nginx-served web frontend container on port 8080.
 
 ## P0 Testing
 

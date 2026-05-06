@@ -29,6 +29,7 @@ The production SSH password is intentionally omitted from this tracked document.
 
 This deployment model applies to the web/server side only:
 
+- web frontend
 - API service
 - worker service
 - PostgreSQL
@@ -43,6 +44,7 @@ Production should deploy from the GitHub repository onto the target server with 
 
 Baseline services:
 
+- `web`
 - `api`
 - `worker`
 - `postgres`
@@ -90,6 +92,7 @@ Production `.env` should set:
 ```text
 ONERADAR_DATA_ROOT=/root/Project/OneRadar/data
 ONERADAR_STORAGE_ROOT=/app/data/storage
+VITE_ONERADAR_DEFAULT_API_URL=http://101.96.202.98:8000
 ```
 
 ## Secret Handling
