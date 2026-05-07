@@ -937,10 +937,10 @@ button, input, select, textarea { font: inherit; }
   width: min(1180px, 100%);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(150px, 210px) minmax(260px, 1fr);
+  grid-template-columns: 188px minmax(260px, 1fr);
   align-items: center;
-  gap: 28px;
-  padding: 30px 76px 26px;
+  gap: 36px;
+  padding: 54px 0 28px;
   border-bottom: 1px solid rgba(var(--outline-rgb), 0.16);
 }
 
@@ -970,14 +970,14 @@ button, input, select, textarea { font: inherit; }
 
 .daily-news-date-card {
   width: 100%;
-  min-height: 76px;
+  min-height: 72px;
   border: none;
-  padding: 12px 18px;
-  border-radius: 18px;
-  background: linear-gradient(180deg, var(--surface-container), var(--surface-low));
+  padding: 12px 20px 11px;
+  border-radius: 16px;
+  background: rgba(var(--outline-rgb), 0.055);
   color: var(--on-surface);
-  border: 1px solid rgba(var(--outline-rgb), 0.12);
-  box-shadow: inset 0 1px 0 rgba(var(--surface-lowest-rgb), 0.64);
+  border: 1px solid rgba(var(--outline-rgb), 0.08);
+  box-shadow: none;
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -988,10 +988,8 @@ button, input, select, textarea { font: inherit; }
 }
 
 .daily-news-date-card:hover {
-  background: var(--surface-container);
-  border-color: rgba(var(--primary-rgb), 0.22);
-  box-shadow: var(--shadow-card);
-  transform: translateY(-1px);
+  background: rgba(var(--outline-rgb), 0.08);
+  border-color: rgba(var(--outline-rgb), 0.12);
 }
 
 .daily-news-date-main {
@@ -1003,10 +1001,10 @@ button, input, select, textarea { font: inherit; }
 
 .daily-news-date-year {
   width: fit-content;
-  padding: 2px 8px;
+  padding: 1px 7px 2px;
   border-radius: var(--radius-full);
-  background: rgba(var(--surface-lowest-rgb), 0.58);
-  color: var(--outline);
+  background: rgba(var(--surface-lowest-rgb), 0.72);
+  color: var(--on-surface-v);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -1019,12 +1017,10 @@ button, input, select, textarea { font: inherit; }
   left: 0;
   width: 306px;
   padding: 14px;
-  border-radius: 18px;
-  background: rgba(var(--surface-lowest-rgb), 0.96);
-  border: 1px solid rgba(var(--outline-rgb), 0.14);
-  box-shadow: var(--shadow-float);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
+  border-radius: 16px;
+  background: var(--surface-lowest);
+  border: 1px solid rgba(var(--outline-rgb), 0.12);
+  box-shadow: 0 10px 22px rgba(55, 53, 47, 0.08);
 }
 
 .daily-news-calendar-head {
@@ -1375,7 +1371,7 @@ button, input, select, textarea { font: inherit; }
     grid-template-columns: minmax(116px, 150px) 1fr;
     align-items: stretch;
     gap: 16px;
-    padding: 46px 0 22px;
+    padding: 54px 0 22px;
   }
 
   .daily-news-corner-nav {
