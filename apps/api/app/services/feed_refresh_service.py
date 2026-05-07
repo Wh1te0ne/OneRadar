@@ -10,7 +10,7 @@ from app.services.feed_state_service import get_feed_state, mark_feed_source_err
 logger = logging.getLogger(__name__)
 
 
-def refresh_all_feeds(limit: int = 40) -> FeedRefreshResponse:
+def refresh_all_feeds(limit: int = 0) -> FeedRefreshResponse:
     state = get_feed_state()
     errors: dict[str, str] = {}
     refreshed = 0

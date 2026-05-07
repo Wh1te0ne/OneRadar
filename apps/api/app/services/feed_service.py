@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
+import re
+import socket
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
-import ipaddress
-import re
-import socket
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -30,7 +30,6 @@ ALLOWED_FEED_CONTENT_TYPES = {
     "text/xml",
 }
 DEFAULT_FEED_LIMIT = 12
-MAX_FEED_LIMIT = 40
 MAX_ARTICLE_BYTES = 2_500_000
 HN_ARTICLE_URL_RE = re.compile(r"\bArticle URL:\s*(https?://\S+)", re.IGNORECASE)
 
@@ -392,7 +391,7 @@ def _parse_atom_entry(entry: ET.Element, feed_url: str) -> FeedPreviewItem | Non
     )
 
 
-def _parse_feed(xml_text: str, source_url: str, limit: int) -> FeedPreviewResponse:
+def _parse_feed(xml_text: str, source_url: str, limit: int | None) -> FeedPreviewResponse:
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as error:
@@ -415,7 +414,7 @@ def _parse_feed(xml_text: str, source_url: str, limit: int) -> FeedPreviewRespon
             parsed = _parse_rss_item(child)
             if parsed is not None:
                 items.append(parsed)
-            if len(items) >= limit:
+            if limit is not None and len(items) >= limit:
                 break
     elif root_name == "feed":
         site_title = _normalize_whitespace(_child_text(root, "title")) or source_url
@@ -429,12 +428,13 @@ def _parse_feed(xml_text: str, source_url: str, limit: int) -> FeedPreviewRespon
                     break
                 if href and site_url is None:
                     site_url = urljoin(source_url, href)
+        for child in root:
             if _local_name(child.tag) != "entry":
                 continue
             parsed = _parse_atom_entry(child, source_url)
             if parsed is not None:
                 items.append(parsed)
-            if len(items) >= limit:
+            if limit is not None and len(items) >= limit:
                 break
     else:
         raise ValueError("unsupported feed format")
@@ -446,16 +446,16 @@ def _parse_feed(xml_text: str, source_url: str, limit: int) -> FeedPreviewRespon
         site_title=site_title,
         site_url=site_url,
         description=description,
-        items=items[:limit],
+        items=items[:limit] if limit is not None else items,
         fetched_at=datetime.now(UTC),
     )
 
 
-def preview_feed(url: str, limit: int = DEFAULT_FEED_LIMIT) -> FeedPreviewResponse:
+def preview_feed(url: str, limit: int | None = DEFAULT_FEED_LIMIT) -> FeedPreviewResponse:
     source_url = url.strip()
     if not source_url:
         raise ValueError("feed url is required")
-    normalized_limit = max(1, min(limit, MAX_FEED_LIMIT))
+    normalized_limit = None if limit is None or limit <= 0 else limit
     xml_text, final_url, content_type = _read_feed_xml(source_url)
     if content_type and content_type not in ALLOWED_FEED_CONTENT_TYPES and "xml" not in content_type:
         raise ValueError(f"unsupported feed content type: {content_type}")

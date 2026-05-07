@@ -23,7 +23,7 @@ router = APIRouter(prefix="/feeds", tags=["feeds"])
 
 
 @router.get("/preview")
-def preview_feed(url: str, limit: int = 12) -> FeedPreviewResponse:
+def preview_feed(url: str, limit: int = 0) -> FeedPreviewResponse:
     try:
         return preview_feed_service(url, limit=limit)
     except ValueError as exc:

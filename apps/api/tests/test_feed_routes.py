@@ -6,9 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.services import feed_service
-from app.services import feed_state_service
-from app.services import items_service
+from app.services import feed_service, feed_state_service, items_service
 
 
 class _FakeHeaders:
@@ -119,6 +117,46 @@ def test_feed_preview_route_returns_parsed_items(client, monkeypatch) -> None:
     assert body["items"][1]["author"] == "Hugo van Kemenade"
 
 
+def test_feed_preview_limit_zero_returns_all_feed_items(client, monkeypatch) -> None:
+    items = "\n".join(
+        f"""
+        <item>
+          <title>Entry {index}</title>
+          <link>https://example.com/entry-{index}</link>
+          <guid>entry-{index}</guid>
+          <pubDate>Thu, 30 Apr 2026 {index % 24:02d}:00:00 GMT</pubDate>
+        </item>
+        """
+        for index in range(45)
+    )
+    rss_xml = f"""<?xml version='1.0' encoding='UTF-8'?>
+    <rss version='2.0'>
+      <channel>
+        <title>Large Feed</title>
+        <link>https://example.com/</link>
+        {items}
+      </channel>
+    </rss>"""
+
+    monkeypatch.setattr(
+        feed_service.socket,
+        "getaddrinfo",
+        lambda host, port, type=socket.SOCK_STREAM: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.10", port))
+        ],
+    )
+    monkeypatch.setattr(
+        feed_service,
+        "build_opener",
+        lambda *args, **kwargs: _FakeOpener(rss_xml, url="https://example.com/rss.xml"),
+    )
+
+    response = client.get("/api/feeds/preview", params={"url": "https://example.com/rss.xml", "limit": 0})
+
+    assert response.status_code == 200, response.json()
+    assert len(response.json()["items"]) == 45
+
+
 def test_feed_preview_prefers_hn_article_url_from_summary(client, monkeypatch) -> None:
     rss_xml = """<?xml version='1.0' encoding='UTF-8'?>
     <rss version='2.0'>
@@ -151,6 +189,50 @@ def test_feed_preview_prefers_hn_article_url_from_summary(client, monkeypatch) -
     assert response.status_code == 200, response.json()
     body = response.json()
     assert body["items"][0]["link"] == "https://example.com/story"
+
+
+def test_feed_preview_parses_atom_entries_after_site_link(client, monkeypatch) -> None:
+    atom_xml = """<?xml version='1.0' encoding='UTF-8'?>
+    <feed xmlns='http://www.w3.org/2005/Atom'>
+      <title>Example Atom</title>
+      <link rel='alternate' type='text/html' href='https://example.com/' />
+      <link rel='self' type='application/atom+xml' href='https://example.com/feed.xml' />
+      <entry>
+        <title>First Atom Entry</title>
+        <link rel='alternate' type='text/html' href='https://example.com/first' />
+        <id>tag:example.com,2026:first</id>
+        <published>2026-05-07T01:00:00Z</published>
+        <summary>Atom summary</summary>
+        <author><name>Atom Author</name></author>
+        <category term='AI' />
+      </entry>
+    </feed>"""
+
+    monkeypatch.setattr(
+        feed_service.socket,
+        "getaddrinfo",
+        lambda host, port, type=socket.SOCK_STREAM: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.10", port))
+        ],
+    )
+    monkeypatch.setattr(
+        feed_service,
+        "build_opener",
+        lambda *args, **kwargs: _FakeOpener(
+            atom_xml,
+            url="https://example.com/feed.xml",
+            content_type="application/atom+xml",
+        ),
+    )
+
+    response = client.get("/api/feeds/preview", params={"url": "https://example.com/feed.xml"})
+
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["site_url"] == "https://example.com/"
+    assert len(body["items"]) == 1
+    assert body["items"][0]["title"] == "First Atom Entry"
+    assert body["items"][0]["author"] == "Atom Author"
 
 
 def test_feed_article_preview_route_returns_clean_reader_text(client, monkeypatch) -> None:
@@ -343,3 +425,60 @@ def test_feed_refresh_route_refreshes_cached_sources(client, monkeypatch) -> Non
     assert state["feeds"]["https://example.com/rss.xml"]["site_title"] == "New Feed"
     assert state["feeds"]["https://example.com/rss.xml"]["items"][0]["title"] == "New Entry"
     state_path.unlink(missing_ok=True)
+
+
+def test_feed_refresh_keeps_existing_db_entries_not_in_latest_feed(client, monkeypatch) -> None:
+    feed_payload = {
+        "source_url": "https://example.com/rss.xml",
+        "site_title": "Example Feed",
+        "site_url": "https://example.com/",
+        "description": None,
+        "items": [
+            {
+                "id": "entry-old",
+                "title": "Old Entry",
+                "link": "https://example.com/old-entry",
+                "summary": "Stored from an earlier refresh",
+                "author": "Author",
+                "published_at": "2026-04-01T00:00:00Z",
+                "tags": [],
+            }
+        ],
+        "fetched_at": "2026-04-01T01:00:00Z",
+    }
+    assert client.post("/api/feeds/cache", json={"feed": feed_payload}).status_code == 200
+
+    rss_xml = """<?xml version='1.0' encoding='UTF-8'?>
+    <rss version='2.0'>
+      <channel>
+        <title>Example Feed</title>
+        <link>https://example.com/</link>
+        <item>
+          <title>New Entry</title>
+          <link>https://example.com/new-entry</link>
+          <guid>entry-new</guid>
+          <description>Fresh summary</description>
+          <pubDate>Thu, 30 Apr 2026 00:00:00 GMT</pubDate>
+        </item>
+      </channel>
+    </rss>"""
+
+    monkeypatch.setattr(
+        feed_service.socket,
+        "getaddrinfo",
+        lambda host, port, type=socket.SOCK_STREAM: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.10", port))
+        ],
+    )
+    monkeypatch.setattr(
+        feed_service,
+        "build_opener",
+        lambda *args, **kwargs: _FakeOpener(rss_xml, url="https://example.com/rss.xml"),
+    )
+
+    response = client.post("/api/feeds/refresh")
+
+    assert response.status_code == 200, response.json()
+    entries = client.get("/api/feeds/state").json()["feeds"]["https://example.com/rss.xml"]["items"]
+    titles = {entry["title"] for entry in entries}
+    assert {"Old Entry", "New Entry"} <= titles

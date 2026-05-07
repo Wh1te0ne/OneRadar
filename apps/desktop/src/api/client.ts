@@ -148,7 +148,7 @@ export function createApiClient(baseUrl: string) {
       request<ApiProviderTestResponse>(baseUrl, "/api/providers/" + providerId + "/test", {
         method: "POST"
       }),
-    getFeedPreview: (url: string, limit = 12) => {
+    getFeedPreview: (url: string, limit = 0) => {
       const params = new URLSearchParams({ url, limit: String(limit) });
       return request<ApiFeedPreviewResponse>(baseUrl, "/api/feeds/preview?" + params.toString());
     },

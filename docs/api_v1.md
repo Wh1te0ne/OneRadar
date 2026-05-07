@@ -619,10 +619,10 @@ Creates a `podcast_episode` content item in Inbox / later reading. The request i
 RSS subscriptions are a discovery surface, not an automatic ingestion path.
 
 ```http
-GET /api/feeds/preview?url=https://blog.python.org/rss.xml&limit=40
+GET /api/feeds/preview?url=https://blog.python.org/rss.xml&limit=0
 ```
 
-Returns feed metadata and recent entries without creating content items. Each entry includes `is_saved`, `saved_item_id`, and `saved_uid` when its article URL already exists in saved items. HN-style descriptions with explicit `Article URL` and `Comments URL` use the article URL as the entry link.
+Returns feed metadata and entries without creating content items. `limit=0` means no entry-count truncation and is the formal default for subscribed sources; positive `limit` values are only for explicit previews or diagnostics. Each entry includes `is_saved`, `saved_item_id`, and `saved_uid` when its article URL already exists in saved items. HN-style descriptions with explicit `Article URL` and `Comments URL` use the article URL as the entry link.
 
 ```http
 GET /api/feeds/article-preview?url=https://example.com/post&title=Fallback
@@ -639,11 +639,11 @@ POST /api/feeds/sources/error
 DELETE /api/feeds/sources?url=https://blog.python.org/rss.xml
 ```
 
-Persists the RSS discovery surface in the primary database. `POST /api/feeds/cache` upserts a loaded source and its current entries. `POST /api/feeds/read` marks a cached entry as read. `POST /api/feeds/refresh` refreshes all saved RSS sources server-side and returns `{ total, refreshed, failed, errors }`. `POST /api/feeds/sources/error` records a refresh failure without deleting the previous cached entries. Deleting a source removes its cached entries and read markers.
+Persists the RSS discovery surface in the primary database. `POST /api/feeds/cache` upserts a loaded source and every fetched entry. Existing cached entries remain even if a later feed response no longer includes them, so source history accumulates until the source is deleted. `POST /api/feeds/read` marks a cached entry as read. `POST /api/feeds/refresh` refreshes all saved RSS sources server-side and returns `{ total, refreshed, failed, errors }`. `POST /api/feeds/sources/error` records a refresh failure without deleting the previous cached entries. Deleting a source removes its cached entries and read markers.
 
 The API process also runs the same refresh logic on a timer when `ONERADAR_FEED_REFRESH_ENABLED=true`. The default interval is controlled by `ONERADAR_FEED_REFRESH_INTERVAL_SECONDS` and defaults to 1800 seconds.
 
-The desktop 每日新闻 page is model-generated and persisted per date. The API reads cached RSS entries for the requested date, calls the configured summarization/chat provider, asks the model to translate and summarize entries into a fixed daily-brief structure, and saves exactly one report per day. Regenerating the same date overwrites the previous report.
+The desktop 每日新闻 page is model-generated and persisted per date. The API reads cached RSS entries from the 24 hours before the actual generation time, calls the configured summarization/chat provider, asks the model to translate and summarize entries into a fixed daily-brief structure, and saves exactly one report per day. Regenerating the same date overwrites the previous report.
 
 ```http
 GET /api/daily-news?date=2026-05-07

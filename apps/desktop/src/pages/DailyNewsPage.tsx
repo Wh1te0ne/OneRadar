@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, createApiClient } from "../api";
 import type { ApiDailyNewsEntry, ApiDailyNewsItem, ApiDailyNewsReportResponse } from "../api/types";
@@ -21,23 +21,71 @@ function shiftDate(value: string, deltaDays: number) {
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return todayDate();
   date.setDate(date.getDate() + deltaDays);
+  return dateKey(date);
+}
+
+function dateKey(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-function displayDate(value: string) {
+function parseLocalDate(value: string) {
   const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return value;
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function startOfMonth(value: string) {
+  const date = parseLocalDate(value) ?? new Date();
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function shiftMonth(value: Date, deltaMonths: number) {
+  return new Date(value.getFullYear(), value.getMonth() + deltaMonths, 1);
+}
+
+function isSameMonth(left: Date, right: Date) {
+  return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth();
+}
+
+function buildCalendarDays(monthDate: Date) {
+  const firstDay = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const start = new Date(firstDay);
+  start.setDate(firstDay.getDate() - firstDay.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+}
+
+function displayCalendarMonth(value: Date) {
+  return value.toLocaleDateString("zh-CN", { year: "numeric", month: "long" });
+}
+
+function displayDate(value: string) {
+  const date = parseLocalDate(value);
+  if (!date) return value;
   return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+}
+
+function displayYear(value: string) {
+  const date = parseLocalDate(value);
+  if (!date) return "";
+  return `${date.getFullYear()}`;
 }
 
 function displayGeneratedAt(value?: string | null) {
   if (!value) return "尚未生成";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}/${month}/${day} ${hour}:${minute}`;
 }
 
 function displayPublishedAt(value?: string | null) {
@@ -109,12 +157,15 @@ export function DailyNewsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedDate = searchParams.get("date") || todayDate();
+  const dateClusterRef = useRef<HTMLDivElement | null>(null);
 
   const [report, setReport] = useState<ApiDailyNewsReportResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [pendingGeneration, setPendingGeneration] = useState<PendingGeneration | null>(() => readPendingGeneration());
   const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(selectedDate));
   const [error, setError] = useState<string | null>(null);
 
   function setDate(nextDate: string) {
@@ -182,6 +233,16 @@ export function DailyNewsPage() {
     void startGenerateReport(force);
   }
 
+  function toggleCalendar() {
+    setCalendarMonth(startOfMonth(selectedDate));
+    setCalendarOpen((open) => !open);
+  }
+
+  function selectCalendarDate(nextDate: string) {
+    setDate(nextDate);
+    setCalendarOpen(false);
+  }
+
   useEffect(() => {
     void loadReport(selectedDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -212,6 +273,22 @@ export function DailyNewsPage() {
     if (!providers.length) void loadProviders();
   }, [loadProviders, providers.length]);
 
+  useEffect(() => {
+    if (!calendarOpen) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (!dateClusterRef.current?.contains(event.target as Node)) setCalendarOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setCalendarOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [calendarOpen]);
+
   const filteredSections = useMemo(() => {
     const keyword = (searchParams.get("q") || "").trim().toLowerCase();
     const sections = report?.sections ?? [];
@@ -226,6 +303,10 @@ export function DailyNewsPage() {
 
   const ready = report?.status === "ready";
   const isGeneratingSelectedDate = Boolean((generating || pendingGeneration) && pendingGeneration?.date === selectedDate);
+  const isTodayOrFuture = selectedDate >= todayDate();
+  const calendarDays = buildCalendarDays(calendarMonth);
+  const today = todayDate();
+  const isNextMonthDisabled = shiftMonth(calendarMonth, 1) > startOfMonth(today);
 
   return (
     <div className="daily-news-page">
@@ -234,20 +315,75 @@ export function DailyNewsPage() {
           <span className="icon icon-sm">chevron_left</span>
           前一天
         </button>
-        <button className="btn btn-ghost btn-sm daily-news-corner-nav daily-news-corner-nav-next" type="button" onClick={() => setDate(shiftDate(selectedDate, 1))}>
+        <button
+          className="btn btn-ghost btn-sm daily-news-corner-nav daily-news-corner-nav-next"
+          type="button"
+          disabled={isTodayOrFuture}
+          onClick={() => setDate(shiftDate(selectedDate, 1))}
+        >
           后一天
           <span className="icon icon-sm">chevron_right</span>
         </button>
-        <button type="button" className="daily-news-date-pill" onClick={() => setDate(todayDate())} title="回到今天">
-          {displayDate(selectedDate)}
-        </button>
+        <div className="daily-news-date-cluster" ref={dateClusterRef}>
+          <button type="button" className="daily-news-date-card" onClick={toggleCalendar} aria-haspopup="dialog" aria-expanded={calendarOpen} title="选择日期">
+            <span className="daily-news-date-main">{displayDate(selectedDate)}</span>
+            <span className="daily-news-date-year">{displayYear(selectedDate)}</span>
+          </button>
+          {calendarOpen && (
+            <div className="daily-news-calendar-popover" role="dialog" aria-label="选择日报日期">
+              <div className="daily-news-calendar-head">
+                <button type="button" className="daily-news-calendar-nav" onClick={() => setCalendarMonth((month) => shiftMonth(month, -1))} aria-label="上个月">
+                  <span className="icon icon-sm">chevron_left</span>
+                </button>
+                <strong>{displayCalendarMonth(calendarMonth)}</strong>
+                <button
+                  type="button"
+                  className="daily-news-calendar-nav"
+                  disabled={isNextMonthDisabled}
+                  onClick={() => setCalendarMonth((month) => shiftMonth(month, 1))}
+                  aria-label="下个月"
+                >
+                  <span className="icon icon-sm">chevron_right</span>
+                </button>
+              </div>
+              <div className="daily-news-calendar-weekdays">
+                {["日", "一", "二", "三", "四", "五", "六"].map((weekday) => (
+                  <span key={weekday}>{weekday}</span>
+                ))}
+              </div>
+              <div className="daily-news-calendar-grid">
+                {calendarDays.map((date) => {
+                  const nextDate = dateKey(date);
+                  const outsideMonth = !isSameMonth(date, calendarMonth);
+                  const isSelected = nextDate === selectedDate;
+                  const isToday = nextDate === today;
+                  const isFuture = nextDate > today;
+                  return (
+                    <button
+                      type="button"
+                      key={nextDate}
+                      className={[
+                        "daily-news-calendar-day",
+                        outsideMonth ? "daily-news-calendar-day-muted" : "",
+                        isSelected ? "daily-news-calendar-day-selected" : "",
+                        isToday ? "daily-news-calendar-day-today" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      disabled={isFuture}
+                      onClick={() => selectCalendarDate(nextDate)}
+                    >
+                      {date.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
         <div className="daily-news-title-block">
           <p className="page-eyebrow">Daily Brief</p>
           <h2 className="page-title">每日新闻</h2>
-          <p className="page-lead">
-            每天 10:00 默认生成一份日报；重新生成会按最新订阅源内容覆盖当天版本。
-          </p>
-          <input className="input daily-news-date-input" type="date" value={selectedDate} onChange={(event) => setDate(event.target.value)} />
         </div>
       </header>
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
@@ -104,10 +104,14 @@ def _normalize_report_date(value: str | None) -> str:
         raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD") from error
 
 
+def _daily_news_reference_time() -> datetime:
+    return datetime.now(DAILY_NEWS_TIMEZONE)
+
+
 def _fresh_entries_for_report(report_date: str) -> list[dict[str, Any]]:
-    target = date.fromisoformat(report_date)
-    start = datetime.combine(target, time.min, tzinfo=DAILY_NEWS_TIMEZONE)
-    end = datetime.combine(target, time.max, tzinfo=DAILY_NEWS_TIMEZONE)
+    _ = date.fromisoformat(report_date)
+    end = _daily_news_reference_time()
+    start = end - timedelta(hours=24)
     state = get_feed_state()
     entries: list[dict[str, Any]] = []
     ordinal = 1

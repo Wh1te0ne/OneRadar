@@ -19,10 +19,6 @@ type SavedFeedSource = {
 };
 
 const DEFAULT_RSS_URL = "https://blog.python.org/rss.xml";
-const FEED_SOURCE_HISTORY_KEY = "oneradar.feed.sources.v1";
-const FEED_PREVIEW_CACHE_KEY = "oneradar.feed.previewCache.v1";
-const FEED_READ_ENTRY_KEY = "oneradar.feed.readEntries.v1";
-const MAX_SAVED_SOURCES = 30;
 
 type FeedEntry = ApiFeedPreviewItem & {
   sourceUrl: string;
@@ -52,115 +48,8 @@ function isToday(value?: string | null) {
   return date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
 }
 
-function loadSavedSources(): SavedFeedSource[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-  try {
-    const raw = window.localStorage.getItem(FEED_SOURCE_HISTORY_KEY);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .map((entry) => {
-        if (!entry || typeof entry !== "object") {
-          return null;
-        }
-        const candidate = entry as Partial<SavedFeedSource>;
-        if (typeof candidate.sourceUrl !== "string" || typeof candidate.siteTitle !== "string") {
-          return null;
-        }
-        return {
-          sourceUrl: candidate.sourceUrl,
-          siteTitle: candidate.siteTitle,
-          siteUrl: typeof candidate.siteUrl === "string" ? candidate.siteUrl : null,
-          description: typeof candidate.description === "string" ? candidate.description : null,
-          lastLoadedAt: typeof candidate.lastLoadedAt === "string" ? candidate.lastLoadedAt : new Date().toISOString(),
-          lastRefreshStatus: typeof candidate.lastRefreshStatus === "string" ? candidate.lastRefreshStatus : null,
-          lastRefreshError: typeof candidate.lastRefreshError === "string" ? candidate.lastRefreshError : null,
-          lastRefreshedAt: typeof candidate.lastRefreshedAt === "string" ? candidate.lastRefreshedAt : null,
-        } satisfies SavedFeedSource;
-      })
-      .filter((entry): entry is SavedFeedSource => Boolean(entry));
-  } catch {
-    return [];
-  }
-}
-
-function loadCachedFeeds(): Record<string, ApiFeedPreviewResponse> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(FEED_PREVIEW_CACHE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-    const feeds: Record<string, ApiFeedPreviewResponse> = {};
-    Object.entries(parsed as Record<string, unknown>).forEach(([sourceUrl, value]) => {
-      if (!value || typeof value !== "object") return;
-      const candidate = value as Partial<ApiFeedPreviewResponse>;
-      if (
-        typeof candidate.source_url !== "string" ||
-        typeof candidate.site_title !== "string" ||
-        typeof candidate.fetched_at !== "string" ||
-        !Array.isArray(candidate.items)
-      ) {
-        return;
-      }
-      feeds[sourceUrl] = candidate as ApiFeedPreviewResponse;
-    });
-    return feeds;
-  } catch {
-    return {};
-  }
-}
-
-function saveCachedFeeds(feeds: Record<string, ApiFeedPreviewResponse>) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(FEED_PREVIEW_CACHE_KEY, JSON.stringify(feeds));
-  } catch {
-    // RSS feed cache is best-effort local persistence.
-  }
-}
-
-function loadReadEntries(): Set<string> {
-  if (typeof window === "undefined") {
-    return new Set();
-  }
-  try {
-    const raw = window.localStorage.getItem(FEED_READ_ENTRY_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function saveReadEntries(entries: Set<string>) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(FEED_READ_ENTRY_KEY, JSON.stringify(Array.from(entries)));
-  } catch {
-    // Read markers are best-effort UI state.
-  }
-}
-
 function upsertSavedSource(list: SavedFeedSource[], next: SavedFeedSource): SavedFeedSource[] {
-  return [next, ...list.filter((item) => item.sourceUrl !== next.sourceUrl)].slice(0, MAX_SAVED_SOURCES);
+  return [next, ...list.filter((item) => item.sourceUrl !== next.sourceUrl)];
 }
 
 function describeSavedSource(source: SavedFeedSource) {
@@ -204,12 +93,6 @@ function isFeedEntryRead(item: FeedEntry, readEntries: Set<string>) {
   return feedEntryReadKeys(item).some((key) => readEntries.has(key));
 }
 
-function mergeSources(left: SavedFeedSource[], right: SavedFeedSource[]) {
-  const byUrl = new Map<string, SavedFeedSource>();
-  [...right, ...left].forEach((source) => byUrl.set(source.sourceUrl, source));
-  return Array.from(byUrl.values()).slice(0, MAX_SAVED_SOURCES);
-}
-
 export function FeedPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -219,10 +102,10 @@ export function FeedPage() {
   const [filter, setFilter] = useState<FeedFilter>("week");
   const [selectedSource, setSelectedSource] = useState<SelectedSource>("all");
   const [showAddRss, setShowAddRss] = useState(false);
-  const [savedSources, setSavedSources] = useState<SavedFeedSource[]>(() => loadSavedSources());
+  const [savedSources, setSavedSources] = useState<SavedFeedSource[]>([]);
   const [rssUrl, setRssUrl] = useState("");
-  const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>(() => loadCachedFeeds());
-  const [readEntries, setReadEntries] = useState<Set<string>>(() => loadReadEntries());
+  const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>({});
+  const [readEntries, setReadEntries] = useState<Set<string>>(new Set());
   const [serverHydrated, setServerHydrated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -233,29 +116,10 @@ export function FeedPage() {
   const sourceParam = searchParams.get("source")?.trim() ?? "";
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(FEED_SOURCE_HISTORY_KEY, JSON.stringify(savedSources));
-    } catch {
-      // ignore persistence errors in preview mode
-    }
-  }, [savedSources]);
-
-  useEffect(() => {
-    saveCachedFeeds(feeds);
-  }, [feeds]);
-
-  useEffect(() => {
-    saveReadEntries(readEntries);
-  }, [readEntries]);
-
-  useEffect(() => {
     let cancelled = false;
     client.getFeedState()
       .then((state) => {
         if (cancelled) return;
-        const localSources = loadSavedSources();
-        const localFeeds = loadCachedFeeds();
-        const localReadEntries = loadReadEntries();
         const serverSources = state.sources.map((source) => ({
           sourceUrl: source.source_url,
           siteTitle: source.site_title,
@@ -266,31 +130,12 @@ export function FeedPage() {
           lastRefreshError: source.last_refresh_error,
           lastRefreshedAt: source.last_refreshed_at,
         }));
-        const mergedFeeds = { ...state.feeds, ...localFeeds };
-        const mergedSources = mergeSources(
-          mergeSources(serverSources, localSources),
-          Object.values(mergedFeeds).map((feed) => ({
-            sourceUrl: feed.source_url,
-            siteTitle: feed.site_title,
-            siteUrl: feed.site_url,
-            description: feed.description,
-            lastLoadedAt: feed.fetched_at,
-            lastRefreshStatus: null,
-            lastRefreshError: null,
-            lastRefreshedAt: feed.fetched_at,
-          }))
-        );
-        setFeeds(mergedFeeds);
-        setSavedSources(mergedSources);
-        setReadEntries(new Set([...state.read_entries, ...Array.from(localReadEntries)]));
-        Object.values(localFeeds).forEach((feed) => {
-          void client.cacheFeedPreview(feed).catch(() => {
-            // State sync is best effort; the local cache still keeps the UI usable.
-          });
-        });
+        setFeeds(state.feeds);
+        setSavedSources(serverSources);
+        setReadEntries(new Set(state.read_entries));
       })
-      .catch(() => {
-        // Keep local RSS cache if the state endpoint is unavailable.
+      .catch((nextError) => {
+        setError(nextError instanceof Error ? nextError.message : "订阅源状态读取失败");
       })
       .finally(() => {
         if (!cancelled) {
@@ -307,7 +152,7 @@ export function FeedPage() {
     if (!url) {
       throw new Error("请先输入 RSS 地址。");
     }
-    return client.getFeedPreview(url, 40);
+    return client.getFeedPreview(url, 0);
   }
 
   function rememberFeed(next: ApiFeedPreviewResponse) {
@@ -407,12 +252,11 @@ export function FeedPage() {
   }
 
   useEffect(() => {
-    if (serverHydrated && Object.keys(feeds).length === 0) {
-      const initialSources = loadSavedSources();
-      void refreshSources(initialSources);
+    if (serverHydrated && Object.keys(feeds).length === 0 && savedSources.length > 0) {
+      void refreshSources(savedSources);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverHydrated]);
+  }, [serverHydrated, savedSources.length]);
 
   useEffect(() => {
     if (!sourceParam) return;
@@ -564,13 +408,9 @@ export function FeedPage() {
               </span>
             </div>
           )}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refreshSources()} disabled={loading}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void refreshSources()} disabled={loading}>
             <span className="icon icon-sm">sync</span>
-            {loading ? "刷新中…" : "刷新"}
-          </button>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAddRss((value) => !value)}>
-            <span className="icon icon-sm">add</span>
-            添加源
+            {loading ? "刷新中…" : "刷新订阅源"}
           </button>
         </div>
       </div>

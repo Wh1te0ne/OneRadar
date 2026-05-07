@@ -18,12 +18,30 @@ def _feed_state() -> FeedStateResponse:
                 fetched_at=datetime(2026, 5, 7, 1, 0, tzinfo=timezone.utc),
                 items=[
                     FeedPreviewItem(
+                        id="entry-0",
+                        title="Previous day infrastructure funding",
+                        link="https://example.com/infra-funding",
+                        summary="A funding story from the rolling freshness window.",
+                        author="Reporter",
+                        published_at=datetime(2026, 5, 6, 9, 0, tzinfo=timezone.utc),
+                        tags=["AI"],
+                    ),
+                    FeedPreviewItem(
                         id="entry-1",
                         title="OpenAI releases a new model",
                         link="https://example.com/openai-model",
                         summary="A new model improves coding and reasoning.",
                         author="Reporter",
                         published_at=datetime(2026, 5, 7, 0, 30, tzinfo=timezone.utc),
+                        tags=["AI"],
+                    ),
+                    FeedPreviewItem(
+                        id="entry-old",
+                        title="Old model news",
+                        link="https://example.com/old-model",
+                        summary="This is outside the 24 hour freshness window.",
+                        author="Reporter",
+                        published_at=datetime(2026, 5, 6, 7, 30, tzinfo=timezone.utc),
                         tags=["AI"],
                     )
                 ],
@@ -35,27 +53,34 @@ def _feed_state() -> FeedStateResponse:
 
 def test_generate_daily_news_persists_one_report_per_date(client, monkeypatch) -> None:
     monkeypatch.setattr(daily_news_service, "get_feed_state", _feed_state)
+    monkeypatch.setattr(
+        daily_news_service,
+        "_daily_news_reference_time",
+        lambda: datetime(2026, 5, 7, 8, 0, tzinfo=timezone.utc),
+    )
 
     def fake_generate(entries, report_date):
         assert report_date == "2026-05-07"
-        assert entries[0]["id"] == "n1"
+        assert entries[0]["original_id"] == "entry-1"
+        assert any(entry["original_id"] == "entry-0" for entry in entries)
+        assert all(entry["original_id"] != "entry-old" for entry in entries)
         return {
             "headline": "今日 AI 新闻",
             "lead": {
                 "title": "OpenAI 发布新模型",
                 "summary": "新模型提升代码与推理能力。",
-                "entry_id": "n1",
+                "entry_id": entries[0]["id"],
             },
             "sections": [
                 {
                     "title": "大模型技术进展",
                     "summary": "模型能力继续快速迭代。",
                     "items": [
-                        {
-                            "title": "OpenAI 发布新模型",
-                            "summary": "代码与推理能力增强。",
-                            "entry_id": "n1",
-                        }
+                            {
+                                "title": "OpenAI 发布新模型",
+                                "summary": "代码与推理能力增强。",
+                                "entry_id": entries[0]["id"],
+                            }
                     ],
                 }
             ],
