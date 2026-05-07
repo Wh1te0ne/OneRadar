@@ -7,6 +7,7 @@ import type {
   ApiBootstrapResponse,
   ApiCollection,
   ApiCreateFolderResponse,
+  ApiDailyNewsReportResponse,
   ApiFeedArticlePreviewResponse,
   ApiFeedPreviewResponse,
   ApiFeedRefreshResponse,
@@ -170,6 +171,17 @@ export function createApiClient(baseUrl: string) {
     refreshFeeds: () =>
       request<ApiFeedRefreshResponse>(baseUrl, "/api/feeds/refresh", {
         method: "POST"
+      }),
+    getDailyNews: (date?: string | null) => {
+      const params = new URLSearchParams();
+      if (date) params.set("date", date);
+      const suffix = params.toString() ? "?" + params.toString() : "";
+      return request<ApiDailyNewsReportResponse>(baseUrl, "/api/daily-news" + suffix);
+    },
+    generateDailyNews: (date: string, force = false) =>
+      request<ApiDailyNewsReportResponse>(baseUrl, "/api/daily-news/generate", {
+        method: "POST",
+        body: JSON.stringify({ date, force })
       }),
     deleteFeedSource: (url: string) => {
       const params = new URLSearchParams({ url });

@@ -115,6 +115,16 @@ export default function App() {
     window.setTimeout(() => setToast(null), 2600);
   }
 
+  useEffect(() => {
+    const handleToast = (event: Event) => {
+      const detail = (event as CustomEvent<NonNullable<ToastState>>).detail;
+      if (!detail?.message) return;
+      showToast(detail.message, detail.tone ?? "info");
+    };
+    window.addEventListener("oneradar:toast", handleToast);
+    return () => window.removeEventListener("oneradar:toast", handleToast);
+  }, []);
+
   function handleSearchChange(value: string) {
     const next = new URLSearchParams(searchParams);
     if (value.trim()) {

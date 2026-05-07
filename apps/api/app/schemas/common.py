@@ -32,6 +32,7 @@ class TaskStatus(str, Enum):
 class ProviderType(str, Enum):
     openai_compatible = "openai_compatible"
     doubao = "doubao"
+    deepseek = "deepseek"
     custom = "custom"
 
 

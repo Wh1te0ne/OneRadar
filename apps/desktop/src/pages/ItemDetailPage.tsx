@@ -4,6 +4,7 @@ import { ApiError, createApiClient } from "../api";
 import type { ApiHighlight, ApiItemDetail, ApiReadingState, ApiTaskEntry, ApiTranscriptSegment } from "../api";
 import { useAppState } from "../state/appState";
 import { displayFolderName } from "../utils/display";
+import { hasConfiguredLlmProvider } from "../utils/providers";
 
 function statusLabel(status?: ApiItemDetail["status"]) {
   switch (status) {
@@ -278,7 +279,7 @@ function splitPodcastDescription(value?: string | null) {
 export function ItemDetailPage() {
   const { itemId = "" } = useParams();
   const location = useLocation();
-  const { apiBaseUrl, folders, loadFolders, workspace } = useAppState();
+  const { apiBaseUrl, folders, loadFolders, loadProviders, providers, workspace } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const [item, setItem] = useState<ApiItemDetail | null>(null);
   const [liveReadingState, setLiveReadingState] = useState<ApiReadingState | null>(null);
@@ -1161,6 +1162,14 @@ export function ItemDetailPage() {
 
   async function handleGenerateSummary() {
     if (!item || generatingSummary) return;
+    if (!hasConfiguredLlmProvider(providers)) {
+      const nextProviders = await loadProviders();
+      if (!hasConfiguredLlmProvider(nextProviders)) {
+        setSummaryError("还没有配置当前使用的大语言模型。请先到设置里的模型服务添加一个 LLM，并设为当前使用。");
+        setSummaryMessage(null);
+        return;
+      }
+    }
     if (activeSummaryTask) {
       setSummaryMessage(`AI 生成中：${taskStatusLabel(activeSummaryTask.status)}，完成后会自动刷新。`);
       setSummaryError(null);

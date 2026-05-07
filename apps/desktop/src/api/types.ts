@@ -62,6 +62,44 @@ export type ApiFeedRefreshResponse = {
   errors: Record<string, string>;
 };
 
+export type ApiDailyNewsEntry = {
+  id: string;
+  title: string;
+  link: string;
+  summary?: string | null;
+  author?: string | null;
+  published_at?: string | null;
+  source_url: string;
+  source_title: string;
+};
+
+export type ApiDailyNewsItem = {
+  title: string;
+  summary: string;
+  entry_id?: string | null;
+  entry?: ApiDailyNewsEntry | null;
+};
+
+export type ApiDailyNewsSection = {
+  title: string;
+  summary: string;
+  items: ApiDailyNewsItem[];
+};
+
+export type ApiDailyNewsReportResponse = {
+  report_date: string;
+  status: "missing" | "ready" | "failed" | string;
+  headline?: string | null;
+  lead?: ApiDailyNewsItem | null;
+  sections: ApiDailyNewsSection[];
+  generated_at?: string | null;
+  provider_name?: string | null;
+  model_name?: string | null;
+  entry_count: number;
+  freshness_hours: number;
+  error_message?: string | null;
+};
+
 export type ApiHealth = {
   status: "ok" | "degraded" | "down";
   version: string;
@@ -117,7 +155,7 @@ export type ApiProvider = {
 
 export type ApiProviderPayload = {
   provider_name: string;
-  provider_type: "openai_compatible" | "doubao" | "custom";
+  provider_type: "openai_compatible" | "doubao" | "deepseek" | "custom";
   capability?: "llm" | "asr";
   base_url?: string | null;
   api_key?: string | null;

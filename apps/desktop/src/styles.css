@@ -928,20 +928,38 @@ button, input, select, textarea { font: inherit; }
 /* ─── Daily News ─────────────────────────────────────────────── */
 .daily-news-page {
   min-height: 100%;
-  padding: 30px 42px 56px;
+  padding: 30px clamp(24px, 5vw, 72px) 56px;
   background: var(--surface-lowest);
 }
 
 .daily-news-header {
+  position: relative;
+  width: min(1180px, 100%);
+  margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(68px, auto) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(68px, auto) minmax(260px, 1fr);
   align-items: center;
   gap: 22px;
-  padding-bottom: 26px;
+  padding: 30px 76px 26px;
   border-bottom: 1px solid rgba(var(--outline-rgb), 0.16);
 }
 
+.daily-news-corner-nav {
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+}
+
+.daily-news-corner-nav-prev {
+  left: 0;
+}
+
+.daily-news-corner-nav-next {
+  right: 0;
+}
+
 .daily-news-date-pill {
+  border: none;
   justify-self: start;
   padding: 8px 16px;
   border-radius: var(--radius-full);
@@ -950,16 +968,21 @@ button, input, select, textarea { font: inherit; }
   font-size: 20px;
   font-weight: 800;
   line-height: 1;
+  cursor: pointer;
 }
 
 .daily-news-title-block {
   min-width: 0;
+  display: grid;
+  gap: 6px;
 }
 
 .daily-news-actions {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .daily-news-refresh-meta {
@@ -973,12 +996,38 @@ button, input, select, textarea { font: inherit; }
 }
 
 .daily-news-feedback {
-  margin: 16px 0 0;
+  width: min(1180px, 100%);
+  margin: 16px auto 0;
 }
 
 .daily-news-content {
-  max-width: 940px;
+  width: min(1180px, 100%);
+  margin: 0 auto;
   padding-top: 26px;
+}
+
+.daily-news-date-input {
+  width: min(460px, 100%);
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.daily-news-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--outline);
+  font-size: 12.5px;
+  margin-bottom: 24px;
+}
+
+.daily-news-meta-line span + span::before {
+  content: "·";
+  margin-right: 10px;
+  color: var(--outline-v);
 }
 
 .daily-news-lead {
@@ -1015,6 +1064,11 @@ button, input, select, textarea { font: inherit; }
   text-align: left;
   cursor: pointer;
   font: inherit;
+}
+
+.daily-news-lead-title:disabled,
+.daily-news-entry-title:disabled {
+  cursor: default;
 }
 
 .daily-news-lead-title {
@@ -1107,7 +1161,8 @@ button, input, select, textarea { font: inherit; }
 }
 
 .daily-news-entry {
-  padding-left: 56px;
+  padding-left: clamp(28px, 5vw, 72px);
+  max-width: 1040px;
 }
 
 .daily-news-entry-title {
@@ -1135,6 +1190,8 @@ button, input, select, textarea { font: inherit; }
 }
 
 .daily-news-empty {
+  width: min(1180px, 100%);
+  margin: 0 auto;
   min-height: 360px;
   display: flex;
   flex-direction: column;
@@ -1159,6 +1216,26 @@ button, input, select, textarea { font: inherit; }
   line-height: 1.6;
 }
 
+.daily-news-regenerate-zone {
+  width: min(720px, 100%);
+  margin: 36px auto 0;
+  padding-top: 20px;
+  border-top: 1px solid rgba(var(--outline-rgb), 0.14);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.daily-news-regenerate-zone p {
+  max-width: 50ch;
+  margin: 0;
+  color: var(--outline);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
 @media (max-width: 900px) {
   .daily-news-page {
     padding: 22px 22px 40px;
@@ -1167,11 +1244,11 @@ button, input, select, textarea { font: inherit; }
   .daily-news-header {
     grid-template-columns: 1fr;
     align-items: start;
+    padding: 46px 0 22px;
   }
 
-  .daily-news-actions {
-    width: 100%;
-    justify-content: space-between;
+  .daily-news-corner-nav {
+    top: 0;
   }
 
   .daily-news-refresh-meta {

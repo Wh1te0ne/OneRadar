@@ -22,23 +22,57 @@ from app.schemas.items import (
     ItemReprocessResponse,
     ReadingStateUpdateRequest,
 )
-from app.services.folders_service import create_folder as create_folder_service
-from app.services.folders_service import delete_folder as delete_folder_service
-from app.services.folders_service import list_folders as list_folders_service
-from app.services.folders_service import move_item_to_folder as move_item_to_folder_service
-from app.services.folders_service import update_folder as update_folder_service
-from app.services.items_service import delete_item as delete_item_service
-from app.services.items_service import fetch_bilibili_cover as fetch_bilibili_cover_service
-from app.services.items_service import generate_item_summary as generate_item_summary_service
-from app.services.items_service import get_item as get_item_service
-from app.services.items_service import import_item as import_item_service
-from app.services.items_service import list_deleted_items as list_deleted_items_service
-from app.services.items_service import list_items as list_items_service
-from app.services.items_service import purge_item as purge_item_service
-from app.services.items_service import preview_bilibili_item as preview_bilibili_item_service
-from app.services.items_service import restore_item as restore_item_service
-from app.services.items_service import reprocess_item as reprocess_item_service
-from app.services.items_service import update_reading_state as update_reading_state_service
+from app.services.folders_service import (
+    create_folder as create_folder_service,
+)
+from app.services.folders_service import (
+    delete_folder as delete_folder_service,
+)
+from app.services.folders_service import (
+    list_folders as list_folders_service,
+)
+from app.services.folders_service import (
+    move_item_to_folder as move_item_to_folder_service,
+)
+from app.services.folders_service import (
+    update_folder as update_folder_service,
+)
+from app.services.items_service import (
+    delete_item as delete_item_service,
+)
+from app.services.items_service import (
+    fetch_bilibili_cover as fetch_bilibili_cover_service,
+)
+from app.services.items_service import (
+    generate_item_summary as generate_item_summary_service,
+)
+from app.services.items_service import (
+    get_item as get_item_service,
+)
+from app.services.items_service import (
+    import_item as import_item_service,
+)
+from app.services.items_service import (
+    list_deleted_items as list_deleted_items_service,
+)
+from app.services.items_service import (
+    list_items as list_items_service,
+)
+from app.services.items_service import (
+    preview_bilibili_item as preview_bilibili_item_service,
+)
+from app.services.items_service import (
+    purge_item as purge_item_service,
+)
+from app.services.items_service import (
+    reprocess_item as reprocess_item_service,
+)
+from app.services.items_service import (
+    restore_item as restore_item_service,
+)
+from app.services.items_service import (
+    update_reading_state as update_reading_state_service,
+)
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -180,6 +214,8 @@ def reprocess_item(
 def generate_item_summary(item_id: str) -> ItemReprocessResponse:
     try:
         return generate_item_summary_service(item_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

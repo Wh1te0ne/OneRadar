@@ -1,324 +1,367 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { createApiClient } from "../api";
-import type { ApiFeedPreviewItem, ApiFeedStateResponse } from "../api/types";
+import { ApiError, createApiClient } from "../api";
+import type { ApiDailyNewsEntry, ApiDailyNewsItem, ApiDailyNewsReportResponse } from "../api/types";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useAppState } from "../state/appState";
+import { hasConfiguredLlmProvider } from "../utils/providers";
 
-const DAILY_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const DAILY_FRESH_HOURS = 48;
-const MAX_ITEMS_PER_SECTION = 4;
+const DAILY_NEWS_GENERATION_KEY = "oneradar.daily-news.generation";
+const DAILY_NEWS_GENERATION_TTL_MS = 12 * 60 * 1000;
 
-type DailyEntry = ApiFeedPreviewItem & {
-  sourceUrl: string;
-  sourceTitle: string;
-};
-
-type DailySection = {
-  id: string;
-  title: string;
-  marker: string;
-  description: string;
-  entries: DailyEntry[];
-};
-
-const SECTION_DEFINITIONS = [
-  {
-    id: "models",
-    title: "大模型技术进展",
-    marker: "AI",
-    description: "模型、训练、推理与多模态能力的最新变化。",
-    keywords: ["ai", "artificial intelligence", "llm", "model", "gpt", "deepseek", "claude", "gemini", "openai", "mistral", "llama", "大模型", "模型", "推理", "多模态", "智能体", "agent"],
-  },
-  {
-    id: "products",
-    title: "产品与公司动态",
-    marker: "Biz",
-    description: "发布、融资、商业化和平台策略相关消息。",
-    keywords: ["launch", "release", "product", "startup", "funding", "revenue", "market", "company", "发布", "上线", "产品", "公司", "融资", "商业化", "市场"],
-  },
-  {
-    id: "developer",
-    title: "开发者与开源",
-    marker: "Dev",
-    description: "框架、工具链、开源项目和工程实践更新。",
-    keywords: ["github", "open source", "developer", "api", "sdk", "framework", "python", "rust", "javascript", "开源", "开发者", "框架", "工具", "代码", "接口"],
-  },
-  {
-    id: "industry",
-    title: "行业与研究",
-    marker: "R&D",
-    description: "研究论文、监管、算力和行业趋势。",
-    keywords: ["research", "paper", "regulation", "policy", "chip", "gpu", "nvidia", "研究", "论文", "监管", "政策", "芯片", "算力", "行业"],
-  },
-] as const;
-
-function parseTime(value?: string | null) {
-  if (!value) return 0;
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : 0;
+function todayDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function formatShortDate(value?: string | null) {
-  const time = parseTime(value);
-  if (!time) return "未知时间";
-  return new Date(time).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+function shiftDate(value: string, deltaDays: number) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return todayDate();
+  date.setDate(date.getDate() + deltaDays);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function formatRefreshTime(value?: string | null) {
-  const time = parseTime(value);
-  if (!time) return "还没有刷新记录";
-  return new Date(time).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+function displayDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
 }
 
-function isFresh(value?: string | null) {
-  const time = parseTime(value);
-  if (!time) return false;
-  return Date.now() - time <= DAILY_FRESH_HOURS * 60 * 60 * 1000;
+function displayGeneratedAt(value?: string | null) {
+  if (!value) return "尚未生成";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function truncateText(value: string | null | undefined, maxLength: number) {
-  const text = (value ?? "").replace(/\s+/g, " ").trim();
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 1)}…`;
+function displayPublishedAt(value?: string | null) {
+  if (!value) return "未知时间";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function entryText(entry: DailyEntry) {
-  return [entry.title, entry.summary ?? "", entry.author ?? "", entry.tags.join(" ")].join(" ").toLowerCase();
-}
-
-function sectionForEntry(entry: DailyEntry) {
-  const haystack = entryText(entry);
-  return SECTION_DEFINITIONS.find((section) => section.keywords.some((keyword) => haystack.includes(keyword))) ?? null;
-}
-
-function feedArticlePreviewPath(item: DailyEntry) {
+function feedArticlePreviewPath(entry: ApiDailyNewsEntry) {
   const params = new URLSearchParams({
-    url: item.link,
-    title: item.title,
-    source_title: item.sourceTitle,
+    url: entry.link,
+    title: entry.title,
+    source_title: entry.source_title,
   });
-  if (item.author) params.set("author", item.author);
-  if (item.published_at) params.set("published_at", item.published_at);
-  if (item.summary) params.set("summary", item.summary.slice(0, 600));
-  if (item.is_saved) params.set("is_saved", "1");
-  if (item.saved_item_id) params.set("saved_item_id", item.saved_item_id);
-  if (item.saved_uid) params.set("saved_uid", item.saved_uid);
+  if (entry.author) params.set("author", entry.author);
+  if (entry.published_at) params.set("published_at", entry.published_at);
+  if (entry.summary) params.set("summary", entry.summary.slice(0, 600));
   return "/feed/preview?" + params.toString();
 }
 
-function sourceFeedPath(sourceUrl: string) {
-  const params = new URLSearchParams({ source: sourceUrl });
-  return "/feed?" + params.toString();
+function sourceFeedPath(entry: ApiDailyNewsEntry) {
+  return "/feed?" + new URLSearchParams({ source: entry.source_url }).toString();
 }
 
-function entriesFromState(state: ApiFeedStateResponse) {
-  return Object.values(state.feeds)
-    .flatMap((feed) =>
-      feed.items.map((item) => ({
-        ...item,
-        sourceUrl: feed.source_url,
-        sourceTitle: feed.site_title,
-      }))
-    )
-    .filter((entry) => isFresh(entry.published_at))
-    .sort((a, b) => parseTime(b.published_at) - parseTime(a.published_at));
+function itemKey(item: ApiDailyNewsItem, fallback: string) {
+  return `${item.entry_id ?? item.entry?.id ?? fallback}:${item.title}`;
+}
+
+type PendingGeneration = {
+  date: string;
+  startedAt: string;
+  force: boolean;
+};
+
+function readPendingGeneration(): PendingGeneration | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DAILY_NEWS_GENERATION_KEY) || "null") as PendingGeneration | null;
+    if (!parsed?.date || !parsed.startedAt) return null;
+    if (Date.now() - new Date(parsed.startedAt).getTime() > DAILY_NEWS_GENERATION_TTL_MS) {
+      localStorage.removeItem(DAILY_NEWS_GENERATION_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    localStorage.removeItem(DAILY_NEWS_GENERATION_KEY);
+    return null;
+  }
+}
+
+function writePendingGeneration(pending: PendingGeneration) {
+  localStorage.setItem(DAILY_NEWS_GENERATION_KEY, JSON.stringify(pending));
+}
+
+function clearPendingGeneration(date?: string) {
+  const pending = readPendingGeneration();
+  if (!pending || (date && pending.date !== date)) return;
+  localStorage.removeItem(DAILY_NEWS_GENERATION_KEY);
+}
+
+function isFreshGeneratedReport(report: ApiDailyNewsReportResponse | null, pending: PendingGeneration | null) {
+  if (!report || report.status !== "ready" || !pending || report.report_date !== pending.date || !report.generated_at) return false;
+  return new Date(report.generated_at).getTime() >= new Date(pending.startedAt).getTime() - 2000;
 }
 
 export function DailyNewsPage() {
-  const { apiBaseUrl } = useAppState();
+  const { apiBaseUrl, loadProviders, providers } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedDate = searchParams.get("date") || todayDate();
 
-  const [feedState, setFeedState] = useState<ApiFeedStateResponse | null>(null);
+  const [report, setReport] = useState<ApiDailyNewsReportResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [pendingGeneration, setPendingGeneration] = useState<PendingGeneration | null>(() => readPendingGeneration());
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<string | null>(null);
 
-  const keyword = searchParams.get("q")?.trim().toLowerCase() ?? "";
-
-  async function loadState(options?: { refresh?: boolean; silent?: boolean }) {
-    if (options?.refresh) {
-      setRefreshing(true);
-    } else if (!options?.silent) {
-      setLoading(true);
+  function setDate(nextDate: string) {
+    const next = new URLSearchParams(searchParams);
+    if (nextDate === todayDate()) {
+      next.delete("date");
+    } else {
+      next.set("date", nextDate);
     }
+    setSearchParams(next);
+  }
+
+  async function loadReport(date: string, options?: { silent?: boolean }) {
+    if (!options?.silent) setLoading(true);
     setError(null);
     try {
-      if (options?.refresh) {
-        await client.refreshFeeds();
-        setLastAutoRefreshAt(new Date().toISOString());
-      }
-      const next = await client.getFeedState();
-      setFeedState(next);
+      setReport(await client.getDailyNews(date));
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "每日新闻刷新失败");
+      setError(nextError instanceof Error ? nextError.message : "读取每日新闻失败");
+      setReport(null);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!options?.silent) setLoading(false);
     }
   }
 
+  async function startGenerateReport(force: boolean) {
+    if (!hasConfiguredLlmProvider(providers)) {
+      const nextProviders = await loadProviders();
+      if (!hasConfiguredLlmProvider(nextProviders)) {
+        setError("还没有配置当前使用的大语言模型。请先到设置里的模型服务添加一个 LLM，并设为当前使用。");
+        return;
+      }
+    }
+    const pending = { date: selectedDate, startedAt: new Date().toISOString(), force };
+    writePendingGeneration(pending);
+    setPendingGeneration(pending);
+    setGenerating(true);
+    setError(null);
+    try {
+      const nextReport = await client.generateDailyNews(selectedDate, force);
+      setReport(nextReport);
+      clearPendingGeneration(selectedDate);
+      setPendingGeneration(null);
+    } catch (nextError) {
+      if (nextError instanceof ApiError && nextError.status === 504) {
+        setError("模型生成耗时较长，后台仍在处理；回到本页后会继续显示生成状态。");
+        window.setTimeout(() => {
+          void loadReport(selectedDate, { silent: true });
+        }, 1800);
+      } else {
+        clearPendingGeneration(selectedDate);
+        setPendingGeneration(null);
+        setError(nextError instanceof Error ? nextError.message : "生成每日新闻失败");
+      }
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  function generateReport(force: boolean) {
+    if (force && report?.status === "ready") {
+      setConfirmRegenerate(true);
+      return;
+    }
+    void startGenerateReport(force);
+  }
+
   useEffect(() => {
-    void loadState();
+    void loadReport(selectedDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, selectedDate]);
+
+  useEffect(() => {
+    const pending = readPendingGeneration();
+    setPendingGeneration(pending);
+    setGenerating(Boolean(pending && pending.date === selectedDate));
+  }, [selectedDate]);
+
+  useEffect(() => {
+    if (!pendingGeneration || pendingGeneration.date !== selectedDate) return;
+    if (isFreshGeneratedReport(report, pendingGeneration)) {
+      clearPendingGeneration(selectedDate);
+      setPendingGeneration(null);
+      setGenerating(false);
+      return;
+    }
     const timer = window.setInterval(() => {
-      void loadState({ refresh: true, silent: true });
-    }, DAILY_REFRESH_INTERVAL_MS);
+      void loadReport(selectedDate, { silent: true });
+    }, 3500);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client]);
+  }, [pendingGeneration, report, selectedDate]);
 
-  const allFreshEntries = useMemo(() => entriesFromState(feedState ?? { sources: [], feeds: {}, read_entries: [] }), [feedState]);
+  useEffect(() => {
+    if (!providers.length) void loadProviders();
+  }, [loadProviders, providers.length]);
 
-  const freshEntries = useMemo(() => {
-    if (!keyword) return allFreshEntries;
-    return allFreshEntries.filter((entry) => entryText(entry).includes(keyword));
-  }, [allFreshEntries, keyword]);
+  const filteredSections = useMemo(() => {
+    const keyword = (searchParams.get("q") || "").trim().toLowerCase();
+    const sections = report?.sections ?? [];
+    if (!keyword) return sections;
+    return sections
+      .map((section) => ({
+        ...section,
+        items: section.items.filter((item) => [item.title, item.summary, item.entry?.source_title ?? ""].join(" ").toLowerCase().includes(keyword)),
+      }))
+      .filter((section) => section.items.length > 0 || section.title.toLowerCase().includes(keyword) || section.summary.toLowerCase().includes(keyword));
+  }, [report, searchParams]);
 
-  const sections = useMemo<DailySection[]>(() => {
-    const grouped = new Map<string, DailyEntry[]>();
-    SECTION_DEFINITIONS.forEach((section) => grouped.set(section.id, []));
-    const other: DailyEntry[] = [];
-
-    freshEntries.forEach((entry) => {
-      const section = sectionForEntry(entry);
-      if (section) {
-        grouped.get(section.id)?.push(entry);
-      } else {
-        other.push(entry);
-      }
-    });
-
-    const baseSections = SECTION_DEFINITIONS.map((section) => ({
-      id: section.id,
-      title: section.title,
-      marker: section.marker,
-      description: section.description,
-      entries: (grouped.get(section.id) ?? []).slice(0, MAX_ITEMS_PER_SECTION),
-    })).filter((section) => section.entries.length > 0);
-
-    if (other.length > 0) {
-      baseSections.push({
-        id: "brief",
-        title: "今日速览",
-        marker: "News",
-        description: "暂未归类但仍在新鲜度窗口内的订阅更新。",
-        entries: other.slice(0, MAX_ITEMS_PER_SECTION),
-      });
-    }
-    return baseSections;
-  }, [freshEntries]);
-
-  const leadEntry = freshEntries[0] ?? null;
-  const sourceCount = feedState?.sources.length ?? 0;
-  const failedSources = feedState?.sources.filter((source) => source.last_refresh_status === "failed") ?? [];
-  const latestRefresh = feedState?.sources
-    .map((source) => source.last_refreshed_at ?? source.last_loaded_at)
-    .sort((a, b) => parseTime(b) - parseTime(a))[0] ?? lastAutoRefreshAt;
+  const ready = report?.status === "ready";
+  const isGeneratingSelectedDate = Boolean((generating || pendingGeneration) && pendingGeneration?.date === selectedDate);
 
   return (
     <div className="daily-news-page">
       <header className="daily-news-header">
-        <div className="daily-news-date-pill">{new Date().toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })}</div>
+        <button className="btn btn-ghost btn-sm daily-news-corner-nav daily-news-corner-nav-prev" type="button" onClick={() => setDate(shiftDate(selectedDate, -1))}>
+          <span className="icon icon-sm">chevron_left</span>
+          前一天
+        </button>
+        <button className="btn btn-ghost btn-sm daily-news-corner-nav daily-news-corner-nav-next" type="button" onClick={() => setDate(shiftDate(selectedDate, 1))}>
+          后一天
+          <span className="icon icon-sm">chevron_right</span>
+        </button>
+        <button type="button" className="daily-news-date-pill" onClick={() => setDate(todayDate())} title="回到今天">
+          {displayDate(selectedDate)}
+        </button>
         <div className="daily-news-title-block">
           <p className="page-eyebrow">Daily Brief</p>
           <h2 className="page-title">每日新闻</h2>
-          <p className="page-lead">聚合订阅源中最近 {DAILY_FRESH_HOURS} 小时的更新，按主题做轻量整理。</p>
-        </div>
-        <div className="daily-news-actions">
-          <div className="daily-news-refresh-meta">
-            <span>{sourceCount} 个订阅源</span>
-            <span>最近刷新 {formatRefreshTime(latestRefresh)}</span>
-          </div>
-          <button className="btn btn-primary btn-sm" type="button" onClick={() => void loadState({ refresh: true })} disabled={refreshing || loading}>
-            <span className="icon icon-sm">{refreshing ? "sync" : "refresh"}</span>
-            {refreshing ? "刷新中…" : "主动刷新"}
-          </button>
+          <p className="page-lead">
+            每天 10:00 默认生成一份日报；重新生成会按最新订阅源内容覆盖当天版本。
+          </p>
+          <input className="input daily-news-date-input" type="date" value={selectedDate} onChange={(event) => setDate(event.target.value)} />
         </div>
       </header>
 
-      {error && <div className="feedback feedback-error daily-news-feedback">{error}</div>}
-      {failedSources.length > 0 && (
-        <div className="feedback feedback-error daily-news-feedback">
-          {failedSources.length} 个订阅源刷新失败，日报继续使用可用缓存。
+      {isGeneratingSelectedDate && (
+        <div className="feedback feedback-info daily-news-feedback">
+          正在生成 {selectedDate} 的每日新闻。可以切换到其他页面，回来后会继续显示状态并自动读取结果。
         </div>
       )}
+      {error && <div className="feedback feedback-error daily-news-feedback">{error}</div>}
 
       {loading ? (
         <div className="daily-news-empty">
           <span className="icon icon-lg">sync</span>
-          <h3>正在读取订阅源</h3>
+          <h3>正在读取日报</h3>
         </div>
-      ) : sourceCount === 0 ? (
+      ) : !ready ? (
         <div className="daily-news-empty">
-          <span className="icon icon-lg">rss_feed</span>
-          <h3>还没有订阅源</h3>
-          <p>先添加 RSS 订阅源后，每日新闻会自动从这些源里整理最近更新。</p>
-          <Link className="btn btn-secondary btn-sm" to="/feed">
-            <span className="icon icon-sm">add</span>
-            去添加订阅源
-          </Link>
-        </div>
-      ) : freshEntries.length === 0 ? (
-        <div className="daily-news-empty">
-          <span className="icon icon-lg">event_busy</span>
-          <h3>最近没有可进入日报的更新</h3>
-          <p>新鲜度过滤只保留最近 {DAILY_FRESH_HOURS} 小时内容，旧文章会留在订阅源页。</p>
-          <button className="btn btn-secondary btn-sm" type="button" onClick={() => void loadState({ refresh: true })} disabled={refreshing}>
-            <span className="icon icon-sm">refresh</span>
-            重新刷新
+          <span className="icon icon-lg">newspaper</span>
+          <h3>{selectedDate} 还没有日报</h3>
+          <p>点击生成后，会调用已配置的大语言模型，将当天订阅源新闻翻译、筛选并总结成一份固定结构日报。</p>
+          <button className="btn btn-primary btn-sm" type="button" disabled={isGeneratingSelectedDate} onClick={() => generateReport(false)}>
+            <span className="icon icon-sm">{isGeneratingSelectedDate ? "sync" : "auto_awesome"}</span>
+            {isGeneratingSelectedDate ? "生成中…" : "生成这一天"}
           </button>
         </div>
       ) : (
         <main className="daily-news-content">
-          {leadEntry && (
-            <section className="daily-news-lead">
-              <p className="daily-news-source-line">
-                <span className="daily-news-source-dot" />
-                {leadEntry.sourceTitle} · {formatShortDate(leadEntry.published_at)}
-              </p>
-              <button type="button" className="daily-news-lead-title" onClick={() => navigate(feedArticlePreviewPath(leadEntry))}>
-                {leadEntry.title}
-              </button>
-              <p>{truncateText(leadEntry.summary, 150) || "该订阅项没有提供摘要，点击后可进入预览阅读。"}</p>
-              <Link to={sourceFeedPath(leadEntry.sourceUrl)} className="daily-news-source-link">
+          <div className="daily-news-meta-line">
+            <span>{report?.entry_count ?? 0} 条候选新闻</span>
+            <span>生成于 {displayGeneratedAt(report?.generated_at)}</span>
+            {report?.model_name && <span>{report.provider_name ?? "模型"} · {report.model_name}</span>}
+          </div>
+
+          <section className="daily-news-lead">
+            <p className="daily-news-source-line">
+              <span className="daily-news-source-dot" />
+              {report?.lead?.entry ? `${report.lead.entry.source_title} · ${displayPublishedAt(report.lead.entry.published_at)}` : "今日重点"}
+            </p>
+            <button
+              type="button"
+              className="daily-news-lead-title"
+              onClick={() => report?.lead?.entry && navigate(feedArticlePreviewPath(report.lead.entry))}
+              disabled={!report?.lead?.entry}
+            >
+              {report?.lead?.title || report?.headline || "每日新闻"}
+            </button>
+            <p>{report?.lead?.summary || report?.headline}</p>
+            {report?.lead?.entry && (
+              <Link to={sourceFeedPath(report.lead.entry)} className="daily-news-source-link">
                 查看订阅源
                 <span className="icon icon-sm">chevron_right</span>
               </Link>
-            </section>
-          )}
+            )}
+          </section>
 
-          {sections.map((section) => (
-            <section className="daily-news-section" key={section.id}>
+          {filteredSections.map((section, sectionIndex) => (
+            <section className="daily-news-section" key={`${section.title}:${sectionIndex}`}>
               <div className="daily-news-section-heading">
-                <span>{section.marker}</span>
+                <span>{String(sectionIndex + 1).padStart(2, "0")}</span>
                 <div>
                   <h3>{section.title}</h3>
-                  <p>{section.description}</p>
+                  {section.summary && <p>{section.summary}</p>}
                 </div>
               </div>
 
               <div className="daily-news-entry-list">
-                {section.entries.map((entry) => (
-                  <article className="daily-news-entry" key={`${entry.sourceUrl}:${entry.id || entry.link}`}>
-                    <button type="button" className="daily-news-entry-title" onClick={() => navigate(feedArticlePreviewPath(entry))}>
-                      {entry.title}
+                {section.items.map((item, itemIndex) => (
+                  <article className="daily-news-entry" key={itemKey(item, `${sectionIndex}-${itemIndex}`)}>
+                    <button
+                      type="button"
+                      className="daily-news-entry-title"
+                      onClick={() => item.entry && navigate(feedArticlePreviewPath(item.entry))}
+                      disabled={!item.entry}
+                    >
+                      {item.title}
                     </button>
-                    <p>{truncateText(entry.summary, 132) || "该订阅项没有提供摘要。"}</p>
+                    <p>{item.summary}</p>
                     <div className="daily-news-entry-footer">
-                      <span>{entry.sourceTitle} · {formatShortDate(entry.published_at)}</span>
-                      <Link to={sourceFeedPath(entry.sourceUrl)}>
-                        查看订阅源
-                        <span className="icon icon-sm">chevron_right</span>
-                      </Link>
+                      <span>
+                        {item.entry ? `${item.entry.source_title} · ${displayPublishedAt(item.entry.published_at)}` : "模型生成条目"}
+                      </span>
+                      {item.entry && (
+                        <Link to={sourceFeedPath(item.entry)}>
+                          查看订阅源
+                          <span className="icon icon-sm">chevron_right</span>
+                        </Link>
+                      )}
                     </div>
                   </article>
                 ))}
               </div>
             </section>
           ))}
+          <section className="daily-news-regenerate-zone">
+            <button className="btn btn-secondary btn-sm" type="button" disabled={isGeneratingSelectedDate || loading} onClick={() => generateReport(true)}>
+              <span className="icon icon-sm">{isGeneratingSelectedDate ? "sync" : "auto_awesome"}</span>
+              {isGeneratingSelectedDate ? "重新生成中…" : "重新生成今日日报"}
+            </button>
+            <p>会按当前订阅源的最新缓存重新调用大语言模型，并覆盖这一天已有的日报。</p>
+          </section>
         </main>
+      )}
+      {confirmRegenerate && (
+        <ConfirmDialog
+          title="重新生成日报"
+          body="当前日期的日报会被重新生成并覆盖，只保留最新这一份。确定继续吗？"
+          confirmLabel="重新生成"
+          busy={isGeneratingSelectedDate}
+          onCancel={() => setConfirmRegenerate(false)}
+          onConfirm={() => {
+            setConfirmRegenerate(false);
+            void startGenerateReport(true);
+          }}
+        />
       )}
     </div>
   );

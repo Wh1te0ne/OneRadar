@@ -5,7 +5,7 @@ import { useAppState } from "../state/appState";
 import { displayFolderName } from "../utils/display";
 
 const DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
-const DOUBAO_CHAT_ENDPOINT = "ep-20260304161530-6ffr5";
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 
 const themeOptions = [
   { value: "system", label: "跟随系统", icon: "brightness_auto" },
@@ -13,7 +13,7 @@ const themeOptions = [
   { value: "dark", label: "深色", icon: "dark_mode" },
 ] as const;
 
-type ProviderKind = "doubao" | "openai_compatible" | "custom";
+type ProviderKind = "doubao" | "openai_compatible" | "deepseek" | "custom";
 type ProviderCapability = "llm" | "asr";
 
 type ProviderFormState = {
@@ -34,6 +34,7 @@ type ProviderFormState = {
 function providerTypeLabel(t: string) {
   switch (t) {
     case "doubao": return "豆包";
+    case "deepseek": return "DeepSeek";
     case "openai_compatible": return "OpenAI 兼容";
     case "custom": return "自定义";
     default: return "其他";
@@ -63,7 +64,7 @@ function emptyProviderForm(capability: ProviderCapability): ProviderFormState {
     provider_type: "doubao",
     base_url: capability === "llm" ? DOUBAO_BASE_URL : "",
     api_key: "",
-    chat_model: capability === "llm" ? DOUBAO_CHAT_ENDPOINT : "",
+    chat_model: "",
     transcription_model: capability === "asr" ? "volc.bigasr.auc_turbo" : "",
     transcription_app_id: "",
     transcription_access_token: "",
@@ -91,6 +92,19 @@ function providerToForm(provider: ApiProvider): ProviderFormState {
 }
 
 function applyProviderDefaults(form: ProviderFormState, providerType: ProviderKind): ProviderFormState {
+  if (providerType === "deepseek") {
+    return {
+      ...form,
+      provider_type: "deepseek",
+      provider_name:
+        form.provider_name && !["Doubao", "Doubao LLM", "DeepSeek", "DeepSeek LLM"].includes(form.provider_name)
+          ? form.provider_name
+          : "DeepSeek LLM",
+      base_url: form.capability === "llm" && (!form.base_url || form.base_url === DOUBAO_BASE_URL) ? DEEPSEEK_BASE_URL : form.base_url,
+      chat_model: form.capability === "llm" ? form.chat_model : "",
+      transcription_model: "",
+    };
+  }
   if (providerType !== "doubao") {
     return {
       ...form,
@@ -107,10 +121,22 @@ function applyProviderDefaults(form: ProviderFormState, providerType: ProviderKi
       form.provider_name && !["Doubao", "Doubao LLM", "Doubao ASR"].includes(form.provider_name)
         ? form.provider_name
         : form.capability === "llm" ? "Doubao LLM" : "Doubao ASR",
-    base_url: form.capability === "llm" ? (form.base_url || DOUBAO_BASE_URL) : "",
-    chat_model: form.capability === "llm" ? (form.chat_model || DOUBAO_CHAT_ENDPOINT) : "",
+    base_url: form.capability === "llm" && (!form.base_url || form.base_url === DEEPSEEK_BASE_URL) ? DOUBAO_BASE_URL : form.base_url,
+    chat_model: form.capability === "llm" ? form.chat_model : "",
     transcription_model: form.capability === "asr" ? (form.transcription_model || "volc.bigasr.auc_turbo") : "",
   };
+}
+
+function providerCredentialConfigured(provider: ApiProvider | undefined, capability: ProviderCapability, field: "api_key" | "access_token" | "secret_key") {
+  if (!provider) return false;
+  if (capability === "llm" && field === "api_key") return Boolean(provider.api_key_configured);
+  if (capability === "asr" && field === "access_token") return Boolean(provider.transcription_access_token_configured);
+  if (capability === "asr" && field === "secret_key") return Boolean(provider.transcription_secret_key_configured);
+  return false;
+}
+
+function showAppToast(message: string, tone: "success" | "error" | "info" = "info") {
+  window.dispatchEvent(new CustomEvent("oneradar:toast", { detail: { message, tone } }));
 }
 
 export function SettingsPage() {
@@ -125,7 +151,6 @@ export function SettingsPage() {
   const [asrForm, setAsrForm] = useState<ProviderFormState>(() => emptyProviderForm("asr"));
   const [editing, setEditing] = useState<ProviderCapability | null>(null);
   const [providerSaving, setProviderSaving] = useState(false);
-  const [providerMessage, setProviderMessage] = useState<string | null>(null);
   const [providerError, setProviderError] = useState<string | null>(null);
 
   const llmProviders = providers.filter((provider) => capabilityOf(provider) === "llm");
@@ -175,30 +200,71 @@ export function SettingsPage() {
   }
 
   async function saveProvider(form: ProviderFormState) {
+    const existingProvider = providers.find((provider) => provider.id === form.id);
+    const name = form.provider_name.trim() || (form.capability === "llm" ? "大语言模型" : "转写模型");
+    const baseUrl = form.base_url.trim();
+    const apiKey = form.api_key.trim();
+    const chatModel = form.chat_model.trim();
+    const transcriptionAppId = form.transcription_app_id.trim();
+    const transcriptionModel = form.transcription_model.trim();
+    const transcriptionAccessToken = form.transcription_access_token.trim();
+    const transcriptionSecretKey = form.transcription_secret_key.trim();
+
+    if (form.capability === "llm") {
+      if (!baseUrl) {
+        setProviderError("大语言模型需要填写 BaseURL。");
+        return;
+      }
+      if (!chatModel) {
+        setProviderError("大语言模型需要填写模型名或 Endpoint。");
+        return;
+      }
+      if (!apiKey && !providerCredentialConfigured(existingProvider, "llm", "api_key")) {
+        setProviderError("大语言模型需要填写 API Key。");
+        return;
+      }
+    } else {
+      if (!transcriptionAppId) {
+        setProviderError("ASR 模型需要填写 APP ID。");
+        return;
+      }
+      if (!transcriptionModel) {
+        setProviderError("ASR 模型需要填写资源 ID。");
+        return;
+      }
+      if (!transcriptionAccessToken && !providerCredentialConfigured(existingProvider, "asr", "access_token")) {
+        setProviderError("ASR 模型需要填写 Access Token。");
+        return;
+      }
+      if (!transcriptionSecretKey && !providerCredentialConfigured(existingProvider, "asr", "secret_key")) {
+        setProviderError("ASR 模型需要填写 Secret Key。");
+        return;
+      }
+    }
+
     setProviderSaving(true);
-    setProviderMessage(null);
     setProviderError(null);
     try {
       const payload = {
-        provider_name: form.provider_name.trim() || (form.capability === "llm" ? "大语言模型" : "转写模型"),
+        provider_name: name,
         provider_type: form.provider_type,
         capability: form.capability,
-        base_url: form.capability === "llm" ? form.base_url.trim() || null : null,
-        api_key: form.capability === "llm" ? form.api_key.trim() || null : null,
-        chat_model: form.capability === "llm" ? form.chat_model.trim() || null : null,
+        base_url: form.capability === "llm" ? baseUrl : null,
+        api_key: form.capability === "llm" ? apiKey || null : null,
+        chat_model: form.capability === "llm" ? chatModel : null,
         embedding_model: null,
-        transcription_model: form.capability === "asr" ? form.transcription_model.trim() || null : null,
-        transcription_app_id: form.capability === "asr" ? form.transcription_app_id.trim() || null : null,
-        transcription_access_token: form.capability === "asr" ? form.transcription_access_token.trim() || null : null,
-        transcription_secret_key: form.capability === "asr" ? form.transcription_secret_key.trim() || null : null,
-        is_enabled: form.is_enabled,
+        transcription_model: form.capability === "asr" ? transcriptionModel : null,
+        transcription_app_id: form.capability === "asr" ? transcriptionAppId : null,
+        transcription_access_token: form.capability === "asr" ? transcriptionAccessToken || null : null,
+        transcription_secret_key: form.capability === "asr" ? transcriptionSecretKey || null : null,
+        is_enabled: true,
       };
       await (form.id ? client.updateProvider(form.id, payload) : client.createProvider(payload));
       await loadProviders();
       setEditing(null);
       setLlmForm(emptyProviderForm("llm"));
       setAsrForm(emptyProviderForm("asr"));
-      setProviderMessage(form.capability === "llm" ? "大语言模型已保存。" : "转写模型已保存。");
+      showAppToast(form.capability === "llm" ? "大语言模型已保存并设为当前使用。" : "转写模型已保存并设为当前使用。", "success");
     } catch (e) {
       setProviderError(e instanceof Error ? e.message : "保存模型失败");
     } finally {
@@ -208,14 +274,41 @@ export function SettingsPage() {
 
   async function deleteProvider(providerId: string) {
     setProviderSaving(true);
-    setProviderMessage(null);
     setProviderError(null);
     try {
       await client.deleteProvider(providerId);
       await loadProviders();
-      setProviderMessage("模型配置已删除。");
+      showAppToast("模型配置已删除。", "success");
     } catch (e) {
       setProviderError(e instanceof Error ? e.message : "删除模型失败");
+    } finally {
+      setProviderSaving(false);
+    }
+  }
+
+  async function activateProvider(provider: ApiProvider) {
+    const capability = capabilityOf(provider);
+    setProviderSaving(true);
+    setProviderError(null);
+    try {
+      await client.updateProvider(provider.id, {
+        provider_name: provider.provider_name,
+        provider_type: provider.provider_type as ProviderKind,
+        capability,
+        base_url: capability === "llm" ? provider.base_url ?? null : null,
+        api_key: null,
+        chat_model: capability === "llm" ? provider.chat_model ?? null : null,
+        embedding_model: null,
+        transcription_model: capability === "asr" ? provider.transcription_model ?? null : null,
+        transcription_app_id: capability === "asr" ? provider.transcription_app_id ?? null : null,
+        transcription_access_token: null,
+        transcription_secret_key: null,
+        is_enabled: true,
+      });
+      await loadProviders();
+      showAppToast(capability === "llm" ? "已切换当前大语言模型。" : "已切换当前转写模型。", "success");
+    } catch (e) {
+      setProviderError(e instanceof Error ? e.message : "切换当前模型失败");
     } finally {
       setProviderSaving(false);
     }
@@ -224,9 +317,6 @@ export function SettingsPage() {
   function providerRow(provider: ApiProvider) {
     const capability = capabilityOf(provider);
     const isAsr = capability === "asr";
-    const configured = isAsr
-      ? Boolean(provider.transcription_app_id && provider.transcription_model && provider.transcription_access_token_configured && provider.transcription_secret_key_configured)
-      : Boolean(provider.api_key_configured && provider.chat_model);
     return (
       <div key={provider.id} className="provider-row">
         <div className="provider-icon" style={{ background: provider.is_enabled ? "rgba(var(--primary-rgb),0.1)" : "var(--surface-high)" }}>
@@ -241,8 +331,12 @@ export function SettingsPage() {
           </div>
         </div>
         <div className="provider-row-actions">
-          <span className={`chip ${provider.is_enabled ? "chip-success" : "chip-neutral"}`}>{provider.is_enabled ? "启用" : "停用"}</span>
-          <span className={`chip ${configured ? "chip-neutral" : "chip-error"}`}>{configured ? "已配置" : "待配置"}</span>
+          <span className={`chip ${provider.is_enabled ? "chip-success" : "chip-neutral"}`}>{provider.is_enabled ? "当前使用" : "可选"}</span>
+          {!provider.is_enabled && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void activateProvider(provider)} disabled={providerSaving}>
+              设为当前使用
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-ghost btn-sm"
@@ -251,7 +345,6 @@ export function SettingsPage() {
               if (capability === "llm") setLlmForm(form);
               else setAsrForm(form);
               setEditing(capability);
-              setProviderMessage(null);
               setProviderError(null);
             }}
           >
@@ -288,6 +381,7 @@ export function SettingsPage() {
             onChange={(event) => setForm((current) => applyProviderDefaults(current, event.target.value as ProviderKind))}
           >
             <option value="doubao">豆包</option>
+            <option value="deepseek" disabled={isAsr}>DeepSeek</option>
             <option value="openai_compatible" disabled={isAsr}>OpenAI 兼容</option>
             <option value="custom" disabled={isAsr}>自定义</option>
           </select>
@@ -308,7 +402,7 @@ export function SettingsPage() {
                 className="input"
                 value={form.base_url}
                 onChange={(event) => setForm((current) => ({ ...current, base_url: event.target.value }))}
-                placeholder={form.provider_type === "doubao" ? DOUBAO_BASE_URL : "https://example.com/v1"}
+                placeholder={form.provider_type === "doubao" ? DOUBAO_BASE_URL : form.provider_type === "deepseek" ? DEEPSEEK_BASE_URL : "https://example.com/v1"}
               />
             </label>
             <label>
@@ -327,7 +421,7 @@ export function SettingsPage() {
                 className="input"
                 value={form.chat_model}
                 onChange={(event) => setForm((current) => ({ ...current, chat_model: event.target.value }))}
-                placeholder={form.provider_type === "doubao" ? DOUBAO_CHAT_ENDPOINT : "模型名"}
+                placeholder={form.provider_type === "doubao" ? "填入你自己的 Endpoint，例如 ep-..." : form.provider_type === "deepseek" ? "deepseek-chat" : "模型名"}
               />
             </label>
           </>
@@ -374,14 +468,7 @@ export function SettingsPage() {
             </label>
           </>
         )}
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={form.is_enabled}
-            onChange={(event) => setForm((current) => ({ ...current, is_enabled: event.target.checked }))}
-          />
-          <span>启用这个模型</span>
-        </label>
+        <p className="text-caption" style={{ margin: 0 }}>保存后会设为当前使用，同类模型只会保留一个当前使用。</p>
         <div className="btn-group">
           <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveProvider(form)} disabled={providerSaving}>
             <span className="icon icon-sm">{form.id ? "save" : "add"}</span>
@@ -492,10 +579,9 @@ export function SettingsPage() {
             {editing === "asr" && providerEditor(asrForm, setAsrForm)}
           </div>
 
-          {(providerMessage || providerError) && (
+          {providerError && (
             <div className="stack-sm">
-              {providerMessage && <div className="feedback feedback-success">{providerMessage}</div>}
-              {providerError && <div className="feedback feedback-error">{providerError}</div>}
+              <div className="feedback feedback-error">{providerError}</div>
             </div>
           )}
 

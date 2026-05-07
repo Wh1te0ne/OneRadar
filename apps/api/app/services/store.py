@@ -25,6 +25,7 @@ class InMemoryStore:
     integrations: dict[str, dict[str, object]] = field(default_factory=dict)
     podcast_subscriptions: dict[str, dict[str, object]] = field(default_factory=dict)
     collections: dict[str, dict[str, object]] = field(default_factory=dict)
+    daily_reports: dict[str, dict[str, object]] = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock)
 
 

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiPodcastEpisode, ApiPodcastSearchItem, ApiPodcastSubscription } from "../api/types";
 import { useAppState } from "../state/appState";
+import { hasConfiguredAsrProvider } from "../utils/providers";
 
 type PodcastTab = "subscribed" | "search";
 
@@ -41,7 +42,7 @@ function hostOf(url?: string | null) {
 }
 
 export function PodcastsPage() {
-  const { apiBaseUrl } = useAppState();
+  const { apiBaseUrl, loadProviders, providers } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const selectedFeedRequestRef = useRef(0);
 
@@ -179,6 +180,13 @@ export function PodcastsPage() {
   }
 
   async function handleImportEpisode(episode: ApiPodcastEpisode) {
+    if (!hasConfiguredAsrProvider(providers)) {
+      const nextProviders = await loadProviders();
+      if (!hasConfiguredAsrProvider(nextProviders)) {
+        setError("还没有配置当前使用的 ASR 转写模型。请先到设置里的模型服务添加转写模型，并设为当前使用。");
+        return;
+      }
+    }
     setImportingEpisodeId(episode.id);
     setError(null);
     setFeedback(null);

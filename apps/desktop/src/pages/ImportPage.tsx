@@ -11,6 +11,7 @@ import type {
   ApiTaskEntry
 } from "../api";
 import { useAppState } from "../state/appState";
+import { hasConfiguredAsrProvider } from "../utils/providers";
 import { displayFolderName } from "../utils/display";
 
 type QrcodeStatus = ApiBilibiliQrcodePollResponse["state"] | "idle" | "creating";
@@ -69,7 +70,7 @@ function bilibiliCoverSrc(baseUrl: string, coverUrl: string) {
 }
 
 export function ImportPage() {
-  const { apiBaseUrl, loadFolders } = useAppState();
+  const { apiBaseUrl, loadFolders, loadProviders, providers } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
 
   const [importUrl, setImportUrl] = useState("");
@@ -195,6 +196,13 @@ export function ImportPage() {
 
   async function importPreview(allowDuplicate = false) {
     if (!preview) return;
+    if (!hasConfiguredAsrProvider(providers)) {
+      const nextProviders = await loadProviders();
+      if (!hasConfiguredAsrProvider(nextProviders)) {
+        setImportError("还没有配置当前使用的 ASR 转写模型。请先到设置里的模型服务添加转写模型，并设为当前使用。");
+        return null;
+      }
+    }
     setConfirmBusy(true); setImportError(null); setImportResult(null);
     try {
       const r = await client.importItem(preview.normalized_url, "bilibili_video", { allowDuplicate });

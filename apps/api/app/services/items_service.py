@@ -54,6 +54,7 @@ from app.services.folders_service import (
     normalize_folder_identifier,
     resolve_folder,
 )
+from app.services.provider_registry import ProviderCapability, resolve_provider_config
 from app.services.store import STORE, now_utc, seed_store
 from app.services.url_safety import validate_public_http_url
 
@@ -1871,6 +1872,15 @@ def reprocess_item(item_id: str) -> ItemReprocessResponse:
         return ItemReprocessResponse(item_id=item_id, task_id=task_id, status="queued")
 
 
+def _ensure_summary_provider_configured() -> None:
+    try:
+        provider = resolve_provider_config(None, ProviderCapability.summarization)
+    except ValueError as exc:
+        raise RuntimeError("AI 摘要需要先配置当前使用的大语言模型。") from exc
+    if not provider.base_url or not provider.api_key or not provider.model_name:
+        raise RuntimeError("AI 摘要需要先完整配置当前使用的大语言模型。")
+
+
 def generate_item_summary(item_id: str) -> ItemReprocessResponse:
     try:
         with SessionLocal() as session:
@@ -1878,6 +1888,7 @@ def generate_item_summary(item_id: str) -> ItemReprocessResponse:
             item = session.get(ContentItem, UUID(item_id))
             if item is None:
                 raise ValueError("item not found")
+            _ensure_summary_provider_configured()
             existing_task = session.execute(
                 select(ProcessingTask)
                 .where(
@@ -1924,6 +1935,7 @@ def generate_item_summary(item_id: str) -> ItemReprocessResponse:
         with STORE.lock:
             if item_id not in STORE.items:
                 raise ValueError("item not found") from exc
+            _ensure_summary_provider_configured()
             for task in STORE.tasks.values():
                 if (
                     str(task.get("item_id")) == item_id

@@ -44,6 +44,7 @@ class User(TimestampMixin, Base):
     integration_settings: Mapped[list['IntegrationSetting']] = relationship(back_populates='user')
     feed_sources: Mapped[list['FeedSource']] = relationship(back_populates='user')
     feed_entry_read_states: Mapped[list['FeedEntryReadState']] = relationship(back_populates='user')
+    daily_news_reports: Mapped[list['DailyNewsReport']] = relationship(back_populates='user')
 
 
 class Folder(TimestampMixin, Base):
@@ -155,6 +156,34 @@ class FeedEntryReadState(TimestampMixin, Base):
 
     user: Mapped[User] = relationship(back_populates='feed_entry_read_states')
     entry: Mapped[FeedEntry] = relationship(back_populates='read_states')
+
+
+class DailyNewsReport(TimestampMixin, Base):
+    __tablename__ = 'daily_news_reports'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'report_date', name='uq_daily_news_reports_user_date'),
+        Index('ix_daily_news_reports_user_date', 'user_id', 'report_date'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    report_date: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default='ready')
+    headline: Mapped[str] = mapped_column(Text, nullable=False)
+    lead: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    sections: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    source_entries: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    raw_model_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    entry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    freshness_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    user: Mapped[User] = relationship(back_populates='daily_news_reports')
 
 
 class ContentItem(TimestampMixin, Base):

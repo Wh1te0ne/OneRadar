@@ -25,6 +25,7 @@ from app.services.store import STORE, seed_store
 def list_presets() -> list[ProviderPresetEntry]:
     return [
         ProviderPresetEntry(provider_type=ProviderType.doubao, provider_name="Doubao"),
+        ProviderPresetEntry(provider_type=ProviderType.deepseek, provider_name="DeepSeek"),
         ProviderPresetEntry(
             provider_type=ProviderType.openai_compatible,
             provider_name="OpenAI Compatible",
@@ -133,6 +134,91 @@ def _provider_is_configured(
     return bool(api_key_configured and chat_model)
 
 
+def _validate_provider_payload(
+    payload: ProviderCreateRequest | ProviderUpdateRequest,
+    *,
+    existing_provider: ModelProvider | None = None,
+    existing_record: dict[str, object] | None = None,
+) -> None:
+    config = _provider_config_from_payload(
+        payload,
+        existing_provider.config if existing_provider is not None else (
+            existing_record.get("config") if existing_record else None
+        ),
+    )
+    capability = _provider_capability(
+        config=config,
+        chat_model=payload.chat_model,
+        transcription_model=payload.transcription_model,
+    )
+    if capability == "asr":
+        transcription = dict(config.get("transcription") or {})
+        has_access_token = bool(
+            payload.transcription_access_token
+            or transcription.get("access_token_encrypted")
+        )
+        has_secret_key = bool(
+            payload.transcription_secret_key
+            or transcription.get("secret_key_encrypted")
+        )
+        if not payload.transcription_app_id:
+            raise ValueError("ASR 模型需要填写 APP ID")
+        if not payload.transcription_model:
+            raise ValueError("ASR 模型需要填写资源 ID")
+        if not has_access_token:
+            raise ValueError("ASR 模型需要填写 Access Token")
+        if not has_secret_key:
+            raise ValueError("ASR 模型需要填写 Secret Key")
+        return
+
+    has_api_key = bool(
+        payload.api_key
+        or (existing_provider.api_key_encrypted if existing_provider is not None else None)
+        or (existing_record.get("api_key_encrypted") if existing_record else None)
+    )
+    if not payload.base_url:
+        raise ValueError("大语言模型需要填写 BaseURL")
+    if not payload.chat_model:
+        raise ValueError("大语言模型需要填写模型名或 Endpoint")
+    if not has_api_key:
+        raise ValueError("大语言模型需要填写 API Key")
+
+
+def _disable_other_enabled_providers(
+    session,
+    *,
+    user_id,
+    provider_id: str | None,
+    capability: str,
+) -> None:
+    providers = session.execute(
+        select(ModelProvider).where(ModelProvider.user_id == user_id)
+    ).scalars().all()
+    for candidate in providers:
+        if provider_id and str(candidate.id) == provider_id:
+            continue
+        candidate_capability = _provider_capability(
+            config=dict(candidate.config or {}),
+            chat_model=candidate.chat_model,
+            transcription_model=candidate.transcription_model,
+        )
+        if candidate_capability == capability:
+            candidate.is_enabled = False
+
+
+def _disable_other_enabled_records(provider_id: str, capability: str) -> None:
+    for candidate_id, candidate in STORE.providers.items():
+        if candidate_id == provider_id:
+            continue
+        candidate_capability = _provider_capability(
+            config=candidate.get("config") if isinstance(candidate.get("config"), dict) else {},
+            chat_model=candidate.get("chat_model"),
+            transcription_model=candidate.get("transcription_model"),
+        )
+        if candidate_capability == capability:
+            candidate["is_enabled"] = False
+
+
 def _to_provider_entry_from_record(record: dict[str, object]) -> ProviderEntry:
     config = record.get("config") if isinstance(record.get("config"), dict) else {}
     transcription_config = (
@@ -233,9 +319,22 @@ def list_providers() -> ProviderListResponse:
 
 
 def create_provider(payload: ProviderCreateRequest) -> ProviderEntry:
+    _validate_provider_payload(payload)
     try:
         with SessionLocal() as session:
             user = get_primary_user(session)
+            capability = _provider_capability(
+                config=_provider_config_from_payload(payload),
+                chat_model=payload.chat_model,
+                transcription_model=payload.transcription_model,
+            )
+            if payload.is_enabled:
+                _disable_other_enabled_providers(
+                    session,
+                    user_id=user.id,
+                    provider_id=None,
+                    capability=capability,
+                )
             provider = ModelProvider(
                 user_id=user.id,
                 provider_name=payload.provider_name,
@@ -276,6 +375,11 @@ def create_provider(payload: ProviderCreateRequest) -> ProviderEntry:
             "last_tested_at": None,
         }
         with STORE.lock:
+            if payload.is_enabled:
+                _disable_other_enabled_records(
+                    provider_id,
+                    str(record["config"].get("capability") or "llm"),
+                )
             STORE.providers[provider_id] = record
         return _to_provider_entry_from_record(record)
 
@@ -284,8 +388,24 @@ def update_provider(provider_id: str, payload: ProviderUpdateRequest) -> Provide
     try:
         with SessionLocal() as session:
             provider = get_model_provider(session, provider_id)
+            _validate_provider_payload(payload, existing_provider=provider)
+            capability = _provider_capability(
+                config=_provider_config_from_payload(
+                    payload,
+                    provider.config if provider else None,
+                ),
+                chat_model=payload.chat_model,
+                transcription_model=payload.transcription_model,
+            )
             if provider is None:
                 user = get_primary_user(session)
+                if payload.is_enabled:
+                    _disable_other_enabled_providers(
+                        session,
+                        user_id=user.id,
+                        provider_id=provider_id,
+                        capability=capability,
+                    )
                 provider = ModelProvider(
                     id=provider_id,
                     user_id=user.id,
@@ -305,6 +425,13 @@ def update_provider(provider_id: str, payload: ProviderUpdateRequest) -> Provide
                 )
                 session.add(provider)
             else:
+                if payload.is_enabled:
+                    _disable_other_enabled_providers(
+                        session,
+                        user_id=provider.user_id,
+                        provider_id=provider_id,
+                        capability=capability,
+                    )
                 provider.provider_name = payload.provider_name
                 provider.provider_type = payload.provider_type.value
                 provider.display_name = payload.provider_name
@@ -323,6 +450,7 @@ def update_provider(provider_id: str, payload: ProviderUpdateRequest) -> Provide
         seed_store()
         with STORE.lock:
             record = STORE.providers.get(provider_id)
+            _validate_provider_payload(payload, existing_record=record)
             if record is None:
                 record = {
                     "id": provider_id,
@@ -358,6 +486,13 @@ def update_provider(provider_id: str, payload: ProviderUpdateRequest) -> Provide
                 if payload.api_key:
                     record["api_key_encrypted"] = protect_secret(payload.api_key)
                     record["api_key_configured"] = True
+            capability = _provider_capability(
+                config=record.get("config") if isinstance(record.get("config"), dict) else {},
+                chat_model=record.get("chat_model"),
+                transcription_model=record.get("transcription_model"),
+            )
+            if bool(record.get("is_enabled")):
+                _disable_other_enabled_records(provider_id, capability)
         return _to_provider_entry_from_record(record)
 
 

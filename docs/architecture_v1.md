@@ -340,6 +340,7 @@ Provider types in V1 should at least support:
 
 - OpenAI-compatible.
 - Doubao preset.
+- DeepSeek preset.
 - Custom provider.
 
 ### 6.2 Capability-Based Model Selection
@@ -360,6 +361,7 @@ Implementation baseline:
 - `ProviderCapability.transcription` resolves to the configured transcription model.
 - `ProviderCapability.video_visual_understanding` resolves to the configured chat model for V1, because the provider registry does not yet expose a dedicated visual model field.
 - Runtime provider config may include a decrypted key for server-side adapters, but public API responses expose only whether a key is configured.
+- Provider records are user-created and must be complete before saving. At runtime there is only one enabled/current provider per capability, so LLM and ASR selection are independent instead of sharing a global enabled flag.
 
 This lets the user mix providers, for example:
 

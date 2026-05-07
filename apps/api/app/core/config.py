@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     feed_refresh_enabled: bool = True
     feed_refresh_interval_seconds: int = 1800
     feed_refresh_startup_delay_seconds: int = 20
+    daily_news_generation_enabled: bool = True
+    daily_news_generation_hour: int = 10
+    daily_news_generation_timezone: str = "Asia/Shanghai"
 
     model_config = SettingsConfigDict(
         env_prefix="ONERADAR_",

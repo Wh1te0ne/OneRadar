@@ -522,6 +522,8 @@ Response:
 
 Provider management is a core V1 API surface.
 
+The provider list is user-created. Presets are only UI/API hints; they do not create default provider records. A saved provider must be complete for its capability: LLM providers require `base_url`, `api_key`, and `chat_model`; ASR providers require APP ID, resource/model ID, Access Token, and Secret Key. When a provider is saved or updated with `is_enabled=true`, it becomes the only enabled provider for that capability, so LLM and ASR selection stay independent.
+
 ### 10.1 List Providers
 
 ```http
@@ -641,7 +643,25 @@ Persists the RSS discovery surface in the primary database. `POST /api/feeds/cac
 
 The API process also runs the same refresh logic on a timer when `ONERADAR_FEED_REFRESH_ENABLED=true`. The default interval is controlled by `ONERADAR_FEED_REFRESH_INTERVAL_SECONDS` and defaults to 1800 seconds.
 
-The desktop 每日新闻 page currently reuses `GET /api/feeds/state` plus `POST /api/feeds/refresh`; it does not need a separate summary table or ingestion endpoint. The client applies a freshness window and lightweight topical grouping on cached RSS entries, then links entries back to `/feed/preview` or the source-level Feed page.
+The desktop 每日新闻 page is model-generated and persisted per date. The API reads cached RSS entries for the requested date, calls the configured summarization/chat provider, asks the model to translate and summarize entries into a fixed daily-brief structure, and saves exactly one report per day. Regenerating the same date overwrites the previous report.
+
+```http
+GET /api/daily-news?date=2026-05-07
+```
+
+Returns the saved daily report for a date. If it has not been generated, the response uses `status: "missing"` so the client can show a generation action.
+
+```http
+POST /api/daily-news/generate
+```
+
+Request body:
+
+```json
+{ "date": "2026-05-07", "force": true }
+```
+
+Generates or regenerates the report for the date. If a report already exists and `force` is not set, the API returns 409 because regeneration replaces the existing daily version. The API process also schedules automatic generation at `ONERADAR_DAILY_NEWS_GENERATION_HOUR`, defaulting to 10:00 in `Asia/Shanghai`.
 
 ## 6.5 Direct API Use Cases
 
@@ -705,6 +725,10 @@ Response:
     {
       "provider_type": "doubao",
       "provider_name": "Doubao"
+    },
+    {
+      "provider_type": "deepseek",
+      "provider_name": "DeepSeek"
     },
     {
       "provider_type": "openai_compatible",

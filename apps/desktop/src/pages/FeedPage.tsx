@@ -399,7 +399,9 @@ export function FeedPage() {
     });
     const failedCount = results.length - successful.length;
     if (failedCount > 0) {
-      setError(`${failedCount} 个订阅源读取失败，已显示其余可用内容。`);
+      const firstFailure = results.find((result) => result.status === "rejected") as PromiseRejectedResult | undefined;
+      const reason = firstFailure?.reason instanceof Error ? firstFailure.reason.message : "RSS 读取失败";
+      setError(`${failedCount} 个订阅源读取失败，已显示其余可用内容。原因：${reason}`);
     }
     setLoading(false);
   }

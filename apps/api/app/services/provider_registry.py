@@ -86,6 +86,57 @@ def _config_from_record(
     )
 
 
+def _model_provider_supports_capability(
+    provider: ModelProvider,
+    capability: ProviderCapability,
+) -> bool:
+    config = dict(provider.config or {})
+    declared = str(config.get("capability") or "").strip().lower()
+    chat_capabilities = {
+        ProviderCapability.summarization,
+        ProviderCapability.video_visual_understanding,
+    }
+    if capability in chat_capabilities:
+        return declared != "asr" and bool(provider.chat_model and provider.api_key_encrypted)
+    if capability == ProviderCapability.embedding:
+        return declared != "asr" and bool(provider.embedding_model and provider.api_key_encrypted)
+    if capability == ProviderCapability.transcription:
+        transcription = dict(config.get("transcription") or {})
+        return declared != "llm" and bool(
+            provider.transcription_model
+            and transcription.get("app_id")
+            and transcription.get("access_token_encrypted")
+            and transcription.get("secret_key_encrypted")
+        )
+    return False
+
+
+def _record_supports_capability(record: dict[str, object], capability: ProviderCapability) -> bool:
+    config = record.get("config") if isinstance(record.get("config"), dict) else {}
+    declared = str(config.get("capability") or "").strip().lower()
+    chat_capabilities = {
+        ProviderCapability.summarization,
+        ProviderCapability.video_visual_understanding,
+    }
+    if capability in chat_capabilities:
+        return declared != "asr" and bool(
+            record.get("chat_model") and record.get("api_key_encrypted")
+        )
+    if capability == ProviderCapability.embedding:
+        return declared != "asr" and bool(
+            record.get("embedding_model") and record.get("api_key_encrypted")
+        )
+    if capability == ProviderCapability.transcription:
+        transcription = dict(config.get("transcription") or {})
+        return declared != "llm" and bool(
+            record.get("transcription_model")
+            and transcription.get("app_id")
+            and transcription.get("access_token_encrypted")
+            and transcription.get("secret_key_encrypted")
+        )
+    return False
+
+
 def resolve_provider_config(
     provider_id: str | None,
     capability: ProviderCapability,
@@ -96,14 +147,22 @@ def resolve_provider_config(
             if provider is None and provider_id and provider_id in STORE.providers:
                 return _config_from_record(STORE.providers[provider_id], capability)
             if provider is None:
-                provider = (
+                providers = (
                     session.execute(
                         select(ModelProvider)
                         .where(ModelProvider.is_enabled.is_(True))
                         .order_by(ModelProvider.created_at.asc())
                     )
                     .scalars()
-                    .first()
+                    .all()
+                )
+                provider = next(
+                    (
+                        candidate
+                        for candidate in providers
+                        if _model_provider_supports_capability(candidate, capability)
+                    ),
+                    None,
                 )
             if provider is None:
                 raise ValueError("provider not found")
@@ -113,7 +172,12 @@ def resolve_provider_config(
         record = STORE.providers.get(provider_id or "")
         if record is None:
             record = next(
-                (item for item in STORE.providers.values() if bool(item.get("is_enabled", True))),
+                (
+                    item
+                    for item in STORE.providers.values()
+                    if bool(item.get("is_enabled", True))
+                    and _record_supports_capability(item, capability)
+                ),
                 None,
             )
         if record is None:

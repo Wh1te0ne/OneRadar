@@ -13,7 +13,7 @@ The repo must preserve these V1 boundaries:
 - V1 is a reader-first personal knowledge library.
 - Input is manual link submission only.
 - Manual input supports article links, Bilibili video links, and podcast episodes explicitly added from subscribed podcast feeds.
-- V1 does not include generic RSS, browser extension capture, or automated harvesting. Podcast RSS is the scoped exception: it is used only for user-managed podcast subscriptions and episode discovery.
+- V1 does not include browser extension capture or broad automated harvesting. RSS is a scoped, user-managed discovery surface: saved sources may be refreshed, viewed, and used to generate one persisted daily news brief per date, but entries are not imported into the reading library unless the user explicitly saves them. Podcast RSS remains the scoped podcast exception for subscriptions and episode discovery.
 - V1 is server plus Windows desktop client first.
 - The server must support Docker deployment.
 - AI provider configuration must be user-manageable.
@@ -125,12 +125,12 @@ Provider support must be designed as a first-class subsystem.
 
 Required capabilities:
 
-- Preloaded presets for common providers such as Doubao.
+- Presets for common providers such as Doubao and DeepSeek without creating default provider records.
 - Ability to add custom providers.
 - Support for OpenAI-compatible endpoints where possible.
 - Separate model selection for chat/summarization, embedding, and transcription.
 - Encrypted or otherwise protected API key storage on the server.
-- Provider enable/disable state.
+- One enabled/current provider per capability, with LLM and ASR selection kept separate.
 - Connection testing.
 
 Required abstraction direction:

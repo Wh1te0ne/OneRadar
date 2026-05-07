@@ -205,6 +205,7 @@ Tables:
 
 - `feed_sources`: one row per subscribed RSS URL, scoped by `user_id`. Stores source URL, site title/link/description, last loaded time, and last refresh status/error.
 - `feed_entries`: cached RSS entries for a source. Stores stable entry id, article link, title, summary, author, published time, tags, and raw item metadata. Entries remain until the source is removed.
+- `daily_news_reports`: one generated RSS daily brief per user per date. Stores the generated headline, lead story, topical sections, source entry references, provider/model provenance, freshness window, and generation timestamp. Regenerating a date overwrites that day's report so each date keeps only one current brief.
 - `feed_entry_read_states`: per-user read markers for cached entries.
 
 Indexes:

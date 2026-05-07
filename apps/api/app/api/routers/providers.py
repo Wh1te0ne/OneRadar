@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.schemas.providers import (
     ProviderCreateRequest,
@@ -26,12 +26,18 @@ def list_providers() -> ProviderListResponse:
 
 @router.post("")
 def create_provider(payload: ProviderCreateRequest) -> ProviderEntry:
-    return create_provider_service(payload)
+    try:
+        return create_provider_service(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.put("/{provider_id}")
 def update_provider(provider_id: str, payload: ProviderUpdateRequest) -> ProviderEntry:
-    return update_provider_service(provider_id, payload)
+    try:
+        return update_provider_service(provider_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/{provider_id}")
