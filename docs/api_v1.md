@@ -641,6 +641,8 @@ Persists the RSS discovery surface in the primary database. `POST /api/feeds/cac
 
 The API process also runs the same refresh logic on a timer when `ONERADAR_FEED_REFRESH_ENABLED=true`. The default interval is controlled by `ONERADAR_FEED_REFRESH_INTERVAL_SECONDS` and defaults to 1800 seconds.
 
+The desktop 每日新闻 page currently reuses `GET /api/feeds/state` plus `POST /api/feeds/refresh`; it does not need a separate summary table or ingestion endpoint. The client applies a freshness window and lightweight topical grouping on cached RSS entries, then links entries back to `/feed/preview` or the source-level Feed page.
+
 ## 6.5 Direct API Use Cases
 
 The desktop client is only one consumer of the backend. These endpoints are stable enough for local scripts or future integrations:

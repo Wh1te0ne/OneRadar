@@ -230,6 +230,7 @@ export function FeedPage() {
   const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const keyword = searchParams.get("q")?.trim().toLowerCase() ?? "";
+  const sourceParam = searchParams.get("source")?.trim() ?? "";
 
   useEffect(() => {
     try {
@@ -410,6 +411,17 @@ export function FeedPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverHydrated]);
+
+  useEffect(() => {
+    if (!sourceParam) return;
+    const knownSource = savedSources.some((source) => source.sourceUrl === sourceParam) || Boolean(feeds[sourceParam]);
+    if (!knownSource) return;
+    setSelectedSource(sourceParam);
+    if (!feeds[sourceParam]) {
+      void loadFeed(sourceParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceParam, serverHydrated, savedSources, feeds]);
 
   const allEntries = useMemo(() => {
     return Object.values(feeds)

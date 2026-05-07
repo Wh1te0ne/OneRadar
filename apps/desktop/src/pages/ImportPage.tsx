@@ -448,7 +448,11 @@ export function ImportPage() {
                       <div className="progress-bar-fill" style={{ width: `${taskProgress(importTask)}%` }} />
                     </div>
                   )}
-                  <Link className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} to={`/items/${importResult.item_id}?from=import`}>
+                  <Link
+                    className="btn btn-secondary btn-sm"
+                    style={{ marginTop: 10 }}
+                    to={`/items/${importResult.item_id}${importResult.folder_id === "inbox" ? "?from=inbox" : ""}`}
+                  >
                     <span className="icon icon-sm">open_in_new</span>
                     打开条目查看进度
                   </Link>

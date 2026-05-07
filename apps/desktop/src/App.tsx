@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useSearchParams } from "react-router-dom";
 import { createApiClient } from "./api";
 import { ConnectPage } from "./pages/ConnectPage";
+import { DailyNewsPage } from "./pages/DailyNewsPage";
 import { FeedArticlePreviewPage } from "./pages/FeedArticlePreviewPage";
 import { FeedPage } from "./pages/FeedPage";
 import { ImportPage } from "./pages/ImportPage";
@@ -15,10 +16,11 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Toast, type ToastState } from "./components/Toast";
 import { useAppState } from "./state/appState";
 
-type PrimaryContext = "feed" | "podcasts" | "inbox" | "library" | "import" | "settings" | "trash";
+type PrimaryContext = "daily" | "feed" | "podcasts" | "inbox" | "library" | "import" | "settings" | "trash";
 
 function inferPrimaryContext(pathname: string, search: string): PrimaryContext {
-  if (pathname === "/" || pathname === "/feed" || pathname.startsWith("/feed/")) return "feed";
+  if (pathname === "/" || pathname === "/daily") return "daily";
+  if (pathname === "/feed" || pathname.startsWith("/feed/")) return "feed";
   if (pathname === "/podcasts") return "podcasts";
   if (pathname === "/inbox") return "inbox";
   if (pathname === "/import") return "import";
@@ -28,6 +30,7 @@ function inferPrimaryContext(pathname: string, search: string): PrimaryContext {
   if (pathname.startsWith("/items/") || pathname.startsWith("/reader/")) {
     const from = new URLSearchParams(search).get("from");
     if (from === "inbox") return "inbox";
+    if (from === "daily") return "daily";
     if (from === "feed") return "feed";
     if (from === "podcasts") return "podcasts";
     if (from === "import") return "import";
@@ -36,6 +39,7 @@ function inferPrimaryContext(pathname: string, search: string): PrimaryContext {
 }
 
 function isActive(pathname: string, to: string, ctx: PrimaryContext) {
+  if (to === "/daily") return ctx === "daily";
   if (to === "/feed") return ctx === "feed";
   if (to === "/podcasts") return ctx === "podcasts";
   if (to === "/inbox") return ctx === "inbox";
@@ -47,11 +51,12 @@ function isActive(pathname: string, to: string, ctx: PrimaryContext) {
 }
 
 function isSearchEnabled(pathname: string) {
-  return ["/feed", "/podcasts", "/inbox", "/library"].includes(pathname) || pathname.startsWith("/folders/");
+  return ["/daily", "/feed", "/podcasts", "/inbox", "/library"].includes(pathname) || pathname.startsWith("/folders/");
 }
 
 function searchPlaceholder(pathname: string) {
   if (!isSearchEnabled(pathname)) return "当前页面不支持搜索";
+  if (pathname === "/daily") return "搜索每日新闻…";
   if (pathname === "/feed") return "搜索订阅源…";
   if (pathname === "/podcasts") return "播客页内搜索…";
   if (pathname === "/inbox") return "搜索稍后阅读…";
@@ -59,6 +64,7 @@ function searchPlaceholder(pathname: string) {
 }
 
 const navItems = [
+  { to: "/daily", label: "每日新闻", icon: "newspaper", ctx: "daily" as PrimaryContext },
   { to: "/inbox", label: "稍后阅读", icon: "bookmarks", ctx: "inbox" as PrimaryContext },
   { to: "/feed", label: "订阅源", icon: "rss_feed", ctx: "feed" as PrimaryContext },
   { to: "/podcasts", label: "播客", icon: "podcasts", ctx: "podcasts" as PrimaryContext },
@@ -338,7 +344,8 @@ export default function App() {
 
         <div className="workspace-frame">
           <Routes>
-            <Route path="/" element={<Navigate to="/feed" replace />} />
+            <Route path="/" element={<Navigate to="/daily" replace />} />
+            <Route path="/daily" element={<DailyNewsPage />} />
             <Route path="/feed" element={<FeedPage />} />
             <Route path="/feed/preview" element={<FeedArticlePreviewPage />} />
             <Route path="/podcasts" element={<PodcastsPage />} />
@@ -351,7 +358,7 @@ export default function App() {
             <Route path="/items/:itemId" element={<ItemDetailPage />} />
             <Route path="/connect" element={<ConnectPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/feed" replace />} />
+            <Route path="*" element={<Navigate to="/daily" replace />} />
           </Routes>
         </div>
       </main>
