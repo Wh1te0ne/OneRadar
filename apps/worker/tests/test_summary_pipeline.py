@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from one_radar_worker.pipelines.common import PipelineContext
-from one_radar_worker.pipelines.summary import SummaryPipeline, SummaryResult
+from one_radar_worker.pipelines.summary import OpenAICompatibleSummaryAdapter, SummaryPipeline, SummaryResult, _summary_prompt
 from one_radar_worker.tasks import TaskType
 
 
@@ -113,3 +113,49 @@ def test_summary_pipeline_prefers_podcast_transcript_with_source_intro_context()
     assert "转写全文" in source_text
     assert "[00:12] 第一段真实转写。" in source_text
     assert "[01:06] 第二段真实转写。" in source_text
+
+
+def test_article_summary_prompt_preserves_actionable_details():
+    prompt = _summary_prompt(
+        title="测试文章",
+        source_text="正文包含接口、步骤、限制和数字。",
+        content_type="article",
+    )
+
+    assert "## 可操作信息" in prompt
+    assert "流程、配置、接口、工具、资源、决策步骤或检查清单" in prompt
+    assert "不要为了简短而省略原文中的步骤、参数、示例、限制和数字" in prompt
+
+
+def test_summary_adapter_allows_longer_article_summaries(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = request.data.decode("utf-8")
+        return FakeResponse()
+
+    monkeypatch.setattr("one_radar_worker.pipelines.summary.urlopen", fake_urlopen)
+
+    result = OpenAICompatibleSummaryAdapter().summarize(
+        provider_config={
+            "provider_name": "Test",
+            "base_url": "https://example.com/v1",
+            "api_key": "secret",
+            "model_name": "model",
+        },
+        title="测试文章",
+        source_text="正文",
+    )
+
+    assert result.ok is True
+    assert '"max_tokens": 5200' in str(captured["payload"])

@@ -276,6 +276,25 @@ function splitPodcastDescription(value?: string | null) {
     .filter(Boolean);
 }
 
+function isWechatArticleUrl(value?: string | null) {
+  if (!value) return false;
+  try {
+    return new URL(value).hostname.toLowerCase() === "mp.weixin.qq.com";
+  } catch {
+    return false;
+  }
+}
+
+function itemSourceLabel(item: ApiItemDetail | null) {
+  if (!item) return "未知来源";
+  if (item.metadata.podcast?.podcast_title) return item.metadata.podcast.podcast_title;
+  const siteName = item.metadata.site_name?.trim();
+  if (isWechatArticleUrl(item.source_url) && (!siteName || siteName === "Qq")) {
+    return item.metadata.author_name?.trim() || "微信公众号";
+  }
+  return siteName || item.source_url || "未知来源";
+}
+
 export function ItemDetailPage() {
   const { itemId = "" } = useParams();
   const location = useLocation();
@@ -665,7 +684,7 @@ export function ItemDetailPage() {
   const aiSummaries = item?.summaries.filter((summary) => summary.model_name || summary.summary_type === "visual_context") ?? [];
   const uid = item?.uid ?? item?.id ?? itemId;
   const folderName = displayFolderName(item?.folder_name ?? workspace?.default_inbox_folder?.name, item?.is_inbox ?? !item);
-  const sourceLabel = item?.metadata.podcast?.podcast_title ?? item?.metadata.site_name ?? item?.source_url ?? "未知来源";
+  const sourceLabel = itemSourceLabel(item);
   const transcriptSegments = item?.transcript?.segments ?? [];
   const readingState = liveReadingState ?? item?.reading_state ?? null;
   const progress = clampProgress(readingState?.progress_percent ?? 0);

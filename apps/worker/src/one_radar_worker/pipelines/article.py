@@ -485,11 +485,12 @@ class ArticlePipeline:
             )
         )
 
+        resolved_site_name = chosen_candidate.site_name or site_name
         persistable = self._build_persistable_output(
             source_url=str(raw_url),
             normalized_url=normalized_url,
             host=host,
-            site_name=site_name,
+            site_name=resolved_site_name,
             fetch_result=fetch_result,
             chosen_candidate=chosen_candidate,
         )
@@ -506,7 +507,7 @@ class ArticlePipeline:
             source_url=str(raw_url),
             normalized_url=normalized_url,
             host=host,
-            site_name=site_name,
+            site_name=resolved_site_name,
             fetch=fetch_result,
             candidates=candidates,
             chosen_candidate=chosen_candidate,

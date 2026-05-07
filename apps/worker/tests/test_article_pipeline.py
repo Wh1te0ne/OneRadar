@@ -241,7 +241,10 @@ def test_pipeline_uses_wechat_article_parser_for_mp_links(monkeypatch):
     assert "这是微信公众号正文第一段" in result.data["chosen_candidate"]["body_text"]
     assert "![" not in result.data["chosen_candidate"]["body_text"]
     persistable = result.data["persistable"]
+    assert result.data["site_name"] == "虾图灵"
+    assert persistable["content_item"]["raw_meta"]["site_name"] == "虾图灵"
     assert persistable["parsed_document"]["parser_name"] == "wechat_article"
+    assert persistable["parsed_document"]["site_name"] == "虾图灵"
     assert persistable["content_item"]["raw_meta"]["fetch_metadata"]["mp_name"] == "虾图灵"
 
 
