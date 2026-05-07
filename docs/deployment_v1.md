@@ -14,7 +14,7 @@ OneRadar should use three distinct roles:
 - GitHub source control: GitHub stores the private repository and is the canonical code history, review, and release coordination point.
 - Production NAS: the NAS runs the web/server stack through Docker Compose and owns persistent web data.
 
-Current private repository:
+Current GitHub repository:
 
 - `https://github.com/Wh1te0ne/OneRadar`
 
@@ -41,7 +41,7 @@ Future Windows desktop and Android clients should connect to the server API, but
 
 ## Production Deployment Shape
 
-Production should run prebuilt GHCR images on the target NAS with Docker Compose.
+Production should run prebuilt public GHCR images on the target NAS with Docker Compose.
 
 The NAS runtime directory should not be a source checkout. It should contain only:
 
@@ -55,6 +55,8 @@ Normal updates should be:
 docker compose --env-file .env pull
 docker compose --env-file .env up -d
 ```
+
+The normal update path must stay image-registry based: push code to GitHub, let GitHub Actions publish GHCR images, then make the NAS pull those images. Do not use SSH/SFTP to copy built images or source files to the NAS as a deployment shortcut. The current GHCR packages are public, so NAS updates should not require `docker login ghcr.io` or a GitHub package token.
 
 Baseline services:
 
@@ -126,6 +128,7 @@ Rules:
 - Never commit `.env`, `.env*.local`, `infra/private/`, SSH keys, provider API keys, Bilibili cookies, or production passwords.
 - Keep production provider keys and source-site credentials server-side only.
 - Do not echo raw secrets in deployment logs, issue comments, PR descriptions, or task results.
+- Do not store GHCR tokens on the NAS for the normal public-image deployment path.
 - Prefer SSH key authentication over a root password when the server is ready for hardening.
 - Rotate the current root password after SSH-key access is configured.
 

@@ -70,12 +70,14 @@ Running only the API is not enough for imports. Article, Bilibili, podcast, RSS,
 
 ## Docker
 
-The production-style stack is defined in `infra/docker/docker-compose.prod.yml` and uses GHCR images by default:
+The production-style stack is defined in `infra/docker/docker-compose.prod.yml` and uses public GHCR images by default:
 
 ```bash
 docker compose --env-file .env pull
 docker compose --env-file .env up -d
 ```
+
+Normal NAS updates should use the GHCR pull path above. Do not copy images or source files over SSH as a deployment shortcut. The current GHCR packages are public, so a production NAS does not need `docker login ghcr.io` for ordinary pulls.
 
 Persistent data should live in host-mounted directories, not inside disposable containers. See `docs/deployment_v1.md` for the current deployment model.
 
@@ -89,7 +91,7 @@ Do not commit:
 - provider API keys
 - Bilibili cookies
 - SSH credentials
-- Docker registry tokens
+- Docker registry tokens, unless a future private-image deployment explicitly needs them
 - production `.env` files
 
 ## Documentation
