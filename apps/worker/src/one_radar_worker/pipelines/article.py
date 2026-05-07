@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 from html.parser import HTMLParser
 import ipaddress
@@ -20,6 +20,11 @@ from .common import (
     PipelineStepResult,
 )
 
+try:  # Optional runtime dependency used only for WeChat Official Account links.
+    from wechat_article_parser import parse as parse_wechat_article
+except Exception:  # pragma: no cover - exercised by dependency-missing runtime paths.
+    parse_wechat_article = None
+
 _TRACKING_PARAMS = {
     "utm_source",
     "utm_medium",
@@ -37,6 +42,7 @@ _BLOCKED_FETCH_SUFFIXES = (".local", ".localhost", ".internal", ".home.arpa")
 _ALLOWED_FETCH_SCHEMES = {"http", "https"}
 _ALLOWED_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
 _DOCKER_DESKTOP_PROXY_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+_WECHAT_ARTICLE_HOSTS = {"mp.weixin.qq.com"}
 
 
 class UnsafeArticleUrlError(ValueError):
@@ -216,6 +222,11 @@ def _host_from_url(normalized_url: str) -> str:
     return urlsplit(normalized_url).netloc
 
 
+def _is_wechat_article_url(normalized_url: str) -> bool:
+    host = (urlsplit(normalized_url).hostname or "").casefold()
+    return host in _WECHAT_ARTICLE_HOSTS
+
+
 def _site_name_from_host(host: str) -> str:
     parts = host.split(".")
     if len(parts) >= 2:
@@ -228,6 +239,14 @@ def _clean_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _clean_wechat_markdown(markdown: str) -> str:
+    text = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", markdown)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"^[ \t]*#{1,6}[ \t]+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^[ \t]*>[ \t]?", "", text, flags=re.MULTILINE)
+    return _clean_text(text)
 
 
 def _extract_tag_value(html: str, pattern: str) -> str | None:
@@ -353,7 +372,7 @@ def _score_quality(title: str | None, body_text: str, html: str, site_name: str 
 
 
 def _choose_candidate(candidates: list["ArticleExtractionCandidate"]) -> "ArticleExtractionCandidate":
-    for strategy in ("trafilatura", "readability", "plain_text"):
+    for strategy in ("wechat_article", "trafilatura", "readability", "plain_text"):
         preferred = [candidate for candidate in candidates if candidate.strategy == strategy]
         if preferred:
             return max(preferred, key=lambda candidate: candidate.quality.value)
@@ -371,6 +390,7 @@ class ArticleFetchResult:
     content_type: str | None
     html: str
     error_message: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -533,6 +553,9 @@ class ArticlePipeline:
                 html=html,
             )
 
+        if _is_wechat_article_url(normalized_url):
+            return self._fetch_wechat_article(normalized_url, payload)
+
         try:
             _ensure_safe_fetch_target(normalized_url)
         except UnsafeArticleUrlError as error:
@@ -589,9 +612,76 @@ class ArticlePipeline:
                 error_message=f"live fetch unavailable: {error}",
             )
 
+    def _fetch_wechat_article(self, normalized_url: str, payload: dict[str, Any]) -> ArticleFetchResult:
+        source_url = str(payload.get("source_url", normalized_url))
+        if parse_wechat_article is None:
+            return ArticleFetchResult(
+                mode="wechat_article_error",
+                source_url=source_url,
+                normalized_url=normalized_url,
+                final_url=normalized_url,
+                ok=False,
+                status_code=None,
+                content_type=None,
+                html="",
+                error_message="wechat article parser dependency is unavailable",
+            )
+
+        try:
+            _ensure_safe_fetch_target(normalized_url)
+            parsed = parse_wechat_article(
+                normalized_url,
+                timeout=float(payload.get("timeout_seconds", 15)),
+            )
+        except Exception as error:
+            return ArticleFetchResult(
+                mode="wechat_article_error",
+                source_url=source_url,
+                normalized_url=normalized_url,
+                final_url=normalized_url,
+                ok=False,
+                status_code=None,
+                content_type=None,
+                html="",
+                error_message=f"wechat article fetch unavailable: {error}",
+            )
+
+        markdown = str(getattr(parsed, "article_markdown", "") or "").strip()
+        if not bool(getattr(parsed, "is_valid", False)) or not markdown:
+            return ArticleFetchResult(
+                mode="wechat_article_error",
+                source_url=source_url,
+                normalized_url=normalized_url,
+                final_url=normalized_url,
+                ok=False,
+                status_code=None,
+                content_type=None,
+                html="",
+                error_message="wechat article parser returned no readable content",
+            )
+
+        return ArticleFetchResult(
+            mode="wechat_article_parser",
+            source_url=source_url,
+            normalized_url=normalized_url,
+            final_url=normalized_url,
+            ok=True,
+            status_code=200,
+            content_type="text/markdown",
+            html=markdown,
+            metadata={
+                "article_title": getattr(parsed, "article_title", None),
+                "mp_name": getattr(parsed, "mp_name", None),
+                "publish_time": getattr(parsed, "article_publish_time", None),
+            },
+        )
+
     def _extract_candidates(self, fetch_result: ArticleFetchResult, payload: dict[str, Any]) -> list[ArticleExtractionCandidate]:
         html = fetch_result.html
         source_url = fetch_result.final_url or fetch_result.normalized_url
+        if fetch_result.mode == "wechat_article_parser":
+            return [self._build_wechat_candidate(fetch_result, payload)]
+
         drafts = extract_article_drafts(html, source_url, payload)
         candidates: list[ArticleExtractionCandidate] = []
         heading_levels = _heading_levels_from_html(html)
@@ -652,6 +742,34 @@ class ArticlePipeline:
             )
         ]
 
+    def _build_wechat_candidate(
+        self,
+        fetch_result: ArticleFetchResult,
+        payload: dict[str, Any],
+    ) -> ArticleExtractionCandidate:
+        body_text = _clean_wechat_markdown(fetch_result.html)
+        title = _usable_title(
+            str(fetch_result.metadata.get("article_title") or payload.get("title") or "").strip() or None,
+            body_text,
+        )
+        mp_name = str(fetch_result.metadata.get("mp_name") or "").strip()
+        excerpt = payload.get("excerpt")
+        if not isinstance(excerpt, str) or not excerpt.strip():
+            excerpt = _split_paragraphs(body_text)[0][:180] if body_text else None
+        blocks = _build_blocks(title, excerpt, _split_paragraphs(body_text))
+        quality = _score_quality(title, body_text, fetch_result.html, mp_name or None, excerpt)
+        quality.reasons.append("wechat official account parser used")
+        return ArticleExtractionCandidate(
+            strategy="wechat_article",
+            title=title,
+            site_name=mp_name or "微信公众号",
+            byline=mp_name or None,
+            language="zh",
+            excerpt=excerpt,
+            body_text=body_text,
+            blocks=blocks,
+            quality=quality,
+        )
 
     def _primary_body_text(self, html: str, payload: dict[str, Any]) -> str:
         article_match = re.search(r"<article[^>]*>(.*?)</article>", html, flags=re.IGNORECASE | re.DOTALL)
@@ -723,6 +841,7 @@ class ArticlePipeline:
                     "excerpt": chosen_candidate.excerpt,
                     "extraction_strategy": chosen_candidate.strategy,
                     "content_hash": content_hash,
+                    "fetch_metadata": fetch_result.metadata,
                 },
             },
             "raw_snapshot": {

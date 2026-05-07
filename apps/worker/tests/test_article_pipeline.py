@@ -208,6 +208,65 @@ def test_live_fetch_failure_does_not_persist_demo_article(monkeypatch):
     assert result.data["chosen_candidate"]["body_text"] == ""
 
 
+def test_pipeline_uses_wechat_article_parser_for_mp_links(monkeypatch):
+    class ParsedWeChatArticle:
+        is_valid = True
+        article_title = "微信文章标题"
+        mp_name = "虾图灵"
+        article_publish_time = 1777838856
+        article_markdown = "# 微信文章标题\n\n导读\n\n这是微信公众号正文第一段。\n\n![图](https://example.com/a.png)"
+
+    def parse_wechat(url, timeout):
+        assert url == "https://mp.weixin.qq.com/s/NohGcf6ybCz_08YT8vnOsw"
+        assert timeout == 15
+        return ParsedWeChatArticle()
+
+    monkeypatch.setattr(article, "_ensure_safe_fetch_target", lambda normalized_url: None)
+    monkeypatch.setattr(article, "parse_wechat_article", parse_wechat)
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url="https://mp.weixin.qq.com/s/NohGcf6ybCz_08YT8vnOsw",
+        task_type=TaskType.EXTRACT_ARTICLE,
+        payload={"fetch_mode": "live"},
+    )
+
+    result = article.ArticlePipeline().run(context)
+
+    assert result.ok is True
+    assert result.data["fetch"]["mode"] == "wechat_article_parser"
+    assert result.data["chosen_candidate"]["strategy"] == "wechat_article"
+    assert result.data["chosen_candidate"]["title"] == "微信文章标题"
+    assert result.data["chosen_candidate"]["byline"] == "虾图灵"
+    assert "这是微信公众号正文第一段" in result.data["chosen_candidate"]["body_text"]
+    assert "![" not in result.data["chosen_candidate"]["body_text"]
+    persistable = result.data["persistable"]
+    assert persistable["parsed_document"]["parser_name"] == "wechat_article"
+    assert persistable["content_item"]["raw_meta"]["fetch_metadata"]["mp_name"] == "虾图灵"
+
+
+def test_pipeline_fails_wechat_parser_without_plain_text_fallback(monkeypatch):
+    def parse_wechat(url, timeout):
+        raise RuntimeError("environment abnormal")
+
+    monkeypatch.setattr(article, "_ensure_safe_fetch_target", lambda normalized_url: None)
+    monkeypatch.setattr(article, "parse_wechat_article", parse_wechat)
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url="https://mp.weixin.qq.com/s/NohGcf6ybCz_08YT8vnOsw",
+        task_type=TaskType.EXTRACT_ARTICLE,
+        payload={"fetch_mode": "live"},
+    )
+
+    result = article.ArticlePipeline().run(context)
+
+    assert result.ok is False
+    assert result.data["fetch"]["mode"] == "wechat_article_error"
+    assert "wechat article fetch unavailable" in result.data["fetch"]["error_message"]
+    assert result.data["chosen_candidate"]["body_text"] == ""
+
+
 def test_pipeline_preserves_heading_levels_from_extracted_body(monkeypatch):
     html = """<!doctype html>
 <html>
