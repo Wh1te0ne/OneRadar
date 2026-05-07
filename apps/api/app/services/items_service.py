@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
@@ -72,6 +72,7 @@ DEFAULT_READING_STATE = {
 }
 
 TRASH_RETENTION_DAYS = 7
+ORIGINAL_NORMALIZED_URL_META_KEY = "original_normalized_url"
 ACTIVE_TASK_STATUSES = {
     TaskStatus.pending.value,
     TaskStatus.running.value,
@@ -436,6 +437,22 @@ def _default_folder_meta(folder_id: str, folder_name: str, is_inbox: bool) -> di
     return build_folder_meta(folder_id, folder_name, is_inbox)
 
 
+def _deleted_normalized_url(item_id: object, normalized_url: str) -> str:
+    return f"{normalized_url}#oneradar-deleted:{item_id}"
+
+
+def _duplicate_normalized_url(item_id: object, normalized_url: str) -> str:
+    return f"{normalized_url}#oneradar-duplicate:{item_id}"
+
+
+def _release_deleted_item_url(item: ContentItem, deleted_at: datetime) -> None:
+    raw_meta = dict(item.raw_meta or {})
+    raw_meta.setdefault(ORIGINAL_NORMALIZED_URL_META_KEY, item.normalized_url)
+    raw_meta["deleted_at"] = deleted_at.isoformat()
+    item.raw_meta = raw_meta
+    item.normalized_url = _deleted_normalized_url(item.id, item.normalized_url)
+
+
 def _item_folder_info(item: ContentItem) -> tuple[str, str, bool]:
     folder = getattr(item, "folder", None)
     if folder is not None:
@@ -777,6 +794,7 @@ def _fallback_import(
     parser_name: str | None = None,
     parser_version: str | None = None,
     generate_summary: bool = False,
+    allow_duplicate: bool = False,
 ) -> ImportItemResponse:
     seed_store()
     normalized_url = normalize_source_url(url)
@@ -786,14 +804,16 @@ def _fallback_import(
     content_type = _normalize_content_type(source_hint, normalized_url)
 
     with STORE.lock:
-        existing = next(
-            (
-                item
-                for item in STORE.items.values()
-                if item["source_url"] == normalized_url and not _is_deleted_store_record(item)
-            ),
-            None,
-        )
+        existing = None
+        if not allow_duplicate:
+            existing = next(
+                (
+                    item
+                    for item in STORE.items.values()
+                    if item["source_url"] == normalized_url and not _is_deleted_store_record(item)
+                ),
+                None,
+            )
         if existing is not None:
             preview_document = _preview_parsed_document(parsed_text, parser_name, parser_version)
             initial_title = _clean_optional_text(title)
@@ -936,6 +956,7 @@ def import_item(
     parser_name: str | None = None,
     parser_version: str | None = None,
     generate_summary: bool = False,
+    allow_duplicate: bool = False,
 ) -> ImportItemResponse:
     try:
         with SessionLocal() as session:
@@ -957,10 +978,19 @@ def import_item(
             existing_items = session.execute(
                 select(ContentItem).where(
                     ContentItem.user_id == user.id,
-                    ContentItem.normalized_url == normalized_url,
+                    or_(
+                        ContentItem.normalized_url == normalized_url,
+                        ContentItem.source_url == normalized_url,
+                    ),
                 )
             ).scalars().all()
-            existing = next((candidate for candidate in existing_items if not _is_deleted_item(candidate)), None)
+            deleted_at = now_utc()
+            for deleted_item in [candidate for candidate in existing_items if _is_deleted_item(candidate)]:
+                if not str(deleted_item.normalized_url).endswith(f"#oneradar-deleted:{deleted_item.id}"):
+                    _release_deleted_item_url(deleted_item, _deleted_at_from_meta(deleted_item.raw_meta) or deleted_at)
+            existing = None
+            if not allow_duplicate:
+                existing = next((candidate for candidate in existing_items if not _is_deleted_item(candidate)), None)
             if existing is not None:
                 task: ProcessingTask | None = None
                 if preview_document or initial_title or initial_author or initial_site or published_at:
@@ -1053,13 +1083,20 @@ def import_item(
                     is_duplicate=True,
                 )
 
+            item_id = uuid4()
+            stored_normalized_url = (
+                _duplicate_normalized_url(item_id, normalized_url)
+                if allow_duplicate
+                else normalized_url
+            )
             item = ContentItem(
+                id=item_id,
                 user_id=user.id,
                 folder_id=inbox.id,
                 content_type=content_type.value,
                 source_platform=_source_platform(content_type),
                 source_url=normalized_url,
-                normalized_url=normalized_url,
+                normalized_url=stored_normalized_url,
                 external_id=None,
                 title=initial_title,
                 subtitle=None,
@@ -1086,6 +1123,7 @@ def import_item(
                     "tags": [],
                     "collections": [],
                     "reading_state": DEFAULT_READING_STATE,
+                    "canonical_normalized_url": normalized_url,
                     **_default_folder_meta(str(inbox.id), inbox.name, bool(inbox.is_inbox)),
                 },
                 fetch_hash=None,
@@ -1178,6 +1216,7 @@ def import_item(
             parser_name=parser_name,
             parser_version=parser_version,
             generate_summary=generate_summary,
+            allow_duplicate=allow_duplicate,
         )
 
 
@@ -1618,10 +1657,7 @@ def delete_item(item_id: str) -> ItemDeleteResponse:
             if item is None:
                 raise ValueError("item not found")
             deleted_at = now_utc()
-            item.raw_meta = {
-                **(item.raw_meta or {}),
-                "deleted_at": deleted_at.isoformat(),
-            }
+            _release_deleted_item_url(item, deleted_at)
             tasks = session.execute(
                 select(ProcessingTask).where(
                     ProcessingTask.content_item_id == item.id,
@@ -1745,8 +1781,19 @@ def restore_item(item_id: str) -> ItemDeleteResponse:
             if item is None or not _is_deleted_item(item):
                 raise ValueError("item not found")
             raw_meta = dict(item.raw_meta or {})
+            original_normalized_url = raw_meta.pop(ORIGINAL_NORMALIZED_URL_META_KEY, None)
             raw_meta.pop("deleted_at", None)
             item.raw_meta = raw_meta
+            if isinstance(original_normalized_url, str) and original_normalized_url.strip():
+                active_conflict = session.execute(
+                    select(ContentItem).where(
+                        ContentItem.id != item.id,
+                        ContentItem.user_id == item.user_id,
+                        ContentItem.source_url == item.source_url,
+                    )
+                ).scalars().all()
+                if not any(not _is_deleted_item(candidate) for candidate in active_conflict):
+                    item.normalized_url = original_normalized_url
             session.commit()
             return ItemDeleteResponse(uid=str(item.id), deleted=False)
     except (SQLAlchemyError, ValueError) as exc:
@@ -1763,13 +1810,15 @@ def restore_item(item_id: str) -> ItemDeleteResponse:
 def purge_item(item_id: str) -> ItemDeleteResponse:
     try:
         with SessionLocal() as session:
-            item = session.get(ContentItem, UUID(item_id))
+            item_uuid = UUID(item_id)
+            item = session.get(ContentItem, item_uuid)
             if item is None:
                 raise ValueError("item not found")
+            uid = str(item.id)
             _remove_audio_artifact(item.raw_meta)
-            session.delete(item)
+            session.execute(delete(ContentItem).where(ContentItem.id == item_uuid))
             session.commit()
-            return ItemDeleteResponse(uid=str(item.id), deleted=True)
+            return ItemDeleteResponse(uid=uid, deleted=True)
     except (SQLAlchemyError, ValueError) as exc:
         seed_store()
         with STORE.lock:

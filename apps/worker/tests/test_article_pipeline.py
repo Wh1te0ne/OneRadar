@@ -185,3 +185,78 @@ def test_pipeline_replaces_placeholder_title_with_first_body_line(monkeypatch):
 
     persistable = result.data["persistable"]
     assert persistable["content_item"]["title"] == "Voice & TTS"
+
+
+def test_live_fetch_failure_does_not_persist_demo_article(monkeypatch):
+    def reject_url(normalized_url):
+        raise article.UnsafeArticleUrlError("blocked for test")
+
+    monkeypatch.setattr(article, "_ensure_safe_fetch_target", reject_url)
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url="https://example.com/story",
+        task_type=TaskType.EXTRACT_ARTICLE,
+        payload={"fetch_mode": "live"},
+    )
+
+    result = article.ArticlePipeline().run(context)
+
+    assert result.ok is False
+    assert result.data["fetch"]["html"] == ""
+    assert "OneRadar demo article" not in result.data["chosen_candidate"]["body_text"]
+    assert result.data["chosen_candidate"]["body_text"] == ""
+
+
+def test_pipeline_preserves_heading_levels_from_extracted_body(monkeypatch):
+    html = """<!doctype html>
+<html>
+<body>
+  <nav><h2>Navigation heading</h2></nav>
+  <article>
+    <h1>Article Title</h1>
+    <p>Lead paragraph.</p>
+    <h2>First Section</h2>
+    <p>First section body.</p>
+    <h3>Nested Point</h3>
+    <p>Nested body.</p>
+  </article>
+</body>
+</html>"""
+    draft = ArticleExtractionDraft(
+        strategy="trafilatura",
+        title="Article Title",
+        site_name="Example",
+        byline=None,
+        language="en",
+        excerpt=None,
+        body_text="Article Title\n\nLead paragraph.\n\nFirst Section\n\nFirst section body.\n\nNested Point\n\nNested body.",
+    )
+    fetch_result = article.ArticleFetchResult(
+        mode="live",
+        source_url="https://example.com/story",
+        normalized_url="https://example.com/story",
+        final_url="https://example.com/story",
+        ok=True,
+        status_code=200,
+        content_type="text/html",
+        html=html,
+    )
+
+    monkeypatch.setattr(article, "extract_article_drafts", lambda html, source_url, payload: [draft])
+    monkeypatch.setattr(article.ArticlePipeline, "_fetch_html", lambda self, normalized_url, payload: fetch_result)
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url="https://example.com/story",
+        task_type=TaskType.EXTRACT_ARTICLE,
+        payload={"fetch_mode": "live"},
+    )
+
+    result = article.ArticlePipeline().run(context)
+
+    blocks = result.data["persistable"]["parsed_document"]["structured_blocks"]
+    heading_blocks = [block for block in blocks if block["type"] == "heading"]
+    assert [block["text"] for block in heading_blocks] == ["Article Title", "First Section", "Nested Point"]
+    assert [block["data"]["level"] for block in heading_blocks] == [1, 2, 3]
+    assert all(block["text"] != "Navigation heading" for block in blocks)

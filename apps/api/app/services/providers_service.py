@@ -35,15 +35,23 @@ def list_presets() -> list[ProviderPresetEntry]:
 def _to_provider_entry(provider: ModelProvider) -> ProviderEntry:
     config = dict(provider.config or {})
     transcription_config = dict(config.get("transcription") or {})
+    capability = _provider_capability(
+        config=config,
+        chat_model=provider.chat_model,
+        transcription_model=provider.transcription_model,
+    )
+    is_configured = _provider_is_configured(
+        capability=capability,
+        api_key_configured=bool(provider.api_key_encrypted),
+        chat_model=provider.chat_model,
+        transcription_model=provider.transcription_model,
+        transcription_config=transcription_config,
+    )
     return ProviderEntry(
         id=str(provider.id),
         provider_name=provider.provider_name,
         provider_type=ProviderType(provider.provider_type),
-        capability=_provider_capability(
-            config=config,
-            chat_model=provider.chat_model,
-            transcription_model=provider.transcription_model,
-        ),
+        capability=capability,
         base_url=provider.base_url,
         api_key_configured=bool(provider.api_key_encrypted),
         chat_model=provider.chat_model,
@@ -60,7 +68,7 @@ def _to_provider_entry(provider: ModelProvider) -> ProviderEntry:
         transcription_secret_key_configured=bool(
             transcription_config.get("secret_key_encrypted")
         ),
-        is_enabled=provider.is_enabled,
+        is_enabled=provider.is_enabled and is_configured,
         last_test_status=provider.last_test_status,
         last_tested_at=provider.last_tested_at,
     )
@@ -107,6 +115,24 @@ def _provider_capability(
     return "llm"
 
 
+def _provider_is_configured(
+    *,
+    capability: str,
+    api_key_configured: bool,
+    chat_model: str | None,
+    transcription_model: str | None,
+    transcription_config: dict,
+) -> bool:
+    if capability == "asr":
+        return bool(
+            transcription_model
+            and transcription_config.get("app_id")
+            and transcription_config.get("access_token_encrypted")
+            and transcription_config.get("secret_key_encrypted")
+        )
+    return bool(api_key_configured and chat_model)
+
+
 def _to_provider_entry_from_record(record: dict[str, object]) -> ProviderEntry:
     config = record.get("config") if isinstance(record.get("config"), dict) else {}
     transcription_config = (
@@ -114,15 +140,23 @@ def _to_provider_entry_from_record(record: dict[str, object]) -> ProviderEntry:
         if isinstance(config.get("transcription"), dict)
         else {}
     )
+    capability = _provider_capability(
+        config=config,
+        chat_model=record.get("chat_model"),
+        transcription_model=record.get("transcription_model"),
+    )
+    is_configured = _provider_is_configured(
+        capability=capability,
+        api_key_configured=bool(record.get("api_key_encrypted")),
+        chat_model=record.get("chat_model"),
+        transcription_model=record.get("transcription_model"),
+        transcription_config=transcription_config,
+    )
     return ProviderEntry(
         id=str(record["id"]),
         provider_name=str(record["provider_name"]),
         provider_type=record["provider_type"],
-        capability=_provider_capability(
-            config=config,
-            chat_model=record.get("chat_model"),
-            transcription_model=record.get("transcription_model"),
-        ),
+        capability=capability,
         base_url=record["base_url"],
         api_key_configured=bool(record.get("api_key_encrypted")),
         chat_model=record["chat_model"],
@@ -139,7 +173,7 @@ def _to_provider_entry_from_record(record: dict[str, object]) -> ProviderEntry:
         transcription_secret_key_configured=bool(
             transcription_config.get("secret_key_encrypted")
         ),
-        is_enabled=bool(record["is_enabled"]),
+        is_enabled=bool(record["is_enabled"]) and is_configured,
         last_test_status=record["last_test_status"],
         last_tested_at=record["last_tested_at"],
     )
@@ -162,7 +196,7 @@ def _ensure_builtin_provider(session) -> ModelProvider:
         chat_model="ep-20260304161530-6ffr5",
         embedding_model="doubao-embed",
         transcription_model=None,
-        is_enabled=True,
+        is_enabled=False,
         is_builtin=True,
         config={"capability": "llm"},
         last_test_status=None,
@@ -191,9 +225,6 @@ def list_providers() -> ProviderListResponse:
                 .scalars()
                 .all()
             )
-            if not providers:
-                providers = [_ensure_builtin_provider(session)]
-                session.commit()
             return ProviderListResponse(
                 items=[_to_provider_entry(provider) for provider in providers]
             )

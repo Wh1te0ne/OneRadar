@@ -321,6 +321,72 @@ def _pipeline_summary(task: dict[str, Any], pipeline: dict[str, Any], quality: d
     return summary
 
 
+def _has_summary_source(parsed_document: Any, transcript: Any) -> bool:
+    if isinstance(transcript, dict):
+        if str(transcript.get('full_text') or '').strip():
+            return True
+        if list(transcript.get('segments') or []):
+            return True
+    if isinstance(parsed_document, dict):
+        if str(parsed_document.get('plain_text') or '').strip():
+            return True
+        if list(parsed_document.get('structured_blocks') or []):
+            return True
+    return False
+
+
+def _enqueue_summary_task_if_needed(conn, task: dict[str, Any], item: dict[str, Any], parsed_document: Any, transcript: Any, now: datetime) -> None:
+    if task['task_type'] == 'generate_summary':
+        return
+    if not _has_summary_source(parsed_document, transcript):
+        return
+
+    existing_task_id = conn.execute(
+        select(processing_tasks.c.id)
+        .where(
+            processing_tasks.c.content_item_id == item['id'],
+            processing_tasks.c.task_type == 'generate_summary',
+            processing_tasks.c.status.in_([PENDING_STATUS, RUNNING_STATUS, RETRYING_STATUS]),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if existing_task_id is not None:
+        return
+
+    existing_summary_id = conn.execute(
+        select(summaries.c.id)
+        .where(
+            summaries.c.content_item_id == item['id'],
+            summaries.c.summary_type == 'short',
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if existing_summary_id is not None:
+        return
+
+    conn.execute(
+        processing_tasks.insert().values(
+            id=uuid4(),
+            content_item_id=item['id'],
+            user_id=item['user_id'],
+            task_type='generate_summary',
+            status=PENDING_STATUS,
+            priority=0,
+            attempt_count=0,
+            max_attempts=3,
+            locked_by=None,
+            payload={'steps': ['summarize'], 'source_task_id': str(task['id'])},
+            result={},
+            error_message=None,
+            started_at=None,
+            finished_at=None,
+            next_retry_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
 def _upsert_content_snapshot(conn, item_id: UUID, raw_snapshot: dict[str, Any] | None, fetch_payload: dict[str, Any], now: datetime) -> UUID | None:
     if not isinstance(raw_snapshot, dict):
         return None
@@ -660,6 +726,7 @@ def complete_task(engine: Engine, task: dict[str, Any], item: dict[str, Any], re
                 updated_at=now,
             )
         )
+        _enqueue_summary_task_if_needed(conn, task, item, parsed_document, transcript, now)
 
 
 def fail_task(engine: Engine, task: dict[str, Any], item: dict[str, Any] | None, error_message: str) -> None:
@@ -800,7 +867,7 @@ def load_visual_understanding_provider_config(engine: Engine, user_id: str) -> d
             .all()
         )
         row = _select_provider_for_capability(rows, "llm")
-        if row is None:
+        if row is None or not row.get('api_key_encrypted') or not row.get('chat_model'):
             return {}
         return {
             'provider_id': str(row['id']),

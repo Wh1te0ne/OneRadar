@@ -48,7 +48,7 @@ def seed_store() -> None:
             "chat_model": "ep-20260304161530-6ffr5",
             "embedding_model": "doubao-embed",
             "transcription_model": None,
-            "is_enabled": True,
+            "is_enabled": False,
             "config": {"capability": "llm"},
             "last_test_status": None,
             "last_tested_at": None,

@@ -1,0 +1,77 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e7]: radar
+      - generic [ref=e8]:
+        - heading "OneRadar" [level=1] [ref=e9]
+        - paragraph [ref=e10]: Zen Archive
+      - button "收起侧边栏" [ref=e11] [cursor=pointer]:
+        - generic [ref=e12]: keyboard_double_arrow_left
+    - navigation "主导航" [ref=e13]:
+      - link "bookmarks 稍后阅读" [ref=e14] [cursor=pointer]:
+        - /url: /inbox
+        - generic [ref=e15]: bookmarks
+        - generic [ref=e16]: 稍后阅读
+      - link "rss_feed 订阅源" [ref=e17] [cursor=pointer]:
+        - /url: /feed
+        - generic [ref=e18]: rss_feed
+        - generic [ref=e19]: 订阅源
+      - link "podcasts 播客" [ref=e20] [cursor=pointer]:
+        - /url: /podcasts
+        - generic [ref=e21]: podcasts
+        - generic [ref=e22]: 播客
+      - link "smart_display Bilibili" [ref=e23] [cursor=pointer]:
+        - /url: /import
+        - generic [ref=e24]: smart_display
+        - generic [ref=e25]: Bilibili
+    - generic [ref=e27]:
+      - link "知识库" [ref=e28] [cursor=pointer]:
+        - /url: /library
+        - generic [ref=e29]: local_library
+        - generic [ref=e30]: 知识库
+      - button "新建收藏夹" [ref=e31] [cursor=pointer]:
+        - generic [ref=e32]: add
+    - paragraph [ref=e33]: 还没有收藏夹
+    - link "delete 最近删除" [ref=e35] [cursor=pointer]:
+      - /url: /trash
+      - generic [ref=e36]: delete
+      - generic [ref=e37]: 最近删除
+  - main [ref=e38]:
+    - generic [ref=e39]:
+      - generic "搜索" [ref=e40]:
+        - generic [ref=e41]: search
+        - searchbox "搜索" [ref=e42]
+      - link "设置" [ref=e43] [cursor=pointer]:
+        - /url: /connect
+        - generic [ref=e44]: settings
+    - generic [ref=e46]:
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - generic [ref=e49]:
+            - generic [ref=e50]: RSS
+            - heading "订阅源" [level=2] [ref=e51]
+          - generic [ref=e52]:
+            - button "今天 · 0" [ref=e53] [cursor=pointer]
+            - button "近 7 天 · 0" [ref=e54] [cursor=pointer]
+            - button "全部 · 0" [ref=e55] [cursor=pointer]
+        - generic [ref=e56]:
+          - button "sync 刷新" [ref=e57] [cursor=pointer]:
+            - generic [ref=e58]: sync
+            - text: 刷新
+          - button "add 添加源" [ref=e59] [cursor=pointer]:
+            - generic [ref=e60]: add
+            - text: 添加源
+      - generic [ref=e61]:
+        - complementary [ref=e62]:
+          - button "dynamic_feed 全部订阅源 0" [ref=e63] [cursor=pointer]:
+            - generic [ref=e64]: dynamic_feed
+            - generic [ref=e65]: 全部订阅源
+            - generic [ref=e66]: "0"
+          - button "add 添加订阅源" [ref=e67] [cursor=pointer]:
+            - generic [ref=e68]: add
+            - text: 添加订阅源
+        - main [ref=e69]:
+          - generic [ref=e70]:
+            - generic [ref=e72]: rss_feed
+            - heading "还没有订阅内容" [level=3] [ref=e73]
+            - paragraph [ref=e74]: 添加 RSS 源后，这里会按发布时间聚合显示所有更新。

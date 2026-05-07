@@ -21,6 +21,7 @@ class ImportItemRequest(BaseModel):
     parser_name: str | None = None
     parser_version: str | None = None
     generate_summary: bool = False
+    allow_duplicate: bool = False
 
 
 class ImportItemResponse(BaseModel):

@@ -263,7 +263,7 @@ export type ApiItemDetail = {
   };
   parsed_document: {
     plain_text: string;
-    structured_blocks: Array<{ type: string; text?: string }>;
+    structured_blocks: Array<{ type: string; text?: string; order?: number; data?: { level?: number; [key: string]: unknown } }>;
     parser_name?: string | null;
     parser_version?: string | null;
   } | null;
@@ -371,6 +371,9 @@ export type ApiTaskEntry = {
   status: "pending" | "running" | "retrying" | "success" | "failed" | "canceled";
   attempt_count: number;
   error_message?: string | null;
+  stage_label?: string | null;
+  stage_detail?: string | null;
+  progress_percent?: number | null;
   created_at: string;
 };
 

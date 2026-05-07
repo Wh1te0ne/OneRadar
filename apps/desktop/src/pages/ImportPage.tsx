@@ -52,6 +52,12 @@ function taskStatusText(status: ApiTaskEntry["status"]) {
   }
 }
 
+function taskProgress(task?: ApiTaskEntry | null) {
+  const value = Number(task?.progress_percent ?? 0);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function apiRootUrl(baseUrl: string) {
   const normalized = baseUrl.trim().replace(/\/+$/, "");
   return normalized.endsWith("/api") ? normalized.slice(0, -4) : normalized;
@@ -110,9 +116,12 @@ export function ImportPage() {
       try {
         const response = await client.listTasks(100);
         if (cancelled) return;
-        const nextTask = response.items.find((task) =>
-          importResult.task_id ? task.id === importResult.task_id : task.item_id === importResult.item_id
-        );
+        const itemTasks = response.items
+          .filter((task) => task.item_id === importResult.item_id)
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        const activeTask = itemTasks.find((task) => ["pending", "running", "retrying"].includes(task.status));
+        const importTaskMatch = importResult.task_id ? itemTasks.find((task) => task.id === importResult.task_id) : null;
+        const nextTask = activeTask ?? importTaskMatch ?? itemTasks[0] ?? null;
         setImportTask(nextTask ?? null);
       } catch {
         if (!cancelled) {
@@ -184,17 +193,28 @@ export function ImportPage() {
     }
   }
 
-  async function handleConfirmImport() {
+  async function importPreview(allowDuplicate = false) {
     if (!preview) return;
     setConfirmBusy(true); setImportError(null); setImportResult(null);
     try {
-      const r = await client.importItem(preview.normalized_url, "bilibili_video");
+      const r = await client.importItem(preview.normalized_url, "bilibili_video", { allowDuplicate });
       setImportResult(r);
       await loadFolders();
+      return r;
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "加入稍后阅读失败");
+      return null;
     } finally {
       setConfirmBusy(false);
+    }
+  }
+
+  async function handleConfirmImport() {
+    const result = await importPreview(false);
+    if (!result?.is_duplicate) return;
+    const shouldAddAgain = window.confirm("内容已存在，是否再次添加？");
+    if (shouldAddAgain) {
+      await importPreview(true);
     }
   }
 
@@ -397,11 +417,11 @@ export function ImportPage() {
               <button
                 className="btn btn-bili-primary"
                 type="button"
-                disabled={confirmBusy || Boolean(importResult)}
+                disabled={confirmBusy}
                 onClick={() => void handleConfirmImport()}
               >
                 <span className="icon icon-sm">{confirmBusy ? "sync" : "playlist_add_check"}</span>
-                {confirmBusy ? "加入中…" : importResult ? "已加入稍后阅读" : "确认加入稍后阅读"}
+                {confirmBusy ? "加入中…" : importResult ? "再次加入稍后阅读" : "确认加入稍后阅读"}
               </button>
 
               {importResult && (
@@ -416,11 +436,18 @@ export function ImportPage() {
                   </div>
                   <div className="text-caption" style={{ marginTop: 8 }}>
                     {importTask
-                      ? `后台任务：${taskStatusText(importTask.status)}${importTask.error_message ? ` - ${importTask.error_message}` : ""}`
+                      ? `后台任务：${importTask.stage_label ?? taskStatusText(importTask.status)}${importTask.error_message ? ` - ${importTask.error_message}` : ""}`
                       : importResult.task_id
                         ? "后台任务已创建，正在等待状态同步。"
-                        : "已存在的条目不会重复创建任务。"}
+                        : importResult.is_duplicate
+                          ? "如果需要重新解析，可以再次点击按钮并确认新增。"
+                          : "条目已保存。"}
                   </div>
+                  {importTask && (
+                    <div className="progress-bar" style={{ marginTop: 10 }}>
+                      <div className="progress-bar-fill" style={{ width: `${taskProgress(importTask)}%` }} />
+                    </div>
+                  )}
                   <Link className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} to={`/items/${importResult.item_id}?from=import`}>
                     <span className="icon icon-sm">open_in_new</span>
                     打开条目查看进度

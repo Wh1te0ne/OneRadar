@@ -1,0 +1,12 @@
+{"logTime": "0506/121626", {"lineNo":0,"logLevel":2,"message":"MaybeOrchestrateMigration: MaybeOrchestrateMigration","source":"Workspace Migration","timestamp":"2026-05-06T12:16:26.391Z"}}
+{"logTime": "0506/121626", {"lineNo":0,"logLevel":2,"message":"Migrate_FeatureCheck: Migrate_FeatureCheck","source":"Workspace Migration","timestamp":"2026-05-06T12:16:26.393Z"}}
+{"logTime": "0506/121626", {"lineNo":0,"logLevel":2,"message":"Migrate_MaybeHavePrefs: Migrate_MaybeHavePrefs","source":"Workspace Migration","timestamp":"2026-05-06T12:16:26.393Z"}}
+{"logTime": "0506/121626", {"lineNo":0,"logLevel":2,"message":"Migrate_Schedule: Migrate_Schedule","source":"Workspace Migration","timestamp":"2026-05-06T12:16:26.393Z"}}
+{"logTime": "0506/121626", {"lineNo":0,"logLevel":2,"message":"MaybeOrchestrateMigration: ~MaybeOrchestrateMigration","source":"Workspace Migration","timestamp":"2026-05-06T12:16:26.393Z"}}
+{"logTime": "0506/122148", {"lineNo":0,"logLevel":2,"message":"Log: Migrate_WaitForNotInUse","source":"Workspace Migration","timestamp":"2026-05-06T12:21:48.835Z"}}
+{"logTime": "0506/122148", {"lineNo":0,"logLevel":2,"message":"Log: Migrate_MaybeAfterWorkspacesNotInUse","source":"Workspace Migration","timestamp":"2026-05-06T12:21:48.835Z"}}
+{"logTime": "0506/122148", {"lineNo":0,"logLevel":2,"message":"Log: Starting fluid...","source":"Workspace Migration","timestamp":"2026-05-06T12:21:48.835Z"}}
+{"logTime": "0506/122148", {"lineNo":0,"logLevel":2,"message":"ScopedFluidManagerLifetime: Starting Fluid Manager for Migration","source":"Workspace Migration","timestamp":"2026-05-06T12:21:48.835Z"}}
+{"logTime": "0506/122212", {"lineNo":0,"logLevel":4,"message":"WorkspaceManager: Failed to connect to fluid user prefs Error code:46 tag:11","source":"Fluid Local Collaborator","timestamp":"2026-05-06T12:22:12.822Z"}}
+{"logTime": "0506/122212", {"extraInfo":"Failed to connect to fluid user prefs","lineNo":0,"logLevel":4,"message":"Fluid Manager Process Failed","source":"Fluid Local Collaborator","timestamp":"2026-05-06T12:22:12.823Z"}}
+{"logTime": "0506/122212", {"extraInfo":{"Date":"0","ErrorCode":404,"PrimaryError":17,"SPRequestGuid":"9bf610a2-b0d2-3000-679b-dd9c3d3d192d","SecondaryError":36},"lineNo":0,"logLevel":4,"message":"EdgeFluidCSPStorageHelper failed at CreateContainerCall","source":"Token Fetcher","timestamp":"2026-05-06T12:22:12.823Z"}}

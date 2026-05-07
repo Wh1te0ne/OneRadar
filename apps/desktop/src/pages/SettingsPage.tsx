@@ -225,8 +225,8 @@ export function SettingsPage() {
     const capability = capabilityOf(provider);
     const isAsr = capability === "asr";
     const configured = isAsr
-      ? Boolean(provider.transcription_app_id || provider.transcription_model)
-      : Boolean(provider.api_key_configured || provider.chat_model);
+      ? Boolean(provider.transcription_app_id && provider.transcription_model && provider.transcription_access_token_configured && provider.transcription_secret_key_configured)
+      : Boolean(provider.api_key_configured && provider.chat_model);
     return (
       <div key={provider.id} className="provider-row">
         <div className="provider-icon" style={{ background: provider.is_enabled ? "rgba(var(--primary-rgb),0.1)" : "var(--surface-high)" }}>

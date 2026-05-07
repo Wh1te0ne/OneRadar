@@ -52,6 +52,12 @@ function taskIsActive(task: ApiTaskEntry) {
   return task.status === "pending" || task.status === "running" || task.status === "retrying";
 }
 
+function taskProgress(task?: ApiTaskEntry | null) {
+  const value = Number(task?.progress_percent ?? 0);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function formatTranscriptTime(ms: number) {
   const s = Math.floor(ms / 1000);
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -59,6 +65,24 @@ function formatTranscriptTime(ms: number) {
 
 function splitParagraphs(value?: string | null) {
   return value ? value.split(/\n+/).filter(Boolean) : [];
+}
+
+type ReaderBlock = NonNullable<ApiItemDetail["parsed_document"]>["structured_blocks"][number];
+
+function normalizeReaderText(value?: string | null) {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function articleReaderBlocks(document: ApiItemDetail["parsed_document"], title?: string | null): ReaderBlock[] {
+  const structuredBlocks = document?.structured_blocks?.filter((block) => normalizeReaderText(block.text)) ?? [];
+  if (structuredBlocks.length) {
+    const titleText = normalizeReaderText(title);
+    return structuredBlocks.filter((block, index) => {
+      if (index !== 0 || block.type !== "heading") return true;
+      return normalizeReaderText(block.text) !== titleText;
+    });
+  }
+  return splitParagraphs(document?.plain_text).map((text, order) => ({ type: "paragraph", text, order }));
 }
 
 function formatReadingTime(value?: string | null) {
@@ -631,10 +655,11 @@ export function ItemDetailPage() {
 
   const from = new URLSearchParams(location.search).get("from");
   const paragraphs = splitParagraphs(item?.parsed_document?.plain_text);
+  const articleBlocks = articleReaderBlocks(item?.parsed_document ?? null, item?.title);
   const isVideo = item?.content_type === "bilibili_video";
   const isPodcast = item?.content_type === "podcast_episode";
   const hasTranscript = (item?.transcript?.segments?.length ?? 0) > 0 || Boolean(item?.transcript?.full_text?.trim());
-  const hasArticleBody = paragraphs.length > 0;
+  const hasArticleBody = isVideo ? paragraphs.length > 0 : articleBlocks.length > 0;
   const podcastDescriptionParagraphs = isPodcast ? splitPodcastDescription(item?.parsed_document?.plain_text) : [];
   const aiSummaries = item?.summaries.filter((summary) => summary.model_name || summary.summary_type === "visual_context") ?? [];
   const uid = item?.uid ?? item?.id ?? itemId;
@@ -647,8 +672,17 @@ export function ItemDetailPage() {
   const latestTask = itemTasks[0] ?? null;
   const visibleTask = activeTasks[0] ?? latestTask;
   const activeSummaryTask = activeTasks.find((task) => task.task_type === "generate_summary") ?? null;
+  const latestSourceTask = itemTasks.find((task) => task.task_type === "fetch_meta" || task.task_type === "reprocess_item") ?? null;
   const latestSummaryTask = itemTasks.find((task) => task.task_type === "generate_summary") ?? null;
   const failedSummaryTask = latestSummaryTask?.status === "failed" ? latestSummaryTask : null;
+  const sourceReady = hasArticleBody || hasTranscript;
+  const summaryReady = aiSummaries.length > 0;
+  const sourceStageLabel = latestSourceTask?.stage_label ?? (sourceReady ? "原文已生成" : "原文未开始");
+  const sourceStageDetail = latestSourceTask?.stage_detail ?? (sourceReady ? "转写/正文已经保存，可以查看原文。" : "等待后台生成可读原文。");
+  const sourceProgress = latestSourceTask ? taskProgress(latestSourceTask) : sourceReady ? 100 : 0;
+  const summaryStageLabel = latestSummaryTask?.stage_label ?? (summaryReady ? "AI 摘要已完成" : sourceReady ? "AI 摘要未开始" : "等待原文");
+  const summaryStageDetail = latestSummaryTask?.stage_detail ?? (summaryReady ? "摘要已经写入条目。" : sourceReady ? "原文已准备好，等待提交或自动排队。" : "原文生成后会进入 AI 摘要阶段。");
+  const summaryProgress = latestSummaryTask ? taskProgress(latestSummaryTask) : summaryReady ? 100 : 0;
   const hasActiveTask = activeTasks.length > 0 || item?.status === "pending" || item?.status === "processing";
   const taskBannerTone = visibleTask?.status === "failed" || item?.status === "failed" ? "failed" : hasActiveTask ? "active" : "idle";
   const highlightCount = item?.highlights.length ?? 0;
@@ -805,6 +839,22 @@ export function ItemDetailPage() {
       nodes.push(text.slice(cursor));
     }
     return nodes;
+  }
+
+  function renderArticleBlock(block: ReaderBlock, index: number) {
+    const text = normalizeReaderText(block.text);
+    if (!text) return null;
+    if (block.type === "heading") {
+      const level = Math.max(2, Math.min(4, Number(block.data?.level ?? 2)));
+      const className = `reader-heading reader-heading-${level}`;
+      if (level === 2) return <h2 key={`${index}:${text}`} className={className}>{renderAnnotatedText(text)}</h2>;
+      if (level === 3) return <h3 key={`${index}:${text}`} className={className}>{renderAnnotatedText(text)}</h3>;
+      return <h4 key={`${index}:${text}`} className={className}>{renderAnnotatedText(text)}</h4>;
+    }
+    if (block.type === "excerpt") {
+      return <p key={`${index}:${text}`} className="reader-excerpt">{renderAnnotatedText(text)}</p>;
+    }
+    return <p key={`${index}:${text}`}>{renderAnnotatedText(text)}</p>;
   }
 
   function findExistingHighlightForQuote(quoteText: string) {
@@ -1225,19 +1275,42 @@ export function ItemDetailPage() {
                     {taskBannerTone === "failed"
                       ? "处理失败"
                       : visibleTask
-                        ? taskTypeLabel(visibleTask.task_type, item.content_type)
+                        ? visibleTask.stage_label ?? taskTypeLabel(visibleTask.task_type, item.content_type)
                         : "正在处理内容"}
                   </div>
                   <div className="processing-banner-text">
                     {taskPollError
                       ? `状态同步失败：${taskPollError}`
                       : visibleTask
-                        ? `${taskStatusLabel(visibleTask.status)}${visibleTask.error_message ? `：${visibleTask.error_message}` : ""}`
+                        ? `${visibleTask.stage_detail ?? taskStatusLabel(visibleTask.status)}${visibleTask.error_message ? `：${visibleTask.error_message}` : ""}`
                         : "后台正在处理，完成后会自动刷新这里。"}
                   </div>
                 </div>
               </div>
             )}
+
+            <div className="processing-overview" aria-label="处理进度">
+              <div className="processing-step-row">
+                <div className="processing-step-header">
+                  <span>原文</span>
+                  <strong>{sourceStageLabel}</strong>
+                </div>
+                <div className="progress-bar">
+                  <div className="progress-bar-fill" style={{ width: `${sourceProgress}%` }} />
+                </div>
+                <p>{sourceStageDetail}</p>
+              </div>
+              <div className="processing-step-row">
+                <div className="processing-step-header">
+                  <span>AI 解析</span>
+                  <strong>{summaryStageLabel}</strong>
+                </div>
+                <div className="progress-bar">
+                  <div className="progress-bar-fill" style={{ width: `${summaryProgress}%` }} />
+                </div>
+                <p>{summaryStageDetail}</p>
+              </div>
+            </div>
 
             <div className="reader-content-tabs" role="tablist" aria-label="阅读内容">
               <button
@@ -1308,7 +1381,7 @@ export function ItemDetailPage() {
                   <div className="article-section">
                     <div className="article-section-title">正文</div>
                     <div className="prose">
-                      {hasArticleBody ? paragraphs.map((paragraph) => <p key={paragraph}>{renderAnnotatedText(paragraph)}</p>) : <p className="text-meta">暂未生成可读正文。</p>}
+                      {hasArticleBody ? articleBlocks.map(renderArticleBlock) : <p className="text-meta">暂未生成可读正文。</p>}
                     </div>
                   </div>
                 )}
@@ -1370,7 +1443,10 @@ export function ItemDetailPage() {
                 {activeSummaryTask && (
                   <div className="ai-generating-row">
                     <span className="icon icon-sm">sync</span>
-                    <span>AI 生成中：{taskStatusLabel(activeSummaryTask.status)}，完成后会自动刷新摘要。</span>
+                    <span>{activeSummaryTask.stage_label ?? `AI 生成中：${taskStatusLabel(activeSummaryTask.status)}`}，完成后会自动刷新摘要。</span>
+                    <div className="progress-bar" style={{ marginTop: 8 }}>
+                      <div className="progress-bar-fill" style={{ width: `${taskProgress(activeSummaryTask)}%` }} />
+                    </div>
                   </div>
                 )}
                 {!activeSummaryTask && failedSummaryTask && (

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
 import hashlib
 from html.parser import HTMLParser
 import ipaddress
@@ -10,7 +9,7 @@ import socket
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .article_extractors import extract_article_drafts
 from .common import (
@@ -147,6 +146,47 @@ class _TextExtractor(HTMLParser):
         return re.sub(r"\n{3,}", "\n\n", "".join(self._chunks)).strip()
 
 
+class _HeadingExtractor(HTMLParser):
+    _ignored_tags = {"script", "style", "noscript", "nav", "header", "footer", "aside"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.headings: dict[str, int] = {}
+        self._ignore_depth = 0
+        self._current_level: int | None = None
+        self._current_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        name = tag.casefold()
+        if name in self._ignored_tags:
+            self._ignore_depth += 1
+            return
+        if self._ignore_depth:
+            return
+        if re.fullmatch(r"h[1-6]", name):
+            self._current_level = int(name[1])
+            self._current_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        name = tag.casefold()
+        if name in self._ignored_tags and self._ignore_depth:
+            self._ignore_depth -= 1
+            return
+        if self._ignore_depth:
+            return
+        if self._current_level is not None and name == f"h{self._current_level}":
+            text = _block_key(" ".join(self._current_parts))
+            if text:
+                existing = self.headings.get(text)
+                self.headings[text] = self._current_level if existing is None else min(existing, self._current_level)
+            self._current_level = None
+            self._current_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignore_depth and self._current_level is not None:
+            self._current_parts.append(data)
+
+
 def _normalize_url(raw_url: str) -> str:
     trimmed = raw_url.strip()
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", trimmed):
@@ -216,19 +256,47 @@ def _html_to_text(html: str) -> str:
     return _clean_text(extractor.text())
 
 
+def _block_key(text: str | None) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().casefold()
+
+
+def _heading_levels_from_html(html: str) -> dict[str, int]:
+    extractor = _HeadingExtractor()
+    try:
+        extractor.feed(html)
+        extractor.close()
+    except Exception:
+        return {}
+    return extractor.headings
+
+
 def _split_paragraphs(text: str) -> list[str]:
     paragraphs = [part.strip() for part in re.split(r"\n{2,}", text) if part.strip()]
     return paragraphs
 
 
-def _build_blocks(title: str | None, excerpt: str | None, paragraphs: list[str]) -> list[PipelineDocumentBlock]:
+def _build_blocks(
+    title: str | None,
+    excerpt: str | None,
+    paragraphs: list[str],
+    heading_levels: dict[str, int] | None = None,
+) -> list[PipelineDocumentBlock]:
     blocks: list[PipelineDocumentBlock] = []
+    title_key = _block_key(title)
+    heading_levels = heading_levels or {}
     if title:
         blocks.append(PipelineDocumentBlock(block_type="heading", text=title, order=0, data={"level": 1}))
     if excerpt:
         blocks.append(PipelineDocumentBlock(block_type="excerpt", text=excerpt, order=len(blocks)))
-    for index, paragraph in enumerate(paragraphs, start=len(blocks)):
-        blocks.append(PipelineDocumentBlock(block_type="paragraph", text=paragraph, order=index))
+    for paragraph in paragraphs:
+        paragraph_key = _block_key(paragraph)
+        if title_key and paragraph_key == title_key:
+            continue
+        level = heading_levels.get(paragraph_key)
+        if level is not None:
+            blocks.append(PipelineDocumentBlock(block_type="heading", text=paragraph, order=len(blocks), data={"level": level}))
+        else:
+            blocks.append(PipelineDocumentBlock(block_type="paragraph", text=paragraph, order=len(blocks)))
     return blocks
 
 
@@ -468,7 +536,6 @@ class ArticlePipeline:
         try:
             _ensure_safe_fetch_target(normalized_url)
         except UnsafeArticleUrlError as error:
-            html = self._demo_html(normalized_url, payload)
             return ArticleFetchResult(
                 mode="blocked",
                 source_url=str(payload.get("source_url", normalized_url)),
@@ -477,7 +544,7 @@ class ArticlePipeline:
                 ok=False,
                 status_code=None,
                 content_type=None,
-                html=html,
+                html="",
                 error_message=str(error),
             )
 
@@ -510,16 +577,15 @@ class ArticlePipeline:
                     html=html,
                 )
         except (HTTPError, URLError, TimeoutError, UnsafeArticleUrlError, ValueError) as error:
-            html = self._demo_html(normalized_url, payload)
             return ArticleFetchResult(
-                mode="live_fallback",
+                mode="live_error",
                 source_url=str(payload.get("source_url", normalized_url)),
                 normalized_url=normalized_url,
                 final_url=normalized_url,
                 ok=False,
                 status_code=None,
                 content_type=None,
-                html=html,
+                html="",
                 error_message=f"live fetch unavailable: {error}",
             )
 
@@ -528,6 +594,7 @@ class ArticlePipeline:
         source_url = fetch_result.final_url or fetch_result.normalized_url
         drafts = extract_article_drafts(html, source_url, payload)
         candidates: list[ArticleExtractionCandidate] = []
+        heading_levels = _heading_levels_from_html(html)
 
         for draft in drafts:
             body_text = draft.body_text.strip()
@@ -538,7 +605,7 @@ class ArticlePipeline:
             byline = draft.byline if draft.byline else None
             language = draft.language if draft.language else None
             excerpt = draft.excerpt if draft.excerpt else None
-            blocks = _build_blocks(title, excerpt, _split_paragraphs(body_text))
+            blocks = _build_blocks(title, excerpt, _split_paragraphs(body_text), heading_levels)
             candidates.append(
                 ArticleExtractionCandidate(
                     strategy=draft.strategy,
@@ -564,7 +631,7 @@ class ArticlePipeline:
         )
         fallback_excerpt = _extract_meta_content(html, "description") or _extract_meta_content(html, "og:description")
         fallback_site_name = _extract_meta_content(html, "og:site_name")
-        fallback_blocks = _build_blocks(fallback_title, fallback_excerpt, _split_paragraphs(fallback_body))
+        fallback_blocks = _build_blocks(fallback_title, fallback_excerpt, _split_paragraphs(fallback_body), heading_levels)
         return [
             ArticleExtractionCandidate(
                 strategy="plain_text",
@@ -721,4 +788,3 @@ def _demo_article_payload(source_url: str) -> dict[str, Any]:
         ),
         "source_url": source_url,
     }
-

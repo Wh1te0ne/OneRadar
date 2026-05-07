@@ -80,6 +80,7 @@ def import_item(payload: ImportItemRequest) -> ImportItemResponse:
         parser_name=payload.parser_name,
         parser_version=payload.parser_version,
         generate_summary=payload.generate_summary,
+        allow_duplicate=payload.allow_duplicate,
     )
 
 

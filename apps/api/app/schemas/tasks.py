@@ -14,6 +14,9 @@ class TaskEntry(BaseModel):
     status: TaskStatus
     attempt_count: int
     error_message: str | None = None
+    stage_label: str = "正在处理"
+    stage_detail: str | None = None
+    progress_percent: int = Field(default=0, ge=0, le=100)
     created_at: datetime
 
 
@@ -27,4 +30,3 @@ class TaskListResponse(BaseModel):
 class TaskRetryResponse(BaseModel):
     task_id: str
     status: TaskStatus
-

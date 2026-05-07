@@ -407,6 +407,7 @@ export function createApiClient(baseUrl: string) {
       parserName?: string | null;
       parserVersion?: string | null;
       generateSummary?: boolean;
+      allowDuplicate?: boolean;
     }) =>
       request<ApiImportResponse>(baseUrl, "/api/items/import", {
         method: "POST",
@@ -421,7 +422,8 @@ export function createApiClient(baseUrl: string) {
           ...(options?.parsedText ? { parsed_text: options.parsedText } : {}),
           ...(options?.parserName ? { parser_name: options.parserName } : {}),
           ...(options?.parserVersion ? { parser_version: options.parserVersion } : {}),
-          ...(options?.generateSummary ? { generate_summary: true } : {})
+          ...(options?.generateSummary ? { generate_summary: true } : {}),
+          ...(options?.allowDuplicate ? { allow_duplicate: true } : {})
         })
       }),
     moveItem: (itemId: string, folderId: string) =>

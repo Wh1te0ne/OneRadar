@@ -58,6 +58,21 @@ def test_import_item_route_fallback_contract_and_deduplication(client, monkeypat
     assert duplicate_body["task_id"] is None
     assert duplicate_body["uid"] == first_body["uid"]
 
+    force_response = client.post(
+        "/api/items/import",
+        json={
+            "url": "https://example.com/articles/test",
+            "source_hint": "article",
+            "allow_duplicate": True,
+        },
+    )
+
+    assert force_response.status_code == 200
+    force_body = force_response.json()
+    assert force_body["is_duplicate"] is False
+    assert force_body["uid"] != first_body["uid"]
+    assert force_body["task_id"]
+
 
 def test_bilibili_preview_returns_metadata_without_importing(client, monkeypatch) -> None:
     def fake_fetch(video_id: str, id_type: str) -> dict[str, object]:

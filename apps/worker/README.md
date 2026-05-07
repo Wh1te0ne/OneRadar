@@ -56,9 +56,11 @@ It performs the following V1-friendly steps:
 
 - normalize the input URL
 - prefer provided HTML or a dry-run demo payload when running locally
+- fail/retry live article jobs when the real fetch is blocked or unavailable instead of persisting demo content
 - attempt a primary extraction strategy and a fallback strategy
 - score extraction quality
 - emit a structured persistable payload that maps cleanly to future API/database writes
+- preserve detected article heading levels in structured document blocks
 
 The result is intentionally shaped so the API layer can later store:
 
@@ -84,4 +86,4 @@ Provider API keys are decrypted only inside the worker process and are not copie
 
 This is still a skeleton, but it is now structured enough to be wired to the API server and queue later.
 
-For local dry runs, the worker uses an embedded demo article payload so the pipeline stays deterministic without network access.
+For local dry runs, the worker uses an embedded demo article payload so the pipeline stays deterministic without network access. Live article jobs do not use this demo fallback.
