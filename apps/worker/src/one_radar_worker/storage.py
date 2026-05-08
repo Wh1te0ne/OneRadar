@@ -876,6 +876,7 @@ def load_visual_understanding_provider_config(engine: Engine, user_id: str) -> d
             'base_url': row['base_url'],
             'api_key': reveal_secret(row['api_key_encrypted']),
             'model_name': row['chat_model'],
+            'provider_config': config,
         }
 
 

@@ -24,6 +24,7 @@ from app.schemas.daily_news import (
 from app.services.db_access import get_primary_user
 from app.services.feed_state_service import get_feed_state
 from app.services.provider_registry import ProviderCapability, resolve_provider_config
+from app.services.providers_service import _apply_thinking_payload
 from app.services.store import STORE, seed_store
 
 DAILY_NEWS_TIMEZONE = ZoneInfo("Asia/Shanghai")
@@ -162,6 +163,8 @@ def _generate_report_payload(entries: list[dict[str, Any]], report_date: str) ->
         base_url=provider.base_url,
         api_key=provider.api_key,
         model_name=provider.model_name,
+        provider_type=provider.provider_type,
+        provider_config=provider.provider_config,
         prompt=_daily_news_prompt(entries, report_date),
     )
     parsed = _parse_model_json(raw_output)
@@ -176,24 +179,26 @@ def _call_chat_completion(
     base_url: str | None,
     api_key: str,
     model_name: str,
+    provider_type,
+    provider_config: dict[str, Any],
     prompt: str,
 ) -> str:
     endpoint = _chat_endpoint(base_url)
+    payload: dict[str, Any] = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        "temperature": 0.25,
+        "max_tokens": 3800,
+    }
+    _apply_thinking_payload(payload, provider_type=provider_type, config=provider_config)
     request = Request(
         endpoint,
-        data=json.dumps(
-            {
-                "model": model_name,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                "temperature": 0.25,
-                "max_tokens": 3800,
-            }
-        ).encode("utf-8"),
+        data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

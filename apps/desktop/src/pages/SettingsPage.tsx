@@ -15,6 +15,7 @@ const themeOptions = [
 
 type ProviderKind = "doubao" | "openai_compatible" | "deepseek" | "custom";
 type ProviderCapability = "llm" | "asr";
+type ThinkingMode = "default" | "enabled" | "disabled" | "auto";
 
 type ProviderFormState = {
   id: string | null;
@@ -28,6 +29,7 @@ type ProviderFormState = {
   transcription_app_id: string;
   transcription_access_token: string;
   transcription_secret_key: string;
+  thinking_mode: ThinkingMode;
   is_enabled: boolean;
 };
 
@@ -69,6 +71,7 @@ function emptyProviderForm(capability: ProviderCapability): ProviderFormState {
     transcription_app_id: "",
     transcription_access_token: "",
     transcription_secret_key: "",
+    thinking_mode: "default",
     is_enabled: true,
   };
 }
@@ -87,6 +90,7 @@ function providerToForm(provider: ApiProvider): ProviderFormState {
     transcription_app_id: provider.transcription_app_id ?? "",
     transcription_access_token: "",
     transcription_secret_key: "",
+    thinking_mode: provider.thinking_mode ?? "default",
     is_enabled: provider.is_enabled,
   };
 }
@@ -103,6 +107,7 @@ function applyProviderDefaults(form: ProviderFormState, providerType: ProviderKi
       base_url: form.capability === "llm" && (!form.base_url || form.base_url === DOUBAO_BASE_URL) ? DEEPSEEK_BASE_URL : form.base_url,
       chat_model: form.capability === "llm" ? form.chat_model : "",
       transcription_model: "",
+      thinking_mode: form.thinking_mode === "auto" ? "enabled" : form.thinking_mode,
     };
   }
   if (providerType !== "doubao") {
@@ -112,6 +117,7 @@ function applyProviderDefaults(form: ProviderFormState, providerType: ProviderKi
       base_url: form.capability === "llm" ? form.base_url : "",
       chat_model: form.capability === "llm" ? form.chat_model : "",
       transcription_model: form.capability === "asr" ? form.transcription_model : "",
+      thinking_mode: form.thinking_mode === "auto" ? "default" : form.thinking_mode,
     };
   }
   return {
@@ -135,6 +141,22 @@ function providerCredentialConfigured(provider: ApiProvider | undefined, capabil
   return false;
 }
 
+function thinkingModeLabel(mode: string | undefined) {
+  switch (mode) {
+    case "enabled": return "思考：开启";
+    case "disabled": return "思考：关闭";
+    case "auto": return "思考：自动";
+    default: return "思考：默认";
+  }
+}
+
+function thinkingModeHint(providerType: ProviderKind, mode: ThinkingMode) {
+  if (mode === "default") return "默认不额外传参，保持模型服务自己的默认行为。";
+  if (providerType === "deepseek") return "DeepSeek 会发送 thinking.type，并在开启时附带 reasoning_effort=high；auto 会按开启处理。";
+  if (providerType === "doubao") return "豆包会发送 OpenAI 兼容的 thinking.type 参数；不是 LAS 算子的 thinking_type。";
+  return "仅 DeepSeek 和豆包会写入思考参数，其他 OpenAI 兼容模型先保持默认。";
+}
+
 function showAppToast(message: string, tone: "success" | "error" | "info" = "info") {
   window.dispatchEvent(new CustomEvent("oneradar:toast", { detail: { message, tone } }));
 }
@@ -152,6 +174,7 @@ export function SettingsPage() {
   const [editing, setEditing] = useState<ProviderCapability | null>(null);
   const [providerSaving, setProviderSaving] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
+  const [providerTestingId, setProviderTestingId] = useState<string | null>(null);
 
   const llmProviders = providers.filter((provider) => capabilityOf(provider) === "llm");
   const asrProviders = providers.filter((provider) => capabilityOf(provider) === "asr");
@@ -257,6 +280,7 @@ export function SettingsPage() {
         transcription_app_id: form.capability === "asr" ? transcriptionAppId : null,
         transcription_access_token: form.capability === "asr" ? transcriptionAccessToken || null : null,
         transcription_secret_key: form.capability === "asr" ? transcriptionSecretKey || null : null,
+        thinking_mode: form.capability === "llm" ? form.thinking_mode : null,
         is_enabled: true,
       };
       await (form.id ? client.updateProvider(form.id, payload) : client.createProvider(payload));
@@ -303,6 +327,7 @@ export function SettingsPage() {
         transcription_app_id: capability === "asr" ? provider.transcription_app_id ?? null : null,
         transcription_access_token: null,
         transcription_secret_key: null,
+        thinking_mode: capability === "llm" ? provider.thinking_mode ?? "default" : null,
         is_enabled: true,
       });
       await loadProviders();
@@ -311,6 +336,25 @@ export function SettingsPage() {
       setProviderError(e instanceof Error ? e.message : "切换当前模型失败");
     } finally {
       setProviderSaving(false);
+    }
+  }
+
+  async function testProvider(provider: ApiProvider) {
+    setProviderTestingId(provider.id);
+    setProviderError(null);
+    try {
+      const result = await client.testProvider(provider.id);
+      await loadProviders();
+      if (result.ok) {
+        showAppToast(result.message || `模型测试通过，耗时 ${result.latency_ms} ms。`, "success");
+      } else {
+        setProviderError(result.message || "模型测试失败。");
+        showAppToast(result.message || "模型测试失败。", "error");
+      }
+    } catch (e) {
+      setProviderError(e instanceof Error ? e.message : "模型测试失败");
+    } finally {
+      setProviderTestingId(null);
     }
   }
 
@@ -329,9 +373,15 @@ export function SettingsPage() {
           <div style={{ fontSize: 12, color: "var(--outline)" }}>
             {providerTypeLabel(provider.provider_type)} · {isAsr ? provider.transcription_app_id ?? "APP ID 未配置" : provider.base_url ?? "BaseURL 未配置"}
           </div>
+          {!isAsr && <div style={{ fontSize: 12, color: "var(--outline)", marginTop: 2 }}>{thinkingModeLabel(provider.thinking_mode)}</div>}
         </div>
         <div className="provider-row-actions">
           <span className={`chip ${provider.is_enabled ? "chip-success" : "chip-neutral"}`}>{provider.is_enabled ? "当前使用" : "可选"}</span>
+          {!isAsr && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void testProvider(provider)} disabled={providerTestingId === provider.id || providerSaving}>
+              {providerTestingId === provider.id ? "测试中" : "测试"}
+            </button>
+          )}
           {!provider.is_enabled && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => void activateProvider(provider)} disabled={providerSaving}>
               设为当前使用
@@ -423,6 +473,24 @@ export function SettingsPage() {
                 onChange={(event) => setForm((current) => ({ ...current, chat_model: event.target.value }))}
                 placeholder={form.provider_type === "doubao" ? "填入你自己的 Endpoint，例如 ep-..." : form.provider_type === "deepseek" ? "deepseek-chat" : "模型名"}
               />
+            </label>
+            <label>
+              <span className="text-caption">思考模式</span>
+              <div className="tab-row" style={{ alignSelf: "flex-start" }}>
+                {(["default", "enabled", "disabled", ...(form.provider_type === "doubao" ? ["auto"] : [])] as ThinkingMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`tab ${form.thinking_mode === mode ? "active" : ""}`}
+                    onClick={() => setForm((current) => ({ ...current, thinking_mode: mode }))}
+                  >
+                    {mode === "default" ? "默认" : mode === "enabled" ? "开启" : mode === "disabled" ? "关闭" : "自动"}
+                  </button>
+                ))}
+              </div>
+              <span className="text-caption" style={{ display: "block", marginTop: 6 }}>
+                {thinkingModeHint(form.provider_type, form.thinking_mode)}
+              </span>
             </label>
           </>
         )}

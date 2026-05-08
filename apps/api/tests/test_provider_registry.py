@@ -161,3 +161,27 @@ def test_provider_service_enables_only_one_provider_per_capability(monkeypatch) 
     second_after = next(provider for provider in providers if provider.id == second.id)
     assert first_after.is_enabled is False
     assert second_after.is_enabled is True
+
+
+def test_provider_service_persists_llm_thinking_mode(monkeypatch) -> None:
+    def failing_session_local():
+        raise SQLAlchemyError("database unavailable")
+
+    monkeypatch.setattr(providers_service, "SessionLocal", failing_session_local)
+
+    provider = providers_service.create_provider(
+        ProviderCreateRequest(
+            provider_name="DeepSeek Thinking",
+            provider_type=ProviderType.deepseek,
+            capability="llm",
+            base_url="https://api.deepseek.com/v1",
+            api_key="sk-thinking",
+            chat_model="deepseek-v4-pro",
+            thinking_mode="enabled",
+            is_enabled=True,
+        )
+    )
+
+    stored = STORE.providers[provider.id]
+    assert provider.thinking_mode == "enabled"
+    assert stored["config"]["llm"]["thinking_mode"] == "enabled"

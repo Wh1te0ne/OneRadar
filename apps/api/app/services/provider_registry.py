@@ -30,6 +30,7 @@ class ProviderRuntimeConfig:
     api_key: str | None
     model_name: str | None
     capability: ProviderCapability
+    provider_config: dict
 
 
 def _model_for_capability(
@@ -50,6 +51,7 @@ def _config_from_model(
     provider: ModelProvider,
     capability: ProviderCapability,
 ) -> ProviderRuntimeConfig:
+    config = dict(provider.config or {})
     return ProviderRuntimeConfig(
         provider_id=str(provider.id),
         provider_name=provider.provider_name,
@@ -63,6 +65,7 @@ def _config_from_model(
             transcription_model=provider.transcription_model,
         ),
         capability=capability,
+        provider_config=config,
     )
 
 
@@ -70,6 +73,7 @@ def _config_from_record(
     record: dict[str, object],
     capability: ProviderCapability,
 ) -> ProviderRuntimeConfig:
+    config = record.get("config") if isinstance(record.get("config"), dict) else {}
     return ProviderRuntimeConfig(
         provider_id=str(record["id"]),
         provider_name=str(record["provider_name"]),
@@ -83,6 +87,7 @@ def _config_from_record(
             transcription_model=record.get("transcription_model"),
         ),
         capability=capability,
+        provider_config=config,
     )
 
 

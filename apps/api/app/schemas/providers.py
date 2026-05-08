@@ -24,6 +24,7 @@ class ProviderCreateRequest(BaseModel):
     transcription_app_id: str | None = None
     transcription_access_token: str | None = None
     transcription_secret_key: str | None = None
+    thinking_mode: str | None = None
     is_enabled: bool = True
 
 
@@ -49,6 +50,7 @@ class ProviderEntry(BaseModel):
     transcription_app_id: str | None = None
     transcription_access_token_configured: bool = False
     transcription_secret_key_configured: bool = False
+    thinking_mode: str = "default"
     is_enabled: bool = True
     last_test_status: str | None = None
     last_tested_at: datetime | None = None
@@ -62,3 +64,4 @@ class ProviderTestResponse(BaseModel):
     provider_id: str
     ok: bool
     latency_ms: int
+    message: str | None = None

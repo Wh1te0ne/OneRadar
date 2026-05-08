@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 from one_radar_worker.pipelines.common import PipelineContext
@@ -159,3 +160,81 @@ def test_summary_adapter_allows_longer_article_summaries(monkeypatch):
 
     assert result.ok is True
     assert '"max_tokens": 5200' in str(captured["payload"])
+
+
+def test_summary_adapter_uses_deepseek_thinking_payload(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = request.data.decode("utf-8")
+        return FakeResponse()
+
+    monkeypatch.setattr("one_radar_worker.pipelines.summary.urlopen", fake_urlopen)
+
+    result = OpenAICompatibleSummaryAdapter().summarize(
+        provider_config={
+            "provider_name": "DeepSeek",
+            "provider_type": "deepseek",
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "secret",
+            "model_name": "deepseek-v4-pro",
+            "provider_config": {"llm": {"thinking_mode": "enabled"}},
+        },
+        title="测试文章",
+        source_text="正文",
+    )
+
+    payload = json.loads(str(captured["payload"]))
+    assert result.ok is True
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["reasoning_effort"] == "high"
+    assert "temperature" not in payload
+
+
+def test_summary_adapter_uses_doubao_thinking_payload(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = request.data.decode("utf-8")
+        return FakeResponse()
+
+    monkeypatch.setattr("one_radar_worker.pipelines.summary.urlopen", fake_urlopen)
+
+    result = OpenAICompatibleSummaryAdapter().summarize(
+        provider_config={
+            "provider_name": "Doubao",
+            "provider_type": "doubao",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "api_key": "secret",
+            "model_name": "ep-test",
+            "provider_config": {"llm": {"thinking_mode": "auto"}},
+        },
+        title="测试文章",
+        source_text="正文",
+    )
+
+    payload = json.loads(str(captured["payload"]))
+    assert result.ok is True
+    assert payload["thinking"] == {"type": "auto"}
+    assert "reasoning_effort" not in payload
+    assert "temperature" not in payload

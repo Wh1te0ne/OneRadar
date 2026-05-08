@@ -436,6 +436,7 @@ class OpenAICompatibleVisualUnderstandingAdapter:
         content: list[dict[str, Any]],
     ) -> VisualUnderstandingResult:
         payload = _chat_payload(model_name=model_name, content=content)
+        _apply_thinking_payload(payload, provider_config=provider_config)
         request = Request(
             _chat_endpoint(str(provider_config.get("base_url") or "")),
             data=json.dumps(payload).encode("utf-8"),
@@ -500,6 +501,37 @@ def _chat_payload(*, model_name: str, content: list[dict[str, Any]]) -> dict[str
         "temperature": 0.2,
         "max_tokens": 1200,
     }
+
+
+def _thinking_mode(provider_config: dict[str, Any]) -> str:
+    runtime_config = provider_config.get("provider_config")
+    if not isinstance(runtime_config, dict):
+        runtime_config = {}
+    llm_config = runtime_config.get("llm")
+    if not isinstance(llm_config, dict):
+        llm_config = {}
+    mode = str(llm_config.get("thinking_mode") or "default").strip().lower()
+    if mode in {"default", "enabled", "disabled", "auto"}:
+        return mode
+    return "default"
+
+
+def _apply_thinking_payload(payload: dict[str, Any], *, provider_config: dict[str, Any]) -> None:
+    mode = _thinking_mode(provider_config)
+    if mode == "default":
+        return
+    provider_type = str(provider_config.get("provider_type") or "").strip().lower()
+    if provider_type == "deepseek":
+        if mode == "auto":
+            mode = "enabled"
+        payload["thinking"] = {"type": mode}
+        if mode == "enabled":
+            payload["reasoning_effort"] = "high"
+        payload.pop("temperature", None)
+        return
+    if provider_type == "doubao":
+        payload["thinking"] = {"type": mode}
+        payload.pop("temperature", None)
 
 
 def _visual_prompt(*, video_metadata: dict[str, Any], transcript_text: str, language: str | None) -> str:
