@@ -869,6 +869,7 @@ def load_visual_understanding_provider_config(engine: Engine, user_id: str) -> d
         row = _select_provider_for_capability(rows, "llm")
         if row is None or not row.get('api_key_encrypted') or not row.get('chat_model'):
             return {}
+        config = dict(row.get('config') or {})
         return {
             'provider_id': str(row['id']),
             'provider_name': row['provider_name'],

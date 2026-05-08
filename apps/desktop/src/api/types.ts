@@ -148,7 +148,7 @@ export type ApiProvider = {
   transcription_app_id?: string | null;
   transcription_access_token_configured?: boolean;
   transcription_secret_key_configured?: boolean;
-  thinking_mode?: "default" | "enabled" | "disabled" | "auto";
+  thinking_mode?: "default" | "enabled" | "disabled";
   is_enabled: boolean;
   last_test_status?: string | null;
   last_tested_at?: string | null;
@@ -166,7 +166,7 @@ export type ApiProviderPayload = {
   transcription_app_id?: string | null;
   transcription_access_token?: string | null;
   transcription_secret_key?: string | null;
-  thinking_mode?: "default" | "enabled" | "disabled" | "auto" | null;
+  thinking_mode?: "default" | "enabled" | "disabled" | null;
   is_enabled: boolean;
 };
 

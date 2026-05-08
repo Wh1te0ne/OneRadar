@@ -185,3 +185,27 @@ def test_provider_service_persists_llm_thinking_mode(monkeypatch) -> None:
     stored = STORE.providers[provider.id]
     assert provider.thinking_mode == "enabled"
     assert stored["config"]["llm"]["thinking_mode"] == "enabled"
+
+
+def test_provider_service_normalizes_legacy_auto_thinking_mode(monkeypatch) -> None:
+    def failing_session_local():
+        raise SQLAlchemyError("database unavailable")
+
+    monkeypatch.setattr(providers_service, "SessionLocal", failing_session_local)
+
+    provider = providers_service.create_provider(
+        ProviderCreateRequest(
+            provider_name="Doubao Thinking",
+            provider_type=ProviderType.doubao,
+            capability="llm",
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key="sk-thinking",
+            chat_model="ep-thinking",
+            thinking_mode="auto",
+            is_enabled=True,
+        )
+    )
+
+    stored = STORE.providers[provider.id]
+    assert provider.thinking_mode == "enabled"
+    assert stored["config"]["llm"]["thinking_mode"] == "enabled"

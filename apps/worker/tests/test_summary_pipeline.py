@@ -197,7 +197,7 @@ def test_summary_adapter_uses_deepseek_thinking_payload(monkeypatch):
     payload = json.loads(str(captured["payload"]))
     assert result.ok is True
     assert payload["thinking"] == {"type": "enabled"}
-    assert payload["reasoning_effort"] == "high"
+    assert payload["reasoning_effort"] == "medium"
     assert "temperature" not in payload
 
 
@@ -227,7 +227,7 @@ def test_summary_adapter_uses_doubao_thinking_payload(monkeypatch):
             "base_url": "https://ark.cn-beijing.volces.com/api/v3",
             "api_key": "secret",
             "model_name": "ep-test",
-            "provider_config": {"llm": {"thinking_mode": "auto"}},
+            "provider_config": {"llm": {"thinking_mode": "enabled"}},
         },
         title="测试文章",
         source_text="正文",
@@ -235,6 +235,6 @@ def test_summary_adapter_uses_doubao_thinking_payload(monkeypatch):
 
     payload = json.loads(str(captured["payload"]))
     assert result.ok is True
-    assert payload["thinking"] == {"type": "auto"}
+    assert payload["thinking"] == {"type": "enabled"}
     assert "reasoning_effort" not in payload
     assert "temperature" not in payload

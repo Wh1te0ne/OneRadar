@@ -576,7 +576,9 @@ def test_provider(provider_id: str) -> ProviderTestResponse:
 
 def _normalize_thinking_mode(value: object) -> str:
     mode = str(value or "default").strip().lower()
-    if mode in {"default", "enabled", "disabled", "auto"}:
+    if mode == "auto":
+        return "enabled"
+    if mode in {"default", "enabled", "disabled"}:
         return mode
     return "default"
 
@@ -605,11 +607,9 @@ def _apply_thinking_payload(
     if mode == "default":
         return
     if provider_type == ProviderType.deepseek:
-        if mode == "auto":
-            mode = "enabled"
         payload["thinking"] = {"type": mode}
         if mode == "enabled":
-            payload["reasoning_effort"] = "high"
+            payload["reasoning_effort"] = "medium"
         payload.pop("temperature", None)
         return
     if provider_type == ProviderType.doubao:

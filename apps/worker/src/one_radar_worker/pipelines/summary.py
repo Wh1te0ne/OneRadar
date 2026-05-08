@@ -266,7 +266,9 @@ def _thinking_mode(provider_config: dict[str, Any]) -> str:
     if not isinstance(llm_config, dict):
         llm_config = {}
     mode = str(llm_config.get("thinking_mode") or "default").strip().lower()
-    if mode in {"default", "enabled", "disabled", "auto"}:
+    if mode == "auto":
+        return "enabled"
+    if mode in {"default", "enabled", "disabled"}:
         return mode
     return "default"
 
@@ -277,11 +279,9 @@ def _apply_thinking_payload(payload: dict[str, Any], *, provider_config: dict[st
         return
     provider_type = str(provider_config.get("provider_type") or "").strip().lower()
     if provider_type == "deepseek":
-        if mode == "auto":
-            mode = "enabled"
         payload["thinking"] = {"type": mode}
         if mode == "enabled":
-            payload["reasoning_effort"] = "high"
+            payload["reasoning_effort"] = "medium"
         payload.pop("temperature", None)
         return
     if provider_type == "doubao":
