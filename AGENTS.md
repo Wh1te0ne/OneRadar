@@ -44,6 +44,44 @@ Preferred stack:
 
 Do not hard-code the system around a single model vendor.
 
+## Production NAS
+
+Before answering or changing deployment details, check `docs/deployment_v1.md` and `infra/docker/docker-compose.prod.yml`; do not rely on memory.
+
+Current production NAS reference:
+
+- Host: `192.168.100.55`
+- SSH user: `wh1teone`
+- Runtime path: `/vol1/1000/Workspace/OneRadar`
+- Data root: `/vol1/1000/Workspace/OneRadar/data`
+- Backups path: `/vol1/1000/Workspace/OneRadar/backups`
+- Browser entrypoint: `http://192.168.100.55:8081`
+- Health check: `http://192.168.100.55:8081/api/health`
+
+Secret lookup rule:
+
+- Do not store live passwords, provider keys, cookies, or private SSH material in `AGENTS.md` or tracked docs.
+- When deployment access or credentials are needed, look in ignored local storage first: `.env.production.local` and files under `infra/private/`.
+- Never print raw secrets in task output, logs, commits, PRs, or issue comments.
+
+Deployment order is mandatory:
+
+1. Develop and test in the current local Windows environment first.
+2. Commit and push the verified change to GitHub.
+3. Let GitHub Actions publish GHCR images.
+4. SSH to the NAS and update by `docker compose pull` / `docker compose up -d`.
+
+Normal NAS updates are image-based from GHCR, not source-copy based. Do not copy local source files or locally built images to the NAS as a shortcut:
+
+```powershell
+ssh wh1teone@192.168.100.55
+cd /vol1/1000/Workspace/OneRadar
+docker compose --env-file .env pull
+docker compose --env-file .env up -d
+docker compose --env-file .env ps
+curl http://192.168.100.55:8081/api/health
+```
+
 ## Operating Rules
 
 - Read the required docs before implementing anything substantial.
@@ -52,6 +90,7 @@ Do not hard-code the system around a single model vendor.
 - When architecture decisions become concrete, create or update `docs/architecture_v1.md`, `docs/database_v1.md`, and `docs/api_v1.md`.
 - Keep documentation synchronized with code changes.
 - Prefer small, composable adapters over large framework-heavy abstractions.
+- Git worktrees do not carry ignored local state. After creating a worktree, run `rtk pwsh -File infra/scripts/bootstrap-worktree.ps1` in that worktree before local development or tests. Use `-CopyPrivate -SourceRepoRoot E:\OneRadar` only when that worktree explicitly needs ignored deployment access files.
 
 ## External References
 
