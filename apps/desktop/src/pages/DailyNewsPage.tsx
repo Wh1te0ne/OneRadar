@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { layout, prepare } from "@chenglou/pretext";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, createApiClient } from "../api";
 import type { ApiDailyNewsEntry, ApiDailyNewsItem, ApiDailyNewsReportResponse } from "../api/types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -107,10 +108,6 @@ function feedArticlePreviewPath(entry: ApiDailyNewsEntry) {
   return "/feed/preview?" + params.toString();
 }
 
-function sourceFeedPath(entry: ApiDailyNewsEntry) {
-  return "/feed?" + new URLSearchParams({ source: entry.source_url }).toString();
-}
-
 function itemKey(item: ApiDailyNewsItem, fallback: string) {
   return `${item.entry_id ?? item.entry?.id ?? fallback}:${item.title}`;
 }
@@ -119,6 +116,14 @@ type PendingGeneration = {
   date: string;
   startedAt: string;
   force: boolean;
+};
+
+type DailyNewsLayoutClass = "daily-news-layout-compact" | "daily-news-layout-balanced" | "daily-news-layout-spacious";
+type DailyNewsHeadlineClass = "daily-news-headline-tight" | "daily-news-headline-balanced" | "daily-news-headline-wide";
+type DailyNewsLayoutPlan = {
+  pageClass: DailyNewsLayoutClass;
+  headlineClass: DailyNewsHeadlineClass;
+  sectionClasses: string[];
 };
 
 function readPendingGeneration(): PendingGeneration | null {
@@ -151,6 +156,68 @@ function isFreshGeneratedReport(report: ApiDailyNewsReportResponse | null, pendi
   return new Date(report.generated_at).getTime() >= new Date(pending.startedAt).getTime() - 2000;
 }
 
+function measureWrappedLines(text: string, width: number, font: string, lineHeight: number) {
+  const value = text.trim();
+  if (!value) return 0;
+  try {
+    return layout(prepare(value, font, { wordBreak: "normal" }), width, lineHeight).lineCount;
+  } catch {
+    return Math.ceil(value.length / Math.max(16, Math.floor(width / 14)));
+  }
+}
+
+function pickDailyNewsLayoutClass(width: number, report: ApiDailyNewsReportResponse | null, sections: ApiDailyNewsReportResponse["sections"]): DailyNewsLayoutClass {
+  if (!report || width < 760) return "daily-news-layout-compact";
+  const columnWidth = width >= 980 ? Math.max(300, (width - 34) / 2) : width;
+  const bodyFont = '14px Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif';
+  const titleFont = '760 20px Georgia, "Noto Serif SC", serif';
+  const leadTitleFont = '760 48px Georgia, "Noto Serif SC", serif';
+  const leadTitleLines = measureWrappedLines(report.lead?.title || report.headline || "", Math.min(width, 780), leadTitleFont, 52);
+  const leadSummaryLines = measureWrappedLines(report.lead?.summary || report.headline || "", Math.min(420, columnWidth), bodyFont, 24);
+  const sectionLines = sections.reduce((total, section) => {
+    const headingLines = measureWrappedLines(`${section.title} ${section.summary}`, columnWidth, titleFont, 27);
+    const itemLines = section.items.reduce((itemTotal, item) => itemTotal + measureWrappedLines(`${item.title} ${item.summary}`, columnWidth, bodyFont, 24), 0);
+    return total + headingLines + itemLines;
+  }, 0);
+
+  if (leadTitleLines > 3 || leadSummaryLines > 5 || sectionLines > 92) return "daily-news-layout-compact";
+  if (width >= 1080 && sectionLines < 58 && leadTitleLines <= 2) return "daily-news-layout-spacious";
+  return "daily-news-layout-balanced";
+}
+
+function pickDailyNewsHeadlineClass(width: number, report: ApiDailyNewsReportResponse | null): DailyNewsHeadlineClass {
+  if (!report || width < 760) return "daily-news-headline-tight";
+  const headline = report.lead?.title || report.headline || "";
+  const leadColumnWidth = width >= 980 ? Math.max(420, width * 0.62) : width;
+  const looseLines = measureWrappedLines(headline, Math.min(leadColumnWidth, 780), '760 54px Georgia, "Noto Serif SC", serif', 58);
+  const balancedLines = measureWrappedLines(headline, Math.min(leadColumnWidth, 650), '760 48px Georgia, "Noto Serif SC", serif', 52);
+  if (looseLines <= 2 && width >= 1040) return "daily-news-headline-wide";
+  if (balancedLines <= 3) return "daily-news-headline-balanced";
+  return "daily-news-headline-tight";
+}
+
+function measureDailyNewsSectionLines(section: ApiDailyNewsReportResponse["sections"][number], width: number) {
+  const titleFont = '760 26px Georgia, "Noto Serif SC", serif';
+  const bodyFont = '14px Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif';
+  const headingLines = measureWrappedLines(`${section.title} ${section.summary}`, width, titleFont, 31);
+  const itemLines = section.items.reduce((total, item) => total + measureWrappedLines(`${item.title} ${item.summary}`, width, bodyFont, 24), 0);
+  return headingLines + itemLines;
+}
+
+function buildDailyNewsLayoutPlan(width: number, report: ApiDailyNewsReportResponse | null, sections: ApiDailyNewsReportResponse["sections"]): DailyNewsLayoutPlan {
+  const pageClass = pickDailyNewsLayoutClass(width, report, sections);
+  const headlineClass = pickDailyNewsHeadlineClass(width, report);
+  const columnWidth = pageClass === "daily-news-layout-compact" ? width : Math.max(300, (width - 34) / 2);
+  const sectionClasses = sections.map((section, index) => {
+    const lines = measureDailyNewsSectionLines(section, columnWidth);
+    const classes = [index === 0 ? "daily-news-section-feature" : ""];
+    if (pageClass !== "daily-news-layout-compact" && (lines >= 31 || section.items.length >= 4)) classes.push("daily-news-section-wide");
+    if (lines >= 42) classes.push("daily-news-section-dense");
+    return classes.filter(Boolean).join(" ");
+  });
+  return { pageClass, headlineClass, sectionClasses };
+}
+
 export function DailyNewsPage() {
   const { apiBaseUrl, loadProviders, providers } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
@@ -158,6 +225,7 @@ export function DailyNewsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedDate = searchParams.get("date") || todayDate();
   const dateClusterRef = useRef<HTMLDivElement | null>(null);
+  const dailyNewsContentRef = useRef<HTMLElement | null>(null);
 
   const [report, setReport] = useState<ApiDailyNewsReportResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -167,6 +235,11 @@ export function DailyNewsPage() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => startOfMonth(selectedDate));
   const [error, setError] = useState<string | null>(null);
+  const [dailyNewsLayoutPlan, setDailyNewsLayoutPlan] = useState<DailyNewsLayoutPlan>({
+    pageClass: "daily-news-layout-balanced",
+    headlineClass: "daily-news-headline-balanced",
+    sectionClasses: [],
+  });
 
   function setDate(nextDate: string) {
     const next = new URLSearchParams(searchParams);
@@ -302,6 +375,23 @@ export function DailyNewsPage() {
   }, [report, searchParams]);
 
   const ready = report?.status === "ready";
+
+  useEffect(() => {
+    if (!ready) return;
+    const element = dailyNewsContentRef.current;
+    if (!element) return;
+
+    function updateLayoutPlan() {
+      const width = element.getBoundingClientRect().width;
+      setDailyNewsLayoutPlan(buildDailyNewsLayoutPlan(width, report, filteredSections));
+    }
+
+    updateLayoutPlan();
+    const observer = new ResizeObserver(updateLayoutPlan);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [filteredSections, ready, report]);
+
   const isGeneratingSelectedDate = Boolean((generating || pendingGeneration) && pendingGeneration?.date === selectedDate);
   const isTodayOrFuture = selectedDate >= todayDate();
   const calendarDays = buildCalendarDays(calendarMonth);
@@ -410,7 +500,7 @@ export function DailyNewsPage() {
           </button>
         </div>
       ) : (
-        <main className="daily-news-content">
+        <main ref={dailyNewsContentRef} className={`daily-news-content ${dailyNewsLayoutPlan.pageClass} ${dailyNewsLayoutPlan.headlineClass}`}>
           <div className="daily-news-meta-line">
             <span>{report?.entry_count ?? 0} 条候选新闻</span>
             <span>生成于 {displayGeneratedAt(report?.generated_at)}</span>
@@ -431,52 +521,42 @@ export function DailyNewsPage() {
               {report?.lead?.title || report?.headline || "每日新闻"}
             </button>
             <p>{report?.lead?.summary || report?.headline}</p>
-            {report?.lead?.entry && (
-              <Link to={sourceFeedPath(report.lead.entry)} className="daily-news-source-link">
-                查看订阅源
-                <span className="icon icon-sm">chevron_right</span>
-              </Link>
-            )}
           </section>
 
-          {filteredSections.map((section, sectionIndex) => (
-            <section className="daily-news-section" key={`${section.title}:${sectionIndex}`}>
-              <div className="daily-news-section-heading">
-                <span>{String(sectionIndex + 1).padStart(2, "0")}</span>
-                <div>
-                  <h3>{section.title}</h3>
-                  {section.summary && <p>{section.summary}</p>}
+          <div className="daily-news-sections-grid">
+            {filteredSections.map((section, sectionIndex) => (
+              <section className={["daily-news-section", dailyNewsLayoutPlan.sectionClasses[sectionIndex]].filter(Boolean).join(" ")} key={`${section.title}:${sectionIndex}`}>
+                <div className="daily-news-section-heading">
+                  <span>{String(sectionIndex + 1).padStart(2, "0")}</span>
+                  <div>
+                    <h3>{section.title}</h3>
+                    {section.summary && <p>{section.summary}</p>}
+                  </div>
                 </div>
-              </div>
 
-              <div className="daily-news-entry-list">
-                {section.items.map((item, itemIndex) => (
-                  <article className="daily-news-entry" key={itemKey(item, `${sectionIndex}-${itemIndex}`)}>
-                    <button
-                      type="button"
-                      className="daily-news-entry-title"
-                      onClick={() => item.entry && navigate(feedArticlePreviewPath(item.entry))}
-                      disabled={!item.entry}
-                    >
-                      {item.title}
-                    </button>
-                    <p>{item.summary}</p>
-                    <div className="daily-news-entry-footer">
-                      <span>
-                        {item.entry ? `${item.entry.source_title} · ${displayPublishedAt(item.entry.published_at)}` : "模型生成条目"}
-                      </span>
-                      {item.entry && (
-                        <Link to={sourceFeedPath(item.entry)}>
-                          查看订阅源
-                          <span className="icon icon-sm">chevron_right</span>
-                        </Link>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ))}
+                <div className="daily-news-entry-list">
+                  {section.items.map((item, itemIndex) => (
+                    <article className="daily-news-entry" key={itemKey(item, `${sectionIndex}-${itemIndex}`)}>
+                      <button
+                        type="button"
+                        className="daily-news-entry-title"
+                        onClick={() => item.entry && navigate(feedArticlePreviewPath(item.entry))}
+                        disabled={!item.entry}
+                      >
+                        {item.title}
+                      </button>
+                      <p>{item.summary}</p>
+                      <div className="daily-news-entry-footer">
+                        <span>
+                          {item.entry ? `${item.entry.source_title} · ${displayPublishedAt(item.entry.published_at)}` : "模型生成条目"}
+                        </span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
           <section className="daily-news-regenerate-zone">
             <button className="btn btn-secondary btn-sm" type="button" disabled={isGeneratingSelectedDate || loading} onClick={() => generateReport(true)}>
               <span className="icon icon-sm">{isGeneratingSelectedDate ? "sync" : "auto_awesome"}</span>
