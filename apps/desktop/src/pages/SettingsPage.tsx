@@ -149,13 +149,6 @@ function thinkingModeLabel(mode: string | undefined) {
   }
 }
 
-function thinkingModeHint(providerType: ProviderKind, mode: ThinkingMode) {
-  if (mode === "default") return "默认不额外传参，保持模型服务自己的默认行为。";
-  if (providerType === "deepseek") return "DeepSeek 会发送 thinking.type；开启时附带 reasoning_effort=medium。";
-  if (providerType === "doubao") return "豆包会发送同样的 thinking.type 参数；不是 LAS 算子的 thinking_type。";
-  return "仅 DeepSeek 和豆包会写入思考参数，其他 OpenAI 兼容模型先保持默认。";
-}
-
 function showAppToast(message: string, tone: "success" | "error" | "info" = "info") {
   window.dispatchEvent(new CustomEvent("oneradar:toast", { detail: { message, tone } }));
 }
@@ -375,16 +368,19 @@ export function SettingsPage() {
           {!isAsr && <div style={{ fontSize: 12, color: "var(--outline)", marginTop: 2 }}>{thinkingModeLabel(provider.thinking_mode)}</div>}
         </div>
         <div className="provider-row-actions">
-          <span className={`chip ${provider.is_enabled ? "chip-success" : "chip-neutral"}`}>{provider.is_enabled ? "当前使用" : "可选"}</span>
-          {!isAsr && (
+          {provider.is_enabled ? (
+            <span className="chip chip-success provider-row-current">当前使用</span>
+          ) : (
+            <button type="button" className="btn btn-ghost btn-sm provider-row-activate" onClick={() => void activateProvider(provider)} disabled={providerSaving}>
+              设为当前使用
+            </button>
+          )}
+          {!isAsr ? (
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => void testProvider(provider)} disabled={providerTestingId === provider.id || providerSaving}>
               {providerTestingId === provider.id ? "测试中" : "测试"}
             </button>
-          )}
-          {!provider.is_enabled && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void activateProvider(provider)} disabled={providerSaving}>
-              设为当前使用
-            </button>
+          ) : (
+            <span aria-hidden="true" />
           )}
           <button
             type="button"
@@ -414,9 +410,6 @@ export function SettingsPage() {
         <div className="provider-editor-header">
           <div>
             <div className="rail-section-title">{form.id ? "编辑模型配置" : "添加模型配置"}</div>
-            <p className="text-caption" style={{ margin: "4px 0 0" }}>
-              先选择供应商，再填写这个供应商需要的字段。
-            </p>
           </div>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(null)}>
             收起
@@ -487,9 +480,6 @@ export function SettingsPage() {
                   </button>
                 ))}
               </div>
-              <span className="text-caption" style={{ display: "block", marginTop: 6 }}>
-                {thinkingModeHint(form.provider_type, form.thinking_mode)}
-              </span>
             </label>
           </>
         )}
@@ -535,7 +525,6 @@ export function SettingsPage() {
             </label>
           </>
         )}
-        <p className="text-caption" style={{ margin: 0 }}>保存后会设为当前使用，同类模型只会保留一个当前使用。</p>
         <div className="btn-group">
           <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveProvider(form)} disabled={providerSaving}>
             <span className="icon icon-sm">{form.id ? "save" : "add"}</span>
@@ -662,7 +651,7 @@ export function SettingsPage() {
               />
               <span>启用视频多模态视觉增强</span>
             </label>
-            <p className="text-caption" style={{ marginTop: -6 }}>
+            <p className="text-caption visual-enhancement-note">
               开启后，B站视频仍优先使用字幕，没有字幕再走音频转写；在已有文本基础上额外调用支持视频/图像的大模型分析画面。
             </p>
             {integrationLoading && <p className="text-meta">正在读取视频增强设置…</p>}

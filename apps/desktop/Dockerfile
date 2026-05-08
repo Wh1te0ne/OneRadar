@@ -18,6 +18,7 @@ COPY apps/desktop/nginx.conf /etc/nginx/conf.d/default.conf
 COPY apps/desktop/docker-entrypoint.d/10-oneradar-config.sh /docker-entrypoint.d/10-oneradar-config.sh
 COPY --from=build /app/dist /usr/share/nginx/html
 
-RUN chmod +x /docker-entrypoint.d/10-oneradar-config.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.d/10-oneradar-config.sh \
+    && chmod +x /docker-entrypoint.d/10-oneradar-config.sh
 
 EXPOSE 80

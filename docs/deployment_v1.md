@@ -54,9 +54,13 @@ Normal updates should be:
 ```bash
 docker compose --env-file .env pull
 docker compose --env-file .env up -d
+curl http://192.168.100.55:8081/api/health
+docker image prune -f
 ```
 
 The normal update path must stay image-registry based: push code to GitHub, let GitHub Actions publish GHCR images, then make the NAS pull those images. Do not use SSH/SFTP to copy built images or source files to the NAS as a deployment shortcut. The current GHCR packages are public, so NAS updates should not require `docker login ghcr.io` or a GitHub package token.
+
+`docker compose pull` fetches the current `:main` image digest, but Docker does not automatically delete the previous local image objects that are no longer used after `up -d` recreates containers. Run `docker image prune -f` after the new containers are healthy to remove dangling old image digests without deleting images still used by running containers. Do not use broad prune commands such as `docker system prune -a` in the normal update path because they can remove useful caches and stopped-service images outside this stack.
 
 Baseline services:
 
@@ -143,6 +147,7 @@ The intended update flow is:
 5. Run `docker compose --env-file .env pull`.
 6. Run `docker compose --env-file .env up -d`.
 7. Run a health check through the web entrypoint at `/api/health`.
+8. Run `docker image prune -f` after the updated containers are healthy.
 
 Initial command shape, to be refined once the server path and compose wrapper are finalized:
 
@@ -153,6 +158,7 @@ docker compose --env-file .env pull
 docker compose --env-file .env up -d
 docker compose --env-file .env ps
 curl http://192.168.100.55:8081/api/health
+docker image prune -f
 ```
 
 ## Open Decisions

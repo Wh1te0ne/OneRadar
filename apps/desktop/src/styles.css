@@ -3064,23 +3064,32 @@ button, input, select, textarea { font: inherit; }
 }
 
 .provider-row-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 86px 54px 54px 54px;
+  align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
   flex-shrink: 0;
   justify-content: flex-end;
+}
+
+.provider-row-actions .btn,
+.provider-row-actions .chip {
+  justify-content: center;
+}
+
+.provider-row-activate {
+  width: 86px;
+}
+
+.provider-row-current {
+  width: 86px;
 }
 
 .settings-model-block {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px 0 18px;
-  border-bottom: 1px solid rgba(var(--outline-rgb), 0.14);
-}
-
-.settings-model-block:last-of-type {
-  border-bottom: none;
+  padding: 14px 0;
 }
 
 .settings-model-block-header {
@@ -3116,7 +3125,12 @@ button, input, select, textarea { font: inherit; }
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: flex-start;
+  align-items: center;
+}
+
+.visual-enhancement-note {
+  margin: 6px 0 0;
+  padding-left: 22px;
 }
 
 .provider-config-grid {
