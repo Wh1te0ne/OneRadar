@@ -179,6 +179,7 @@ export type ApiProviderTestResponse = {
 
 export type ApiReadingState = {
   progress_percent: number;
+  is_read?: boolean;
   last_read_at?: string | null;
   is_archived: boolean;
   is_favorited: boolean;
@@ -186,6 +187,7 @@ export type ApiReadingState = {
 
 export type ApiReadingStateUpdatePayload = {
   progress_percent?: number;
+  is_read?: boolean;
   last_read_at?: string | null;
   is_archived?: boolean;
   is_favorited?: boolean;

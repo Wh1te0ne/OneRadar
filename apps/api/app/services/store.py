@@ -97,6 +97,7 @@ def seed_store() -> None:
             "collections": [],
             "reading_state": {
                 "progress_percent": 0,
+                "is_read": False,
                 "last_read_at": None,
                 "is_archived": False,
                 "is_favorited": False,

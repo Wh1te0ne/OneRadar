@@ -13,7 +13,7 @@ The repo must preserve these V1 boundaries:
 - V1 is a reader-first personal knowledge library.
 - Input is manual link submission only.
 - Manual input supports article links, Bilibili video links, and podcast episodes explicitly added from subscribed podcast feeds.
-- V1 does not include browser extension capture or broad automated harvesting. RSS is a scoped, user-managed discovery surface: saved sources may be refreshed, viewed, and used to generate one persisted daily news brief per date, but entries are not imported into the reading library unless the user explicitly saves them. Podcast RSS remains the scoped podcast exception for subscriptions and episode discovery.
+- V1 does not include browser extension capture or broad automated harvesting. RSS is a scoped, user-managed discovery surface: saved sources may be refreshed, viewed, used to generate one persisted daily news brief per date, and exposed as raw time-windowed news data to Hermes Agent through the built-in MCP endpoint. RSS entries are not imported into the reading library unless the user explicitly saves them. Podcast RSS remains the scoped podcast exception for subscriptions and episode discovery.
 - V1 is server plus Windows desktop client first.
 - The server must support Docker deployment.
 - AI provider configuration must be user-manageable.

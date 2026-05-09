@@ -47,6 +47,10 @@ class _FakeOpener:
         return _FakeResponse(self._body, url=self._url, content_type=self._content_type)
 
 
+def _public_getaddrinfo(host, port, type=socket.SOCK_STREAM):
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.10", port))]
+
+
 def test_feed_preview_route_returns_parsed_items(client, monkeypatch) -> None:
     def failing_session_local():
         raise SQLAlchemyError("database unavailable")
@@ -82,14 +86,17 @@ def test_feed_preview_route_returns_parsed_items(client, monkeypatch) -> None:
 
     import_response = client.post(
         "/api/items/import",
-        json={"url": "https://blog.python.org/2026/04/rust-for-cpython-2026-04/", "source_hint": "article"},
+        json={
+            "url": "https://blog.python.org/2026/04/rust-for-cpython-2026-04/",
+            "source_hint": "article",
+        },
     )
     assert import_response.status_code == 200, import_response.json()
 
     monkeypatch.setattr(
         feed_service.socket,
         "getaddrinfo",
-        lambda host, port, type=socket.SOCK_STREAM: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.10", port))],
+        _public_getaddrinfo,
     )
     monkeypatch.setattr(
         feed_service,
@@ -151,7 +158,10 @@ def test_feed_preview_limit_zero_returns_all_feed_items(client, monkeypatch) -> 
         lambda *args, **kwargs: _FakeOpener(rss_xml, url="https://example.com/rss.xml"),
     )
 
-    response = client.get("/api/feeds/preview", params={"url": "https://example.com/rss.xml", "limit": 0})
+    response = client.get(
+        "/api/feeds/preview",
+        params={"url": "https://example.com/rss.xml", "limit": 0},
+    )
 
     assert response.status_code == 200, response.json()
     assert len(response.json()["items"]) == 45
@@ -167,7 +177,11 @@ def test_feed_preview_prefers_hn_article_url_from_summary(client, monkeypatch) -
           <title>Interesting article</title>
           <link>https://news.ycombinator.com/item?id=47950377</link>
           <guid>https://news.ycombinator.com/item?id=47950377</guid>
-          <description>Article URL: https://example.com/story Comments URL: https://news.ycombinator.com/item?id=47950377 Points: 20 # Comments: 2</description>
+          <description>
+            Article URL: https://example.com/story
+            Comments URL: https://news.ycombinator.com/item?id=47950377
+            Points: 20 # Comments: 2
+          </description>
           <pubDate>Tue, 28 Apr 2026 00:00:00 GMT</pubDate>
         </item>
       </channel>
@@ -176,7 +190,7 @@ def test_feed_preview_prefers_hn_article_url_from_summary(client, monkeypatch) -
     monkeypatch.setattr(
         feed_service.socket,
         "getaddrinfo",
-        lambda host, port, type=socket.SOCK_STREAM: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.10", port))],
+        _public_getaddrinfo,
     )
     monkeypatch.setattr(
         feed_service,
@@ -184,7 +198,10 @@ def test_feed_preview_prefers_hn_article_url_from_summary(client, monkeypatch) -
         lambda *args, **kwargs: _FakeOpener(rss_xml, url="https://hnrss.org/frontpage"),
     )
 
-    response = client.get("/api/feeds/preview", params={"url": "https://hnrss.org/frontpage", "limit": 1})
+    response = client.get(
+        "/api/feeds/preview",
+        params={"url": "https://hnrss.org/frontpage", "limit": 1},
+    )
 
     assert response.status_code == 200, response.json()
     body = response.json()
@@ -253,8 +270,13 @@ def test_feed_article_preview_route_returns_clean_reader_text(client, monkeypatc
         <nav>navigation should not appear</nav>
         <article>
           <h1>Readable Title</h1>
+          &lt; img id=&quot;wx_img&quot; src=&quot;https://www.qbitai.com/logo.png&quot;
+            width=&quot;400&quot; height=&quot;400&quot;&gt;
           <p>First paragraph with useful reporting.</p>
           <p>Second paragraph with enough detail for the reader view.</p>
+          <p>量子位的朋友们</p>
+          <p>相关阅读</p>
+          <p>各大应用商店都能下载</p>
         </article>
         <footer>footer should not appear</footer>
       </body>
@@ -269,12 +291,16 @@ def test_feed_article_preview_route_returns_clean_reader_text(client, monkeypatc
     monkeypatch.setattr(
         feed_service.socket,
         "getaddrinfo",
-        lambda host, port, type=socket.SOCK_STREAM: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.10", port))],
+        _public_getaddrinfo,
     )
     monkeypatch.setattr(
         feed_service,
         "build_opener",
-        lambda *args, **kwargs: _FakeOpener(html, url="https://example.com/story", content_type="text/html"),
+        lambda *args, **kwargs: _FakeOpener(
+            html,
+            url="https://example.com/story",
+            content_type="text/html",
+        ),
     )
 
     response = client.get(
@@ -297,6 +323,10 @@ def test_feed_article_preview_route_returns_clean_reader_text(client, monkeypatc
     assert body["can_generate_ai"] is True
     assert "First paragraph with useful reporting." in body["plain_text"]
     assert "navigation should not appear" not in body["plain_text"]
+    assert "wx_img" not in body["plain_text"]
+    assert "<img" not in body["plain_text"]
+    assert "量子位的朋友们" not in body["plain_text"]
+    assert "相关阅读" not in body["plain_text"]
 
 
 def test_feed_state_routes_persist_cache_and_read_markers(client, monkeypatch) -> None:
@@ -409,7 +439,7 @@ def test_feed_refresh_route_refreshes_cached_sources(client, monkeypatch) -> Non
     monkeypatch.setattr(
         feed_service.socket,
         "getaddrinfo",
-        lambda host, port, type=socket.SOCK_STREAM: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.10", port))],
+        _public_getaddrinfo,
     )
     monkeypatch.setattr(
         feed_service,

@@ -67,6 +67,7 @@ DEFAULT_PARSED_DOCUMENT = {
 
 DEFAULT_READING_STATE = {
     "progress_percent": 0,
+    "is_read": False,
     "last_read_at": None,
     "is_archived": False,
     "is_favorited": False,
@@ -644,6 +645,7 @@ def _item_reading_state(item: ContentItem) -> ReadingState:
     if reading_state_record is not None:
         return ReadingState(
             progress_percent=reading_state_record.progress_percent,
+            is_read=reading_state_record.is_read,
             last_read_at=reading_state_record.last_read_at,
             is_archived=reading_state_record.is_archived,
             is_favorited=bool(fallback_state.get("is_favorited", False)),
@@ -745,7 +747,7 @@ def _item_list_entry(item: ContentItem) -> ItemListEntry:
         folder_id=folder_id,
         folder_name=folder_name,
         is_inbox=is_inbox,
-        is_read=bool(reading_state.progress_percent >= 100),
+        is_read=reading_state.is_read,
         is_favorited=reading_state.is_favorited,
         progress_percent=reading_state.progress_percent,
         last_read_at=reading_state.last_read_at,
@@ -1423,7 +1425,7 @@ def list_items(
                     folder_id=str(record.get("folder_id", INBOX_FOLDER_ID)),
                     folder_name=str(record.get("folder_name", INBOX_FOLDER_NAME)),
                     is_inbox=bool(record.get("is_inbox", True)),
-                    is_read=bool(record["reading_state"]["progress_percent"] >= 100),
+                    is_read=bool(record["reading_state"].get("is_read", False)),
                     is_favorited=bool(record["reading_state"]["is_favorited"]),
                     progress_percent=float(record["reading_state"].get("progress_percent", 0) or 0),
                     last_read_at=record["reading_state"].get("last_read_at"),
@@ -1573,6 +1575,11 @@ def update_reading_state(item_id: str, payload: ReadingStateUpdateRequest) -> Re
                     if payload.progress_percent is not None
                     else reading_state_record.progress_percent
                 )
+                next_read = bool(
+                    payload.is_read
+                    if payload.is_read is not None
+                    else reading_state_record.is_read
+                )
                 next_archived = bool(
                     payload.is_archived
                     if payload.is_archived is not None
@@ -1586,7 +1593,7 @@ def update_reading_state(item_id: str, payload: ReadingStateUpdateRequest) -> Re
                 next_last_read_at = payload.last_read_at or now_utc()
 
                 reading_state_record.progress_percent = next_progress
-                reading_state_record.is_read = next_progress >= 100
+                reading_state_record.is_read = next_read
                 reading_state_record.is_archived = next_archived
                 reading_state_record.last_read_at = next_last_read_at
                 if payload.last_position_type is not None:
@@ -1597,6 +1604,7 @@ def update_reading_state(item_id: str, payload: ReadingStateUpdateRequest) -> Re
                 raw_meta["reading_state"] = {
                     **fallback_state,
                     "progress_percent": next_progress,
+                    "is_read": next_read,
                     "last_read_at": (
                         next_last_read_at.isoformat() if next_last_read_at is not None else None
                     ),
@@ -1618,6 +1626,7 @@ def update_reading_state(item_id: str, payload: ReadingStateUpdateRequest) -> Re
 
                 return ReadingState(
                     progress_percent=next_progress,
+                    is_read=next_read,
                     last_read_at=next_last_read_at,
                     is_archived=next_archived,
                     is_favorited=next_favorited,
@@ -1635,6 +1644,8 @@ def update_reading_state(item_id: str, payload: ReadingStateUpdateRequest) -> Re
         reading_state.update(record.get("reading_state") or {})
         if payload.progress_percent is not None:
             reading_state["progress_percent"] = float(payload.progress_percent)
+        if payload.is_read is not None:
+            reading_state["is_read"] = bool(payload.is_read)
         if payload.is_archived is not None:
             reading_state["is_archived"] = bool(payload.is_archived)
         if payload.is_favorited is not None:
@@ -1756,7 +1767,7 @@ def list_deleted_items(page: int, page_size: int) -> ItemListResponse:
                     folder_id=str(record.get("folder_id", INBOX_FOLDER_ID)),
                     folder_name=str(record.get("folder_name", INBOX_FOLDER_NAME)),
                     is_inbox=bool(record.get("is_inbox", True)),
-                    is_read=bool(record["reading_state"]["progress_percent"] >= 100),
+                    is_read=bool(record["reading_state"].get("is_read", False)),
                     is_favorited=bool(record["reading_state"]["is_favorited"]),
                     progress_percent=float(record["reading_state"].get("progress_percent", 0) or 0),
                     last_read_at=record["reading_state"].get("last_read_at"),

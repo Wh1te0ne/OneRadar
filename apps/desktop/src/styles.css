@@ -2118,8 +2118,9 @@ button, input, select, textarea { font: inherit; }
 .reader-layout {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 250px;
+  grid-template-columns: minmax(0, 900px) 250px;
   gap: 18px;
+  justify-content: center;
   align-items: start;
 }
 
@@ -2128,6 +2129,7 @@ button, input, select, textarea { font: inherit; }
   border-radius: calc(var(--radius) + 2px);
   padding: 40px 42px 54px;
   box-shadow: var(--shadow-card);
+  min-width: 0;
 }
 
 .reader-rail {
@@ -2558,7 +2560,7 @@ button, input, select, textarea { font: inherit; }
   font-size: 16px;
   line-height: 1.92;
   color: var(--on-surface);
-  max-width: none;
+  max-width: 780px;
 }
 
 .prose p {
@@ -2586,6 +2588,23 @@ button, input, select, textarea { font: inherit; }
 
 .reader-excerpt {
   color: var(--on-surface-variant);
+}
+
+.reader-quote {
+  margin: 1.4em 0;
+  padding: 2px 0 2px 18px;
+  border-left: 3px solid rgba(var(--primary-rgb), 0.28);
+  color: var(--on-surface-variant);
+}
+
+.reader-list {
+  margin: 0 0 1.4em;
+  padding-left: 1.4em;
+}
+
+.reader-list li {
+  margin: 0.45em 0;
+  padding-left: 0.15em;
 }
 
 .article-section {

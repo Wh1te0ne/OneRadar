@@ -170,6 +170,7 @@ def test_update_reading_state_route_fallback_contract(client, monkeypatch) -> No
     assert update_response.status_code == 200
     update_body = update_response.json()
     assert update_body["progress_percent"] == 42
+    assert update_body["is_read"] is False
     assert update_body["is_favorited"] is True
     assert update_body["is_archived"] is False
     assert update_body["last_read_at"]
@@ -188,13 +189,27 @@ def test_update_reading_state_route_fallback_contract(client, monkeypatch) -> No
 
     complete_response = client.put(
         f"/api/items/{item_id}/reading-state",
-        json={"progress_percent": 100},
+        json={"progress_percent": 100, "is_read": True},
     )
     assert complete_response.status_code == 200
     assert complete_response.json()["progress_percent"] == 100
+    assert complete_response.json()["is_read"] is True
 
     list_response = client.get("/api/items?page=1&page_size=20")
     assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["is_read"] is True
+
+    scroll_response = client.put(
+        f"/api/items/{item_id}/reading-state",
+        json={"progress_percent": 37},
+    )
+    assert scroll_response.status_code == 200
+    assert scroll_response.json()["progress_percent"] == 37
+    assert scroll_response.json()["is_read"] is True
+
+    list_response = client.get("/api/items?page=1&page_size=20")
+    assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["progress_percent"] == 37
     assert list_response.json()["items"][0]["is_read"] is True
 
 

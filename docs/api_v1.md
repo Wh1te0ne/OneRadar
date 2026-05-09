@@ -663,7 +663,23 @@ Request body:
 
 Generates or regenerates the report for the date. If a report already exists and `force` is not set, the API returns 409 because regeneration replaces the existing daily version. The API process also schedules automatic generation at `ONERADAR_DAILY_NEWS_GENERATION_HOUR`, defaulting to 10:00 in `Asia/Shanghai`.
 
-## 6.5 Direct API Use Cases
+## 6.5 Hermes MCP News Source
+
+OneRadar exposes a built-in MCP endpoint from the same API container. It is intentionally not a separate Docker service because it reads the same persisted RSS state as the desktop and REST API.
+
+```http
+POST /api/mcp
+```
+
+The endpoint accepts JSON-RPC 2.0 MCP-style requests. The initial tools are:
+
+- `get_news_sources`: returns configured RSS sources, refresh status, refresh errors, and cached entry counts.
+- `get_news_window_status`: returns per-source counts for a time window without returning entries.
+- `get_news_window`: returns raw structured RSS entries for a time window. `since` and `until` are ISO 8601 strings; if omitted, the default window is the previous 24 hours. `limit` defaults to 1000 and supports `next_cursor` pagination.
+
+The MCP handoff is a data-source boundary for Hermes Agent. OneRadar provides complete source entries and source status for the requested window; Hermes owns AI grouping, ranking, narration, and delivery. This keeps missing-news responsibility explicit: if an entry is present in `get_news_window`, any omission is downstream of OneRadar.
+
+## 6.6 Direct API Use Cases
 
 The desktop client is only one consumer of the backend. These endpoints are stable enough for local scripts or future integrations:
 

@@ -58,6 +58,7 @@ class TranscriptType(str, Enum):
 
 class ReadingState(BaseModel):
     progress_percent: float = Field(ge=0, le=100)
+    is_read: bool = False
     last_read_at: datetime | None = None
     is_archived: bool = False
     is_favorited: bool = False

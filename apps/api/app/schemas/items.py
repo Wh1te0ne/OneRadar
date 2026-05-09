@@ -135,6 +135,7 @@ class ItemDetailResponse(BaseModel):
 
 class ReadingStateUpdateRequest(BaseModel):
     progress_percent: float | None = Field(default=None, ge=0, le=100)
+    is_read: bool | None = None
     last_read_at: datetime | None = None
     is_archived: bool | None = None
     is_favorited: bool | None = None

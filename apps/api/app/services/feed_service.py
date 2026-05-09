@@ -32,6 +32,27 @@ ALLOWED_FEED_CONTENT_TYPES = {
 DEFAULT_FEED_LIMIT = 12
 MAX_ARTICLE_BYTES = 2_500_000
 HN_ARTICLE_URL_RE = re.compile(r"\bArticle URL:\s*(https?://\S+)", re.IGNORECASE)
+NOISE_LINE_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"^扫码.*朋友圈",
+        r"^相关阅?读$",
+        r"^版权(所有|声明)",
+        r"^未经授权",
+        r"^各大应用商店.*下载$",
+        r"^量子位\s*$",
+        r"^量子位的朋友们\s*$",
+    )
+]
+TRAILING_NOISE_MARKERS = (
+    "量子位的朋友们",
+    "扫码分享至朋友圈",
+    "相关阅读",
+    "相关报道",
+    "相关推荐",
+    "版权所有",
+    "未经授权",
+)
 
 
 class UnsafeFeedUrlError(ValueError):
@@ -56,6 +77,64 @@ def _strip_html(value: str | None) -> str | None:
         return None
     text = re.sub(r"<[^>]+>", " ", value)
     return _normalize_whitespace(unescape(text))
+
+
+def _clean_text(value: str) -> str:
+    text = re.sub(r"\r\n", "\n", value)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _strip_residual_html(value: str) -> str:
+    decoded = unescape(value)
+    decoded = re.sub(r"<!--.*?-->", " ", decoded, flags=re.DOTALL)
+    decoded = re.sub(
+        r"<(script|style|noscript|svg|canvas|iframe)\b[^>]*>.*?</\1>",
+        " ",
+        decoded,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    decoded = re.sub(r"<\s*(img|br|hr)\b[^>]*?/?>", "\n", decoded, flags=re.IGNORECASE)
+    decoded = re.sub(
+        r"</(p|div|li|h[1-6]|blockquote|section|article|main)>",
+        "\n\n",
+        decoded,
+        flags=re.IGNORECASE,
+    )
+    decoded = re.sub(r"<[^>]+>", " ", decoded)
+    return decoded
+
+
+def _looks_like_noise_line(line: str) -> bool:
+    compact = re.sub(r"\s+", "", line)
+    if not compact:
+        return True
+    if any(pattern.search(line.strip()) for pattern in NOISE_LINE_PATTERNS):
+        return True
+    if len(compact) <= 22 and any(marker in line for marker in TRAILING_NOISE_MARKERS):
+        return True
+    return False
+
+
+def _sanitize_readable_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = _clean_text(_strip_residual_html(value))
+    blocks = [block.strip() for block in re.split(r"\n{2,}", cleaned) if block.strip()]
+    cutoff = len(blocks)
+    for index, block in enumerate(blocks):
+        compact = re.sub(r"\s+", "", block)
+        if any(marker in compact for marker in TRAILING_NOISE_MARKERS):
+            cutoff = index
+            break
+    next_blocks: list[str] = []
+    for block in blocks[:cutoff]:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        useful_lines = [line for line in lines if not _looks_like_noise_line(line)]
+        if useful_lines:
+            next_blocks.append("\n".join(useful_lines))
+    return _clean_text("\n\n".join(next_blocks)) or None
 
 
 def _extract_hn_article_url(summary: str | None) -> str | None:
@@ -162,7 +241,10 @@ def _read_feed_xml(source_url: str) -> tuple[str, str, str | None]:
         source_url,
         headers={
             "User-Agent": "OneRadarAPI/0.1",
-            "Accept": "application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.1",
+            "Accept": (
+                "application/rss+xml,application/atom+xml,application/xml,"
+                "text/xml;q=0.9,*/*;q=0.1"
+            ),
         },
     )
     opener = build_opener(_SafeRedirectHandler())
@@ -203,8 +285,32 @@ def _read_article_html(source_url: str) -> tuple[str, str, str | None]:
 
 
 class _ReadableHtmlParser(HTMLParser):
-    _ignored_tags = {"script", "style", "noscript", "svg", "canvas", "form", "iframe", "nav", "header", "footer"}
-    _block_tags = {"article", "main", "section", "p", "li", "blockquote", "pre", "h1", "h2", "h3", "h4", "div"}
+    _ignored_tags = {
+        "script",
+        "style",
+        "noscript",
+        "svg",
+        "canvas",
+        "form",
+        "iframe",
+        "nav",
+        "header",
+        "footer",
+    }
+    _block_tags = {
+        "article",
+        "main",
+        "section",
+        "p",
+        "li",
+        "blockquote",
+        "pre",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "div",
+    }
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -290,7 +396,10 @@ class _ReadableHtmlParser(HTMLParser):
             self.title = content
         elif key in {"author", "article:author", "byl"} and not self.author:
             self.author = content
-        elif key in {"description", "og:description", "twitter:description"} and not self.description:
+        elif (
+            key in {"description", "og:description", "twitter:description"}
+            and not self.description
+        ):
             self.description = content
         elif key in {"og:site_name", "application-name"} and not self.site_title:
             self.site_title = content
@@ -300,7 +409,11 @@ class _ReadableHtmlParser(HTMLParser):
         self._current_parts = []
         if not text:
             return
-        target = self._article_blocks if self._article_depth or self._main_depth else self._body_blocks
+        target = (
+            self._article_blocks
+            if self._article_depth or self._main_depth
+            else self._body_blocks
+        )
         if not target or target[-1] != text:
             target.append(text)
 
@@ -377,7 +490,9 @@ def _parse_atom_entry(entry: ET.Element, feed_url: str) -> FeedPreviewItem | Non
     for child in entry:
         if _local_name(child.tag) != "category":
             continue
-        term = _normalize_whitespace(child.attrib.get("term") or child.attrib.get("label") or child.text)
+        term = _normalize_whitespace(
+            child.attrib.get("term") or child.attrib.get("label") or child.text
+        )
         if term:
             tags.append(term)
     return FeedPreviewItem(
@@ -439,7 +554,10 @@ def _parse_feed(xml_text: str, source_url: str, limit: int | None) -> FeedPrevie
     else:
         raise ValueError("unsupported feed format")
 
-    items.sort(key=lambda item: item.published_at or datetime.fromtimestamp(0, tz=UTC), reverse=True)
+    items.sort(
+        key=lambda item: item.published_at or datetime.fromtimestamp(0, tz=UTC),
+        reverse=True,
+    )
     items = [_apply_saved_state(item) for item in items]
     return FeedPreviewResponse(
         source_url=source_url,
@@ -457,7 +575,11 @@ def preview_feed(url: str, limit: int | None = DEFAULT_FEED_LIMIT) -> FeedPrevie
         raise ValueError("feed url is required")
     normalized_limit = None if limit is None or limit <= 0 else limit
     xml_text, final_url, content_type = _read_feed_xml(source_url)
-    if content_type and content_type not in ALLOWED_FEED_CONTENT_TYPES and "xml" not in content_type:
+    if (
+        content_type
+        and content_type not in ALLOWED_FEED_CONTENT_TYPES
+        and "xml" not in content_type
+    ):
         raise ValueError(f"unsupported feed content type: {content_type}")
     response = _parse_feed(xml_text, final_url, normalized_limit)
     response.source_url = final_url
@@ -478,7 +600,11 @@ def preview_feed_article(
         raise ValueError("article url is required")
 
     html_text, final_url, content_type = _read_article_html(source_url)
-    if content_type and "html" not in content_type and content_type not in {"text/plain", "application/octet-stream"}:
+    if (
+        content_type
+        and "html" not in content_type
+        and content_type not in {"text/plain", "application/octet-stream"}
+    ):
         raise ValueError(f"unsupported article content type: {content_type}")
 
     parser = _ReadableHtmlParser()
@@ -488,8 +614,8 @@ def preview_feed_article(
     except Exception as error:  # HTMLParser can surface malformed entity edge cases.
         raise ValueError(f"article parse failed: {error}") from error
 
-    fallback_summary = _strip_html(summary)
-    plain_text = parser.plain_text() or fallback_summary
+    fallback_summary = _sanitize_readable_text(summary)
+    plain_text = _sanitize_readable_text(parser.plain_text()) or fallback_summary
     if not plain_text:
         raise ValueError("article preview did not contain readable text")
 
@@ -503,7 +629,7 @@ def preview_feed_article(
         site_title=_normalize_whitespace(parser.site_title) or _normalize_whitespace(source_title),
         author=_normalize_whitespace(parser.author) or _normalize_whitespace(author),
         published_at=_parse_datetime(published_at),
-        summary=_normalize_whitespace(parser.description) or fallback_summary,
+        summary=_sanitize_readable_text(parser.description) or fallback_summary,
         plain_text=plain_text,
         fetched_at=datetime.now(UTC),
         is_saved=saved is not None,

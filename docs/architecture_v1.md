@@ -24,16 +24,19 @@ The architecture should optimize for:
 
 ## 2. System Overview
 
-OneRadar is split into four logical layers:
+OneRadar is split into four logical layers plus a thin agent integration surface:
 
 - Desktop client.
 - API server.
 - Worker pipeline.
 - Storage and external providers.
+- MCP endpoint for trusted local agents such as Hermes.
 
 ```mermaid
 flowchart LR
   UI[Windows Desktop Shell\nTauri + React] --> API[API Server\nFastAPI]
+  HERMES[Hermes Agent] --> MCP[MCP Endpoint\n/api/mcp]
+  MCP --> API
   API --> PG[(PostgreSQL)]
   API --> REDIS[(Redis)]
   API --> OBJ[(File/Object Storage)]
@@ -51,6 +54,8 @@ flowchart LR
 ```
 
 The desktop client never performs heavy ingestion or transcription work locally in V1.
+
+The MCP endpoint is hosted inside the API server rather than as a separate Docker service. It reuses the API process, database connection, feed cache, and refresh state. Its initial responsibility is read-only news handoff for Hermes: list news sources, report source/window status, and return raw RSS entries for a requested time window. It must not generate the Hermes morning briefing text; Hermes owns classification and final delivery so missing-news responsibility stays traceable.
 
 The server owns:
 

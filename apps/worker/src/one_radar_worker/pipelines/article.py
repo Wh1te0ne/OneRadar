@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import hashlib
+from html import unescape
 from html.parser import HTMLParser
 import ipaddress
 import re
@@ -43,6 +44,27 @@ _ALLOWED_FETCH_SCHEMES = {"http", "https"}
 _ALLOWED_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
 _DOCKER_DESKTOP_PROXY_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 _WECHAT_ARTICLE_HOSTS = {"mp.weixin.qq.com"}
+_NOISE_LINE_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"^扫码.*朋友圈",
+        r"^相关阅?读$",
+        r"^版权(所有|声明)",
+        r"^未经授权",
+        r"^各大应用商店.*下载$",
+        r"^量子位\s*$",
+        r"^量子位的朋友们\s*$",
+    )
+]
+_TRAILING_NOISE_MARKERS = (
+    "量子位的朋友们",
+    "扫码分享至朋友圈",
+    "相关阅读",
+    "相关报道",
+    "相关推荐",
+    "版权所有",
+    "未经授权",
+)
 
 
 class UnsafeArticleUrlError(ValueError):
@@ -241,12 +263,57 @@ def _clean_text(text: str) -> str:
     return text.strip()
 
 
+def _strip_residual_html(text: str) -> str:
+    decoded = unescape(text)
+    decoded = re.sub(r"<!--.*?-->", " ", decoded, flags=re.DOTALL)
+    decoded = re.sub(r"<(script|style|noscript|svg|canvas|iframe)\b[^>]*>.*?</\1>", " ", decoded, flags=re.IGNORECASE | re.DOTALL)
+    decoded = re.sub(r"<\s*(img|br|hr)\b[^>]*?/?>", "\n", decoded, flags=re.IGNORECASE)
+    decoded = re.sub(r"</(p|div|li|h[1-6]|blockquote|section|article|main)>", "\n\n", decoded, flags=re.IGNORECASE)
+    decoded = re.sub(r"<[^>]+>", " ", decoded)
+    return decoded
+
+
+def _looks_like_noise_line(line: str) -> bool:
+    normalized = re.sub(r"\s+", "", line)
+    if not normalized:
+        return True
+    if any(pattern.search(line.strip()) for pattern in _NOISE_LINE_PATTERNS):
+        return True
+    if len(normalized) <= 22 and any(marker in line for marker in _TRAILING_NOISE_MARKERS):
+        return True
+    return False
+
+
+def _drop_trailing_noise_blocks(blocks: list[str]) -> list[str]:
+    cutoff = len(blocks)
+    for index, block in enumerate(blocks):
+        compact = re.sub(r"\s+", "", block)
+        if any(marker in compact for marker in _TRAILING_NOISE_MARKERS):
+            cutoff = index
+            break
+    return blocks[:cutoff]
+
+
+def _sanitize_readable_text(text: str) -> str:
+    stripped = _strip_residual_html(text)
+    cleaned = _clean_text(stripped)
+    blocks = [block.strip() for block in re.split(r"\n{2,}", cleaned) if block.strip()]
+    blocks = _drop_trailing_noise_blocks(blocks)
+    next_blocks: list[str] = []
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        useful_lines = [line for line in lines if not _looks_like_noise_line(line)]
+        if useful_lines:
+            next_blocks.append("\n".join(useful_lines))
+    return _clean_text("\n\n".join(next_blocks))
+
+
 def _clean_wechat_markdown(markdown: str) -> str:
     text = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", markdown)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     text = re.sub(r"^[ \t]*#{1,6}[ \t]+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^[ \t]*>[ \t]?", "", text, flags=re.MULTILINE)
-    return _clean_text(text)
+    return _sanitize_readable_text(text)
 
 
 def _extract_tag_value(html: str, pattern: str) -> str | None:
@@ -294,6 +361,21 @@ def _split_paragraphs(text: str) -> list[str]:
     return paragraphs
 
 
+def _list_items_from_paragraph(paragraph: str) -> list[str]:
+    lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return []
+    items: list[str] = []
+    for line in lines:
+        match = re.match(r"^(?:[-*•·]|\d+[.)、]|[一二三四五六七八九十]+[、.])\s*(.+)$", line)
+        if not match:
+            return []
+        item = _clean_text(match.group(1))
+        if item:
+            items.append(item)
+    return items
+
+
 def _build_blocks(
     title: str | None,
     excerpt: str | None,
@@ -314,6 +396,11 @@ def _build_blocks(
         level = heading_levels.get(paragraph_key)
         if level is not None:
             blocks.append(PipelineDocumentBlock(block_type="heading", text=paragraph, order=len(blocks), data={"level": level}))
+        elif paragraph.lstrip().startswith((">", "“", "「")):
+            quote = re.sub(r"^[>\s]+", "", paragraph).strip()
+            blocks.append(PipelineDocumentBlock(block_type="quote", text=quote, order=len(blocks)))
+        elif items := _list_items_from_paragraph(paragraph):
+            blocks.append(PipelineDocumentBlock(block_type="list", text="\n".join(items), order=len(blocks), data={"items": items}))
         else:
             blocks.append(PipelineDocumentBlock(block_type="paragraph", text=paragraph, order=len(blocks)))
     return blocks
@@ -368,14 +455,31 @@ def _score_quality(title: str | None, body_text: str, html: str, site_name: str 
         score += 5
         reasons.append("semantic article markup detected")
 
-    return PipelineQualityScore(value=min(score, 100.0), reasons=reasons)
+    if re.search(r"</?[a-z][^>]{0,300}>", body_text, flags=re.IGNORECASE):
+        score -= 35
+        reasons.append("residual html tags detected")
+    if re.search(r"\b(function|window\.|document\.|var\s+|const\s+)", body_text):
+        score -= 25
+        reasons.append("script-like text detected")
+    noise_hits = sum(1 for marker in _TRAILING_NOISE_MARKERS if marker in body_text)
+    if noise_hits:
+        score -= min(30, noise_hits * 8)
+        reasons.append("trailing or recommendation noise detected")
+    short_blocks = [paragraph for paragraph in paragraphs if len(re.sub(r"\s+", "", paragraph)) < 8]
+    if paragraphs and len(short_blocks) / len(paragraphs) > 0.35:
+        score -= 15
+        reasons.append("too many short fragments")
+    if len(html) > 20_000 and len(body_text) < 500:
+        score -= 20
+        reasons.append("body is short compared with source html")
+
+    return PipelineQualityScore(value=max(0.0, min(score, 100.0)), reasons=reasons)
 
 
 def _choose_candidate(candidates: list["ArticleExtractionCandidate"]) -> "ArticleExtractionCandidate":
-    for strategy in ("wechat_article", "trafilatura", "readability", "plain_text"):
-        preferred = [candidate for candidate in candidates if candidate.strategy == strategy]
-        if preferred:
-            return max(preferred, key=lambda candidate: candidate.quality.value)
+    strategy_tiebreak = {"wechat_article": 3, "trafilatura": 2, "readability": 1, "plain_text": 0}
+    if candidates:
+        return max(candidates, key=lambda candidate: (candidate.quality.value, strategy_tiebreak.get(candidate.strategy, 0)))
     raise ValueError("no article extraction candidates available")
 
 
@@ -688,7 +792,7 @@ class ArticlePipeline:
         heading_levels = _heading_levels_from_html(html)
 
         for draft in drafts:
-            body_text = draft.body_text.strip()
+            body_text = _sanitize_readable_text(draft.body_text)
             if not body_text:
                 continue
             title = _usable_title(draft.title, body_text)
@@ -714,7 +818,7 @@ class ArticlePipeline:
         if candidates:
             return candidates
 
-        fallback_body = _clean_text(_html_to_text(html) or re.sub(r"<[^>]+>", " ", html))
+        fallback_body = _sanitize_readable_text(_html_to_text(html) or re.sub(r"<[^>]+>", " ", html))
         fallback_title = (
             _extract_meta_content(html, "og:title")
             or _extract_tag_value(html, r"<title[^>]*>(.*?)</title>")

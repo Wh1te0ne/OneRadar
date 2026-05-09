@@ -124,6 +124,12 @@ function readingStatusLabel(progress: number) {
   return "未读";
 }
 
+function taskMatchesReadyContent(task: ApiTaskEntry, sourceReady: boolean, summaryReady: boolean) {
+  if ((task.task_type === "fetch_meta" || task.task_type === "reprocess_item") && sourceReady) return true;
+  if (task.task_type === "generate_summary" && summaryReady) return true;
+  return false;
+}
+
 function getReaderScrollHost() {
   return document.querySelector<HTMLElement>(".workspace-frame");
 }
@@ -355,6 +361,7 @@ export function ItemDetailPage() {
   function syncReadingState(
     payload: {
       progress_percent?: number;
+      is_read?: boolean;
       last_read_at?: string | null;
       is_archived?: boolean;
       is_favorited?: boolean;
@@ -369,9 +376,11 @@ export function ItemDetailPage() {
 
     const currentState = readingStateRef.current ?? liveReadingState ?? item.reading_state;
     const nextProgress = clampProgress(payload.progress_percent ?? currentState.progress_percent);
+    const nextIsRead = payload.is_read ?? currentState.is_read ?? false;
     const nextLastReadAt = payload.last_read_at ?? new Date().toISOString();
     const nextState: ApiReadingState = {
       progress_percent: nextProgress,
+      is_read: nextIsRead,
       last_read_at: nextLastReadAt,
       is_archived: payload.is_archived ?? currentState.is_archived,
       is_favorited: payload.is_favorited ?? currentState.is_favorited,
@@ -383,6 +392,7 @@ export function ItemDetailPage() {
 
     const requestPayload = {
       progress_percent: nextProgress,
+      is_read: payload.is_read,
       last_read_at: nextLastReadAt,
       is_archived: payload.is_archived,
       is_favorited: payload.is_favorited,
@@ -594,20 +604,22 @@ export function ItemDetailPage() {
     if (!item) {
       return;
     }
+    const currentItem = item;
 
     const scrollHost = getReaderScrollHost();
     if (!scrollHost) {
       return;
     }
+    const scrollContainer = scrollHost;
 
     function handleScroll() {
-      const currentState = readingStateRef.current ?? item.reading_state;
-      const maxScroll = scrollHost.scrollHeight - scrollHost.clientHeight;
+      const currentState = readingStateRef.current ?? currentItem.reading_state;
+      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
       if (maxScroll <= 0) {
         return;
       }
 
-      const nextProgress = clampProgress((scrollHost.scrollTop / maxScroll) * 100);
+      const nextProgress = clampProgress((scrollContainer.scrollTop / maxScroll) * 100);
       if (lastQueuedProgressRef.current === nextProgress) {
         return;
       }
@@ -625,9 +637,9 @@ export function ItemDetailPage() {
       );
     }
 
-    scrollHost.addEventListener("scroll", handleScroll, { passive: true });
+    scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
-      scrollHost.removeEventListener("scroll", handleScroll);
+      scrollContainer.removeEventListener("scroll", handleScroll);
     };
   }, [item]);
 
@@ -688,23 +700,28 @@ export function ItemDetailPage() {
   const transcriptSegments = item?.transcript?.segments ?? [];
   const readingState = liveReadingState ?? item?.reading_state ?? null;
   const progress = clampProgress(readingState?.progress_percent ?? 0);
-  const activeTasks = itemTasks.filter(taskIsActive);
-  const latestTask = itemTasks[0] ?? null;
-  const visibleTask = activeTasks[0] ?? latestTask;
-  const activeSummaryTask = activeTasks.find((task) => task.task_type === "generate_summary") ?? null;
   const latestSourceTask = itemTasks.find((task) => task.task_type === "fetch_meta" || task.task_type === "reprocess_item") ?? null;
   const latestSummaryTask = itemTasks.find((task) => task.task_type === "generate_summary") ?? null;
   const failedSummaryTask = latestSummaryTask?.status === "failed" ? latestSummaryTask : null;
   const sourceReady = hasArticleBody || hasTranscript;
   const summaryReady = aiSummaries.length > 0;
+  const activeTasks = itemTasks.filter((task) => taskIsActive(task) && !taskMatchesReadyContent(task, sourceReady, summaryReady));
+  const failedTasks = itemTasks.filter((task) => task.status === "failed" && !taskMatchesReadyContent(task, sourceReady, summaryReady));
+  const latestTask = itemTasks.find((task) => !taskMatchesReadyContent(task, sourceReady, summaryReady)) ?? null;
+  const visibleTask = activeTasks[0] ?? failedTasks[0] ?? latestTask;
+  const activeSummaryTask = activeTasks.find((task) => task.task_type === "generate_summary") ?? null;
   const sourceStageLabel = latestSourceTask?.stage_label ?? (sourceReady ? "原文已生成" : "原文未开始");
   const sourceStageDetail = latestSourceTask?.stage_detail ?? (sourceReady ? "转写/正文已经保存，可以查看原文。" : "等待后台生成可读原文。");
   const sourceProgress = latestSourceTask ? taskProgress(latestSourceTask) : sourceReady ? 100 : 0;
   const summaryStageLabel = latestSummaryTask?.stage_label ?? (summaryReady ? "AI 摘要已完成" : sourceReady ? "AI 摘要未开始" : "等待原文");
   const summaryStageDetail = latestSummaryTask?.stage_detail ?? (summaryReady ? "摘要已经写入条目。" : sourceReady ? "原文已准备好，等待提交或自动排队。" : "原文生成后会进入 AI 摘要阶段。");
   const summaryProgress = latestSummaryTask ? taskProgress(latestSummaryTask) : summaryReady ? 100 : 0;
-  const hasActiveTask = activeTasks.length > 0 || item?.status === "pending" || item?.status === "processing";
-  const taskBannerTone = visibleTask?.status === "failed" || item?.status === "failed" ? "failed" : hasActiveTask ? "active" : "idle";
+  const sourceStepVisible = !sourceReady || (latestSourceTask ? !taskMatchesReadyContent(latestSourceTask, sourceReady, summaryReady) : false);
+  const summaryStepVisible = !summaryReady || (latestSummaryTask ? !taskMatchesReadyContent(latestSummaryTask, sourceReady, summaryReady) : false);
+  const hasProcessingOverview = sourceStepVisible || summaryStepVisible;
+  const hasActiveTask = activeTasks.length > 0 || (!sourceReady && (item?.status === "pending" || item?.status === "processing"));
+  const hasFailedTask = failedTasks.length > 0 || item?.status === "failed";
+  const taskBannerTone = hasFailedTask ? "failed" : hasActiveTask ? "active" : "idle";
   const highlightCount = item?.highlights.length ?? 0;
   const noteCount = item?.notes.length ?? 0;
   const inboxFolderId = workspace?.default_inbox_folder?.id ?? "inbox";
@@ -874,6 +891,19 @@ export function ItemDetailPage() {
     if (block.type === "excerpt") {
       return <p key={`${index}:${text}`} className="reader-excerpt">{renderAnnotatedText(text)}</p>;
     }
+    if (block.type === "quote") {
+      return <blockquote key={`${index}:${text}`} className="reader-quote">{renderAnnotatedText(text)}</blockquote>;
+    }
+    if (block.type === "list") {
+      const items = Array.isArray(block.data?.items)
+        ? block.data.items.map((item) => normalizeReaderText(String(item))).filter(Boolean)
+        : text.split(/\n+/).map((item) => normalizeReaderText(item)).filter(Boolean);
+      return (
+        <ul key={`${index}:${text}`} className="reader-list">
+          {items.map((item, itemIndex) => <li key={`${itemIndex}:${item}`}>{renderAnnotatedText(item)}</li>)}
+        </ul>
+      );
+    }
     return <p key={`${index}:${text}`}>{renderAnnotatedText(text)}</p>;
   }
 
@@ -898,15 +928,17 @@ export function ItemDetailPage() {
 
   function handleToggleReadStatus() {
     if (!item || !readingState) return;
-    const nextProgress = progress >= 100 ? 0 : 100;
+    const nextIsRead = !readingState.is_read;
+    const nextProgress = nextIsRead ? 100 : 0;
     syncReadingState(
       {
         progress_percent: nextProgress,
+        is_read: nextIsRead,
         last_read_at: new Date().toISOString(),
         is_archived: readingState.is_archived,
         is_favorited: readingState.is_favorited,
         last_position_type: "manual_read_status",
-        last_position_value: String(nextProgress),
+        last_position_value: nextIsRead ? "read" : "unread",
       },
       true,
     );
@@ -1259,8 +1291,8 @@ export function ItemDetailPage() {
           <div className="btn-group reader-toolbar-actions">
             {item.status === "completed" ? (
               <button type="button" className="btn btn-secondary btn-sm" onClick={handleToggleReadStatus}>
-                <span className="icon icon-sm">{progress >= 100 ? "done_all" : "radio_button_unchecked"}</span>
-                {readingStatusLabel(progress)}
+                <span className="icon icon-sm">{readingState?.is_read ? "done_all" : "radio_button_unchecked"}</span>
+                {readingState?.is_read ? "已读" : readingStatusLabel(progress)}
               </button>
             ) : (
               <span className={statusChipClass(item.status)}>{statusLabel(item.status)}</span>
@@ -1317,28 +1349,34 @@ export function ItemDetailPage() {
               </div>
             )}
 
-            <div className="processing-overview" aria-label="处理进度">
-              <div className="processing-step-row">
-                <div className="processing-step-header">
-                  <span>原文</span>
-                  <strong>{sourceStageLabel}</strong>
-                </div>
-                <div className="progress-bar">
-                  <div className="progress-bar-fill" style={{ width: `${sourceProgress}%` }} />
-                </div>
-                <p>{sourceStageDetail}</p>
+            {hasProcessingOverview && (
+              <div className="processing-overview" aria-label="处理进度">
+                {sourceStepVisible && (
+                  <div className="processing-step-row">
+                    <div className="processing-step-header">
+                      <span>原文</span>
+                      <strong>{sourceStageLabel}</strong>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-bar-fill" style={{ width: `${sourceProgress}%` }} />
+                    </div>
+                    <p>{sourceStageDetail}</p>
+                  </div>
+                )}
+                {summaryStepVisible && (
+                  <div className="processing-step-row">
+                    <div className="processing-step-header">
+                      <span>AI 解析</span>
+                      <strong>{summaryStageLabel}</strong>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-bar-fill" style={{ width: `${summaryProgress}%` }} />
+                    </div>
+                    <p>{summaryStageDetail}</p>
+                  </div>
+                )}
               </div>
-              <div className="processing-step-row">
-                <div className="processing-step-header">
-                  <span>AI 解析</span>
-                  <strong>{summaryStageLabel}</strong>
-                </div>
-                <div className="progress-bar">
-                  <div className="progress-bar-fill" style={{ width: `${summaryProgress}%` }} />
-                </div>
-                <p>{summaryStageDetail}</p>
-              </div>
-            </div>
+            )}
 
             <div className="reader-content-tabs" role="tablist" aria-label="阅读内容">
               <button

@@ -59,7 +59,7 @@ def test_extract_article_drafts_returns_primary_fallback_and_plain_text(monkeypa
     assert "Payload Title" in drafts[2].body_text
 
 
-def test_pipeline_prefers_primary_candidate_and_persists_byline(monkeypatch):
+def test_pipeline_prefers_higher_quality_candidate_and_persists_byline(monkeypatch):
     primary = ArticleExtractionDraft(
         strategy="trafilatura",
         title="Primary Title",
@@ -67,7 +67,7 @@ def test_pipeline_prefers_primary_candidate_and_persists_byline(monkeypatch):
         byline="Primary Author",
         language="zh",
         excerpt="Primary excerpt",
-        body_text="Primary body text with enough substance for scoring.",
+        body_text="Primary body text with <img src='noise.png'> too little substance.",
     )
     fallback = ArticleExtractionDraft(
         strategy="readability",
@@ -76,7 +76,11 @@ def test_pipeline_prefers_primary_candidate_and_persists_byline(monkeypatch):
         byline="Fallback Author",
         language="zh",
         excerpt="Fallback excerpt",
-        body_text="Fallback body text that is intentionally longer than the primary candidate to ensure strategy order matters.",
+        body_text=(
+            "Fallback body text that is intentionally longer than the primary candidate.\n\n"
+            "It has a second paragraph with enough substance for scoring.\n\n"
+            "It has a third paragraph so quality beats parser strategy order."
+        ),
     )
     fetch_result = article.ArticleFetchResult(
         mode="provided_html",
@@ -102,14 +106,108 @@ def test_pipeline_prefers_primary_candidate_and_persists_byline(monkeypatch):
     result = article.ArticlePipeline().run(context)
 
     assert result.ok is True
-    assert result.data["chosen_candidate"]["strategy"] == "trafilatura"
+    assert result.data["chosen_candidate"]["strategy"] == "readability"
     persistable = result.data["persistable"]
-    assert persistable["content_item"]["author_name"] == "Primary Author"
-    assert persistable["content_item"]["raw_meta"]["extraction_strategy"] == "trafilatura"
-    assert persistable["parsed_document"]["parser_name"] == "trafilatura"
-    assert persistable["parsed_document"]["author_name"] == "Primary Author"
-    assert persistable["parsed_document"]["byline"] == "Primary Author"
-    assert persistable["parsed_document"]["plain_text"].startswith("Primary body text")
+    assert persistable["content_item"]["author_name"] == "Fallback Author"
+    assert persistable["content_item"]["raw_meta"]["extraction_strategy"] == "readability"
+    assert persistable["parsed_document"]["parser_name"] == "readability"
+    assert persistable["parsed_document"]["author_name"] == "Fallback Author"
+    assert persistable["parsed_document"]["byline"] == "Fallback Author"
+    assert persistable["parsed_document"]["plain_text"].startswith("Fallback body text")
+
+
+def test_pipeline_sanitizes_residual_html_and_trailing_noise(monkeypatch):
+    draft = ArticleExtractionDraft(
+        strategy="trafilatura",
+        title="百度发布文心 5.1",
+        site_name="量子位",
+        byline="量子位",
+        language="zh",
+        excerpt=None,
+        body_text=(
+            '< img id="wx_img" src="https://www.qbitai.com/logo.png" width="400" height="400">\n\n'
+            "百度发布文心 5.1：搜索能力登顶国内，预训练成本仅为业界 6%。\n\n"
+            "搜索、知识、Agent 能力全面提升。\n\n"
+            "5月9日，百度正式发布新一代基础大模型文心大模型 5.1。\n\n"
+            "量子位的朋友们\n\n"
+            "相关阅读\n\n"
+            "各大应用商店都能下载"
+        ),
+    )
+    fetch_result = article.ArticleFetchResult(
+        mode="live",
+        source_url="https://www.qbitai.com/2026/05/story.html",
+        normalized_url="https://qbitai.com/2026/05/story.html",
+        final_url="https://www.qbitai.com/2026/05/story.html",
+        ok=True,
+        status_code=200,
+        content_type="text/html",
+        html="<html><body><article><p>百度发布文心 5.1</p></article></body></html>",
+    )
+
+    monkeypatch.setattr(article, "extract_article_drafts", lambda html, source_url, payload: [draft])
+    monkeypatch.setattr(article.ArticlePipeline, "_fetch_html", lambda self, normalized_url, payload: fetch_result)
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url="https://www.qbitai.com/2026/05/story.html",
+        task_type=TaskType.EXTRACT_ARTICLE,
+        payload={"fetch_mode": "live"},
+    )
+
+    result = article.ArticlePipeline().run(context)
+
+    text = result.data["persistable"]["parsed_document"]["plain_text"]
+    assert "<img" not in text
+    assert "wx_img" not in text
+    assert "量子位的朋友们" not in text
+    assert "相关阅读" not in text
+    assert "搜索、知识、Agent 能力全面提升" in text
+
+
+def test_pipeline_builds_list_and_quote_blocks(monkeypatch):
+    draft = ArticleExtractionDraft(
+        strategy="trafilatura",
+        title="Structured Article",
+        site_name="Example",
+        byline=None,
+        language="zh",
+        excerpt=None,
+        body_text=(
+            "Structured Article\n\n"
+            "> 这是一段引用。\n\n"
+            "- 第一条\n"
+            "- 第二条\n\n"
+            "普通正文。"
+        ),
+    )
+    fetch_result = article.ArticleFetchResult(
+        mode="live",
+        source_url="https://example.com/story",
+        normalized_url="https://example.com/story",
+        final_url="https://example.com/story",
+        ok=True,
+        status_code=200,
+        content_type="text/html",
+        html="<html><body><article><p>Structured Article</p></article></body></html>",
+    )
+
+    monkeypatch.setattr(article, "extract_article_drafts", lambda html, source_url, payload: [draft])
+    monkeypatch.setattr(article.ArticlePipeline, "_fetch_html", lambda self, normalized_url, payload: fetch_result)
+
+    context = PipelineContext(
+        item_id=uuid4(),
+        source_url="https://example.com/story",
+        task_type=TaskType.EXTRACT_ARTICLE,
+        payload={"fetch_mode": "live"},
+    )
+
+    result = article.ArticlePipeline().run(context)
+
+    blocks = result.data["persistable"]["parsed_document"]["structured_blocks"]
+    assert any(block["type"] == "quote" and block["text"] == "这是一段引用。" for block in blocks)
+    list_block = next(block for block in blocks if block["type"] == "list")
+    assert list_block["data"]["items"] == ["第一条", "第二条"]
 
 
 def test_pipeline_uses_first_body_line_when_extractor_title_is_missing(monkeypatch):
