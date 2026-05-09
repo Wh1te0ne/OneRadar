@@ -405,8 +405,12 @@ export function ItemDetailPage() {
         if (latestItemIdRef.current !== item.id) {
           return;
         }
-        readingStateRef.current = savedState;
-        setLiveReadingState(savedState);
+        const normalizedSavedState = {
+          ...savedState,
+          is_read: savedState.is_read ?? nextIsRead,
+        };
+        readingStateRef.current = normalizedSavedState;
+        setLiveReadingState(normalizedSavedState);
       }).catch(() => {
         // Keep optimistic state; the next jump, scroll, or refresh can retry.
       });
@@ -614,6 +618,9 @@ export function ItemDetailPage() {
 
     function handleScroll() {
       const currentState = readingStateRef.current ?? currentItem.reading_state;
+      if (currentState.is_read) {
+        return;
+      }
       const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
       if (maxScroll <= 0) {
         return;
@@ -699,6 +706,7 @@ export function ItemDetailPage() {
   const sourceLabel = itemSourceLabel(item);
   const transcriptSegments = item?.transcript?.segments ?? [];
   const readingState = liveReadingState ?? item?.reading_state ?? null;
+  const isRead = Boolean(readingState?.is_read);
   const progress = clampProgress(readingState?.progress_percent ?? 0);
   const latestSourceTask = itemTasks.find((task) => task.task_type === "fetch_meta" || task.task_type === "reprocess_item") ?? null;
   const latestSummaryTask = itemTasks.find((task) => task.task_type === "generate_summary") ?? null;
@@ -928,8 +936,8 @@ export function ItemDetailPage() {
 
   function handleToggleReadStatus() {
     if (!item || !readingState) return;
-    const nextIsRead = !readingState.is_read;
-    const nextProgress = nextIsRead ? 100 : 0;
+    const nextIsRead = !isRead;
+    const nextProgress = nextIsRead ? progress : 0;
     syncReadingState(
       {
         progress_percent: nextProgress,
@@ -1291,8 +1299,8 @@ export function ItemDetailPage() {
           <div className="btn-group reader-toolbar-actions">
             {item.status === "completed" ? (
               <button type="button" className="btn btn-secondary btn-sm" onClick={handleToggleReadStatus}>
-                <span className="icon icon-sm">{readingState?.is_read ? "done_all" : "radio_button_unchecked"}</span>
-                {readingState?.is_read ? "已读" : readingStatusLabel(progress)}
+                <span className="icon icon-sm">{isRead ? "done_all" : "radio_button_unchecked"}</span>
+                {isRead ? "已读" : readingStatusLabel(progress)}
               </button>
             ) : (
               <span className={statusChipClass(item.status)}>{statusLabel(item.status)}</span>
@@ -1312,7 +1320,7 @@ export function ItemDetailPage() {
 
         <div className="reader-layout">
           <div className="reader-column" onMouseUp={updateSelectionPopover} onKeyUp={updateSelectionPopover}>
-            {progress > 0 && (
+            {!isRead && progress > 0 && (
               <div className="reading-progress-bar">
                 <div className="reading-progress-fill" style={{ width: `${progress}%` }} />
               </div>
@@ -1545,10 +1553,12 @@ export function ItemDetailPage() {
             <div style={{ padding: "16px 20px" }}>
               <div className="reader-context-panel" aria-label="阅读进度">
                 <div className="reader-context-kicker">阅读进度</div>
-                <div className="reader-context-origin">{progress}%</div>
-                <div className="progress-bar" style={{ marginBottom: 14 }}>
-                  <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
-                </div>
+                <div className="reader-context-origin">{isRead ? "已读" : `${progress}%`}</div>
+                {!isRead && (
+                  <div className="progress-bar" style={{ marginBottom: 14 }}>
+                    <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
+                  </div>
+                )}
                 <div className="reader-context-stats">
                   <div>
                     <span>{highlightCount}</span>

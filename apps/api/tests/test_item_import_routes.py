@@ -189,10 +189,10 @@ def test_update_reading_state_route_fallback_contract(client, monkeypatch) -> No
 
     complete_response = client.put(
         f"/api/items/{item_id}/reading-state",
-        json={"progress_percent": 100, "is_read": True},
+        json={"progress_percent": 42, "is_read": True},
     )
     assert complete_response.status_code == 200
-    assert complete_response.json()["progress_percent"] == 100
+    assert complete_response.json()["progress_percent"] == 42
     assert complete_response.json()["is_read"] is True
 
     list_response = client.get("/api/items?page=1&page_size=20")
