@@ -643,7 +643,7 @@ Persists the RSS discovery surface in the primary database. `POST /api/feeds/cac
 
 The API process also runs the same refresh logic on a timer when `ONERADAR_FEED_REFRESH_ENABLED=true`. The default interval is controlled by `ONERADAR_FEED_REFRESH_INTERVAL_SECONDS` and defaults to 1800 seconds.
 
-The desktop 每日新闻 page is model-generated and persisted per date. The API reads cached RSS entries from the 24 hours before the actual generation time, calls the configured summarization/chat provider, asks the model to translate and summarize entries into a fixed daily-brief structure, and saves exactly one report per day. Regenerating the same date overwrites the previous report.
+The desktop 每日新闻 page is model-generated and persisted per date. The API reads cached RSS entries from the 24 hours before the actual generation time, calls the configured summarization/chat provider, asks the model to translate and summarize entries into a fixed daily-brief structure, and saves exactly one report per day. The generated structure is AI-first: the headline and lead must prefer AI news when available, the first section must be AI, AI coverage should be heavier than other sections, and game news belongs at the end. Regenerating the same date overwrites the previous report.
 
 ```http
 GET /api/daily-news?date=2026-05-07

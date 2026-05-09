@@ -153,8 +153,42 @@ function showAppToast(message: string, tone: "success" | "error" | "info" = "inf
   window.dispatchEvent(new CustomEvent("oneradar:toast", { detail: { message, tone } }));
 }
 
+function updateStatusLabel(status: string) {
+  switch (status) {
+    case "checking": return "检查中";
+    case "available": return "有新版本";
+    case "current": return "已是最新";
+    case "error": return "检查失败";
+    default: return "尚未检查";
+  }
+}
+
+function formatCheckedAt(value: string | undefined) {
+  if (!value) return "尚未检查";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
 export function SettingsPage() {
-  const { apiBaseUrl, connectionState, folders, lastError, loadFolders, loadProviders, providers, resolvedTheme, themeMode, setThemeMode, workspace } = useAppState();
+  const {
+    apiBaseUrl,
+    checkForUpdates,
+    connectionState,
+    folders,
+    lastError,
+    loadFolders,
+    loadProviders,
+    providers,
+    resolvedTheme,
+    setThemeMode,
+    themeMode,
+    updateCheck,
+    workspace
+  } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const [bilibiliIntegration, setBilibiliIntegration] = useState<ApiBilibiliIntegrationSettings | null>(null);
   const [integrationLoading, setIntegrationLoading] = useState(true);
@@ -347,6 +381,17 @@ export function SettingsPage() {
       setProviderError(e instanceof Error ? e.message : "模型测试失败");
     } finally {
       setProviderTestingId(null);
+    }
+  }
+
+  async function handleUpdateCheck() {
+    const result = await checkForUpdates();
+    if (result.status === "available") {
+      showAppToast(`发现新版本 ${result.latestVersion}。`, "info");
+    } else if (result.status === "current") {
+      showAppToast("当前已经是最新版本。", "success");
+    } else if (result.status === "error") {
+      showAppToast(result.message ?? "更新检查失败。", "error");
     }
   }
 
@@ -593,6 +638,47 @@ export function SettingsPage() {
             ))}
           </div>
           {lastError && <div className="feedback feedback-error">{lastError}</div>}
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-title">
+            <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>system_update_alt</span>
+            版本检查
+          </div>
+          <div className={`update-check-panel update-check-${updateCheck.status}`}>
+            <div className="provider-icon">
+              <span className="icon icon-sm">{updateCheck.status === "available" ? "new_releases" : updateCheck.status === "checking" ? "sync" : "verified"}</span>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="update-check-title">
+                {updateStatusLabel(updateCheck.status)}
+                {updateCheck.status === "available" && <span className="chip chip-status-failed">新版本</span>}
+              </div>
+              <div className="text-meta">
+                当前版本 {updateCheck.currentVersion}
+                {updateCheck.latestVersion ? ` · 最新版本 ${updateCheck.latestVersion}` : ""}
+                {" · "}
+                上次检查 {formatCheckedAt(updateCheck.checkedAt)}
+              </div>
+              {updateCheck.message && <div className="text-caption update-check-message">{updateCheck.message}</div>}
+              {updateCheck.status === "available" && updateCheck.notes && (
+                <div className="text-caption update-check-notes">{updateCheck.notes.slice(0, 180)}{updateCheck.notes.length > 180 ? "…" : ""}</div>
+              )}
+            </div>
+            <div className="update-check-actions">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleUpdateCheck()} disabled={updateCheck.status === "checking"}>
+                <span className="icon icon-sm">{updateCheck.status === "checking" ? "sync" : "refresh"}</span>
+                立即检查
+              </button>
+              {updateCheck.releaseUrl && (
+                <a className="btn btn-ghost btn-sm" href={updateCheck.releaseUrl} target="_blank" rel="noreferrer">
+                  <span className="icon icon-sm">open_in_new</span>
+                  查看版本
+                </a>
+              )}
+            </div>
+          </div>
+          <p className="text-meta">OneRadar 会每 10 分钟自动检查一次，有可用更新时顶部设置按钮会显示红点。</p>
         </div>
 
         <div className="settings-section">

@@ -84,7 +84,7 @@ export default function App() {
   const [deletingFolder, setDeletingFolder] = useState<{ id: string; name: string; item_count: number } | null>(null);
   const [folderBusy, setFolderBusy] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
-  const { apiBaseUrl, connectionState, folders, loadFolders, workspace } = useAppState();
+  const { apiBaseUrl, connectionState, folders, loadFolders, updateCheck, workspace } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
 
   const inboxFolder = workspace?.default_inbox_folder ?? folders.find((f) => f.id === "inbox");
@@ -349,6 +349,7 @@ export default function App() {
             aria-label="设置"
           >
             <span className="icon">settings</span>
+            {updateCheck.status === "available" && <span className="topbar-update-dot" aria-label="有可用更新" />}
           </Link>
         </div>
 

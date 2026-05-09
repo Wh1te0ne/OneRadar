@@ -137,3 +137,23 @@ def test_get_daily_news_missing_date_returns_missing_status(client) -> None:
     assert response.status_code == 200
     assert response.json()["report_date"] == "2026-05-06"
     assert response.json()["status"] == "missing"
+
+
+def test_daily_news_prompt_requires_ai_first_and_games_last() -> None:
+    entries = [
+        {
+            "id": "n1",
+            "source_title": "Example Feed",
+            "published_at": datetime(2026, 5, 7, 0, 30, tzinfo=timezone.utc),
+            "title": "AI model update",
+            "summary": "A new AI model ships.",
+            "tags": ["AI"],
+        }
+    ]
+
+    prompt = daily_news_service._daily_news_prompt(entries, "2026-05-07")
+
+    assert "lead 和 headline 必须优先选择 AI 新闻" in prompt
+    assert "第一个主题必须是 AI 相关新闻" in prompt
+    assert "AI 相关新闻的篇幅和条目数量应明显多于其他主题" in prompt
+    assert "游戏新闻只能放在最后一个主题" in prompt

@@ -127,6 +127,8 @@ http://192.168.100.55:8081
 
 The browser should call API paths on the same origin, for example `http://192.168.100.55:8081/api/health`. `ONERADAR_PUBLIC_API_URL` is optional and should normally stay unset; set it only when intentionally routing the frontend to a separately exposed API origin.
 
+The desktop/web frontend can display a lightweight update indicator by polling a JSON update manifest every 10 minutes. By default it checks the latest GitHub release for `Wh1te0ne/OneRadar`; set `ONERADAR_PUBLIC_UPDATE_CHECK_URL` in the web container or `VITE_ONERADAR_UPDATE_CHECK_URL` at build time to point at a private manifest with a `version` or `tag_name` field when GitHub releases are not public.
+
 ## Secret Handling
 
 Rules:

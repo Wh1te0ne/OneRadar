@@ -116,16 +116,17 @@ def test_summary_pipeline_prefers_podcast_transcript_with_source_intro_context()
     assert "[01:06] 第二段真实转写。" in source_text
 
 
-def test_article_summary_prompt_preserves_actionable_details():
+def test_article_summary_prompt_uses_natural_reader_sections():
     prompt = _summary_prompt(
         title="测试文章",
         source_text="正文包含接口、步骤、限制和数字。",
         content_type="article",
     )
 
-    assert "## 可操作信息" in prompt
-    assert "流程、配置、接口、工具、资源、决策步骤或检查清单" in prompt
-    assert "不要为了简短而省略原文中的步骤、参数、示例、限制和数字" in prompt
+    assert "## 重要细节" in prompt
+    assert "## 后续关注" in prompt
+    assert "不要把内容硬凑成行动清单" in prompt
+    assert "不要为了简短而省略原文中的参数、示例、限制、数字和关键引用线索" in prompt
 
 
 def test_summary_adapter_allows_longer_article_summaries(monkeypatch):

@@ -1,6 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ApiError, createApiClient } from "../api/client";
 import type { ApiBootstrapResponse, ApiFolderEntry, ApiHealth, ApiProvider } from "../api/types";
+import {
+  UPDATE_CHECK_INTERVAL_MS,
+  checkForAppUpdates,
+  getCurrentAppVersion,
+  type UpdateCheckState
+} from "../utils/updateCheck";
 
 const STORAGE_KEY = "oneradar.desktop.state";
 const RUNTIME_API_URL = window.__ONERADAR_CONFIG__?.apiBaseUrl;
@@ -31,10 +37,12 @@ type AppStateValue = {
   workspace: ApiBootstrapResponse | null;
   folders: ApiFolderEntry[];
   providers: ApiProvider[];
+  updateCheck: UpdateCheckState;
   refreshConnection: (targetBaseUrl?: string) => Promise<void>;
   loadWorkspace: () => Promise<void>;
   loadFolders: () => Promise<ApiFolderEntry[]>;
   loadProviders: () => Promise<ApiProvider[]>;
+  checkForUpdates: () => Promise<UpdateCheckState>;
 };
 
 const AppStateContext = createContext<AppStateValue | null>(null);
@@ -85,6 +93,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [workspace, setWorkspace] = useState<ApiBootstrapResponse | null>(null);
   const [folders, setFolders] = useState<ApiFolderEntry[]>([]);
   const [providers, setProviders] = useState<ApiProvider[]>([]);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckState>({ status: "idle", currentVersion: __APP_VERSION__ });
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
 
@@ -207,8 +216,25 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const checkForUpdates = async () => {
+    const currentVersion = await getCurrentAppVersion();
+    setUpdateCheck((current) => ({ ...current, status: "checking", currentVersion }));
+    const result = await checkForAppUpdates(currentVersion);
+    setUpdateCheck(result);
+    return result;
+  };
+
   useEffect(() => {
     void loadWorkspace();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void checkForUpdates();
+    const intervalId = window.setInterval(() => {
+      void checkForUpdates();
+    }, UPDATE_CHECK_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -224,10 +250,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     workspace,
     folders,
     providers,
+    updateCheck,
     refreshConnection,
     loadWorkspace,
     loadFolders,
-    loadProviders
+    loadProviders,
+    checkForUpdates
   };
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

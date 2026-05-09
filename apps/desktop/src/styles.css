@@ -644,6 +644,7 @@ button, input, select, textarea { font: inherit; }
 .shell-search input:disabled { cursor: not-allowed; opacity: 0.5; }
 
 .topbar-icon-btn {
+  position: relative;
   width: 36px;
   height: 36px;
   border-radius: var(--radius-sm);
@@ -661,6 +662,17 @@ button, input, select, textarea { font: inherit; }
 
 .topbar-icon-btn:hover { background: var(--surface-container); color: var(--on-surface); }
 .topbar-icon-btn.active { background: var(--surface-container); color: var(--primary); }
+
+.topbar-update-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--error);
+  box-shadow: 0 0 0 2px var(--surface-lowest);
+}
 
 /* ─── Workspace Frame ────────────────────────────────────────── */
 .workspace-frame {
@@ -3338,6 +3350,43 @@ button, input, select, textarea { font: inherit; }
   flex-direction: column;
   gap: 12px;
   padding: 14px 0;
+}
+
+.update-check-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px;
+  background: var(--surface-container);
+  border-radius: var(--radius-sm);
+}
+
+.update-check-available {
+  background: var(--error-container);
+}
+
+.update-check-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.update-check-message {
+  margin-top: 6px;
+}
+
+.update-check-notes {
+  margin-top: 8px;
+  color: var(--on-surface-v);
+}
+
+.update-check-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .settings-model-block-header {
