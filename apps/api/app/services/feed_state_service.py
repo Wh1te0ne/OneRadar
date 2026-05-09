@@ -12,7 +12,12 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import FeedEntry, FeedEntryReadState, FeedSource
 from app.db.session import SessionLocal
-from app.schemas.feeds import FeedPreviewItem, FeedPreviewResponse, FeedSourceEntry, FeedStateResponse
+from app.schemas.feeds import (
+    FeedPreviewItem,
+    FeedPreviewResponse,
+    FeedSourceEntry,
+    FeedStateResponse,
+)
 from app.services.db_access import get_primary_user
 from app.services.items_service import find_saved_item_for_url
 
@@ -40,7 +45,11 @@ def _load_file_state() -> dict[str, object]:
     return {
         "sources": data.get("sources") if isinstance(data.get("sources"), list) else [],
         "feeds": data.get("feeds") if isinstance(data.get("feeds"), dict) else {},
-        "read_entries": data.get("read_entries") if isinstance(data.get("read_entries"), list) else [],
+        "read_entries": (
+            data.get("read_entries")
+            if isinstance(data.get("read_entries"), list)
+            else []
+        ),
     }
 
 
@@ -71,7 +80,11 @@ def _file_feed_state() -> FeedStateResponse:
         except ValueError:
             continue
 
-    read_entries = [entry for entry in state["read_entries"] if isinstance(entry, str) and entry.strip()]
+    read_entries = [
+        entry
+        for entry in state["read_entries"]
+        if isinstance(entry, str) and entry.strip()
+    ]
     return FeedStateResponse(sources=sources, feeds=feeds, read_entries=read_entries)
 
 
@@ -233,7 +246,26 @@ def upsert_feed_cache(feed: FeedPreviewResponse) -> FeedStateResponse:
         with _STATE_LOCK:
             state = _load_file_state()
             feeds = dict(state["feeds"])
-            feeds[feed.source_url] = feed.model_dump(mode="json")
+            previous_feed = feeds.get(feed.source_url)
+            previous_items = []
+            if isinstance(previous_feed, dict) and isinstance(previous_feed.get("items"), list):
+                previous_items = [
+                    item
+                    for item in previous_feed["items"]
+                    if isinstance(item, dict)
+                ]
+            merged_items = {
+                str(item.get("id") or item.get("link") or ""): item
+                for item in previous_items
+                if str(item.get("id") or item.get("link") or "").strip()
+            }
+            for item in feed.model_dump(mode="json")["items"]:
+                key = str(item.get("id") or item.get("link") or "")
+                if key.strip():
+                    merged_items[key] = item
+            next_feed = feed.model_dump(mode="json")
+            next_feed["items"] = list(merged_items.values())
+            feeds[feed.source_url] = next_feed
             sources = [
                 source
                 for source in list(state["sources"])
@@ -258,7 +290,11 @@ def upsert_feed_cache(feed: FeedPreviewResponse) -> FeedStateResponse:
         return _file_feed_state()
 
 
-def mark_feed_source_error(source_url: str, site_title: str | None, error_message: str) -> FeedStateResponse:
+def mark_feed_source_error(
+    source_url: str,
+    site_title: str | None,
+    error_message: str,
+) -> FeedStateResponse:
     normalized = source_url.strip()
     if not normalized:
         return get_feed_state()
@@ -322,7 +358,11 @@ def mark_feed_entry_read(entry_key: str) -> FeedStateResponse:
                 .where(FeedEntry.user_id == user.id)
             ).all()
             target_entry = next(
-                (entry for entry, source in rows if normalized in _entry_read_keys(source.source_url, entry)),
+                (
+                    entry
+                    for entry, source in rows
+                    if normalized in _entry_read_keys(source.source_url, entry)
+                ),
                 None,
             )
             if target_entry is not None:
@@ -345,7 +385,11 @@ def mark_feed_entry_read(entry_key: str) -> FeedStateResponse:
     except SQLAlchemyError:
         with _STATE_LOCK:
             state = _load_file_state()
-            read_entries = [entry for entry in list(state["read_entries"]) if isinstance(entry, str) and entry.strip()]
+            read_entries = [
+                entry
+                for entry in list(state["read_entries"])
+                if isinstance(entry, str) and entry.strip()
+            ]
             if normalized and normalized not in read_entries:
                 read_entries.append(normalized)
             state["read_entries"] = read_entries
