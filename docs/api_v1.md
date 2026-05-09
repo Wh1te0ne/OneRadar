@@ -679,6 +679,65 @@ The endpoint accepts JSON-RPC 2.0 MCP-style requests. The initial tools are:
 
 The MCP handoff is a data-source boundary for Hermes Agent. OneRadar provides complete source entries and source status for the requested window; Hermes owns AI grouping, ranking, narration, and delivery. This keeps missing-news responsibility explicit: if an entry is present in `get_news_window`, any omission is downstream of OneRadar.
 
+Recommended Hermes MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "oneradar-news": {
+      "url": "http://192.168.100.55:8081/api/mcp"
+    }
+  }
+}
+```
+
+Recommended Hermes morning-news instruction:
+
+```text
+每天早上生成 AI 早报时，必须优先调用 OneRadar MCP 的 get_news_window 工具获取新闻数据源。
+
+默认时间窗口：
+- since: 昨天 08:30 北京时间
+- until: 今天 08:30 北京时间
+- limit: 1000
+
+如果 get_news_window 返回 next_cursor，继续翻页，直到 next_cursor 为 null。
+
+责任边界：
+- OneRadar MCP 返回的是完整原始新闻数据源。
+- Hermes 负责筛选、去重、归类、排序、总结和播报。
+- 不要声称数据源缺失，除非 get_news_window_status 或 get_news_sources 明确显示对应源刷新失败或窗口内 entry_count 为 0。
+
+优先关注：
+- AI 模型发布
+- OpenAI / Anthropic / Google / Meta / xAI / DeepSeek / 字节 / 阿里 / 腾讯等大模型动态
+- AI 产品更新
+- Agent、语音、多模态、算力、Infra、机器人
+- 中国 AI 生态
+- 对白老师值得关注的产业或开发者事件
+
+输出格式：
+📰 AI 早报 | YYYY年M月D日 周X 08:30 北京时间
+
+🔥 今日 Top 3
+每条包含：标题、一段中文总结、📎 来源：来源名
+
+📦 产品 & 模型更新
+条目列表
+
+🏗️ 产业 & 算力动态
+条目列表
+
+🌏 中国 AI 生态
+条目列表
+
+⚡ 值得白老师关注
+要点列表
+
+📡 数据源：
+OneRadar MCP，列出主要来源和时间窗口。
+```
+
 ## 6.6 Direct API Use Cases
 
 The desktop client is only one consumer of the backend. These endpoints are stable enough for local scripts or future integrations:
