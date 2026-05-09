@@ -156,6 +156,11 @@ function isFreshGeneratedReport(report: ApiDailyNewsReportResponse | null, pendi
   return new Date(report.generated_at).getTime() >= new Date(pending.startedAt).getTime() - 2000;
 }
 
+function shouldKeepDailyNewsPendingAfterError(error: unknown) {
+  if (!(error instanceof ApiError)) return true;
+  return error.status === 0 || error.status === 408 || error.status === 499 || error.status === 504;
+}
+
 function measureWrappedLines(text: string, width: number, font: string, lineHeight: number) {
   const value = text.trim();
   if (!value) return 0;
@@ -283,8 +288,8 @@ export function DailyNewsPage() {
       clearPendingGeneration(selectedDate);
       setPendingGeneration(null);
     } catch (nextError) {
-      if (nextError instanceof ApiError && nextError.status === 504) {
-        setError("模型生成耗时较长，后台仍在处理；回到本页后会继续显示生成状态。");
+      if (shouldKeepDailyNewsPendingAfterError(nextError)) {
+        setError("模型生成请求已提交，但连接提前结束；后台可能仍在处理，本页会继续轮询结果。");
         window.setTimeout(() => {
           void loadReport(selectedDate, { silent: true });
         }, 1800);
