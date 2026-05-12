@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useSearchParams } from "react-router-dom";
 import { createApiClient } from "./api";
+import { AuthPage } from "./pages/AuthPage";
 import { ConnectPage } from "./pages/ConnectPage";
 import { DailyNewsPage } from "./pages/DailyNewsPage";
 import { FeedArticlePreviewPage } from "./pages/FeedArticlePreviewPage";
@@ -84,7 +85,7 @@ export default function App() {
   const [deletingFolder, setDeletingFolder] = useState<{ id: string; name: string; item_count: number } | null>(null);
   const [folderBusy, setFolderBusy] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
-  const { apiBaseUrl, connectionState, folders, loadFolders, updateCheck, workspace } = useAppState();
+  const { apiBaseUrl, authToken, connectionState, currentUser, folders, loadFolders, logout, updateCheck, workspace } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
 
   const inboxFolder = workspace?.default_inbox_folder ?? folders.find((f) => f.id === "inbox");
@@ -236,6 +237,10 @@ export default function App() {
     </>
   );
 
+  if (!authToken && workspace?.requires_login !== false) {
+    return <AuthPage />;
+  }
+
   return (
     <div className={`app-shell${sidebarCollapsed ? " app-shell-sidebar-collapsed" : ""}`}>
       <aside className={`sidebar${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
@@ -351,6 +356,11 @@ export default function App() {
             <span className="icon">settings</span>
             {updateCheck.status === "available" && <span className="topbar-update-dot" aria-label="有可用更新" />}
           </Link>
+          {currentUser && (
+            <button type="button" className="topbar-icon-btn" title={`退出 ${currentUser.username}`} aria-label="退出登录" onClick={logout}>
+              <span className="icon">logout</span>
+            </button>
+          )}
         </div>
 
         <div className="workspace-frame">

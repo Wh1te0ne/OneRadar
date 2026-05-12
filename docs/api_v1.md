@@ -61,13 +61,13 @@ Do not rely on implicit ordering.
 
 ## 3. Single-User Workspace Model
 
-V1 is a single-user desktop reader and must not expose a user-facing account or login flow.
+V1 formal mode exposes a lightweight private-deployment account flow. Login and registration use username/email plus password. It is not a SaaS/team authorization model.
 
 Recommended default:
 
 - Desktop configures the server address and calls a workspace bootstrap endpoint.
 - The backend keeps an internal primary user only as an ownership boundary for rows.
-- API examples omit login and token headers in V1.
+- Protected API examples require `Authorization: Bearer <token>`.
 - If deployment-level protection is needed, put it outside the V1 product UX, for example behind a reverse proxy or local network boundary.
 
 ### 3.1 Workspace Bootstrap
@@ -76,8 +76,10 @@ Recommended V1 workspace endpoints:
 
 - `GET /api/auth/bootstrap`
 - `GET /api/auth/me`
+- `POST /api/auth/login`
+- `POST /api/auth/register`
 
-`/api/auth/me` returns the internal primary user for diagnostics and ownership context. It is not a login session endpoint.
+`/api/auth/bootstrap` returns workspace and UI capability metadata without exposing secrets. `/api/auth/login` and `/api/auth/register` return a bearer token plus user profile. `/api/auth/me` returns the authenticated user.
 
 ### 3.2 Bootstrap Response
 

@@ -172,7 +172,7 @@ def resolve_provider_config(
             if provider is None:
                 raise ValueError("provider not found")
             return _config_from_model(provider, capability)
-    except SQLAlchemyError:
+    except (SQLAlchemyError, ValueError):
         seed_store()
         record = STORE.providers.get(provider_id or "")
         if record is None:

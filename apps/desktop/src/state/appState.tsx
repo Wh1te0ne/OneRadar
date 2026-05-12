@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { ApiError, createApiClient } from "../api/client";
 import type { ApiBootstrapResponse, ApiFolderEntry, ApiHealth, ApiProvider } from "../api/types";
+import type { ApiUser } from "../api/types";
 import {
   UPDATE_CHECK_INTERVAL_MS,
   checkForAppUpdates,
@@ -9,6 +10,7 @@ import {
 } from "../utils/updateCheck";
 
 const STORAGE_KEY = "oneradar.desktop.state";
+const AUTH_TOKEN_STORAGE_KEY = "oneradar.auth.token";
 const RUNTIME_API_URL = window.__ONERADAR_CONFIG__?.apiBaseUrl;
 const DEFAULT_API_URL =
   RUNTIME_API_URL ??
@@ -35,11 +37,16 @@ type AppStateValue = {
   connectionState: ConnectionState;
   lastError: string | null;
   workspace: ApiBootstrapResponse | null;
+  authToken: string | null;
+  currentUser: ApiUser | null;
   folders: ApiFolderEntry[];
   providers: ApiProvider[];
   updateCheck: UpdateCheckState;
   refreshConnection: (targetBaseUrl?: string) => Promise<void>;
   loadWorkspace: () => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
+  register: (username: string, email: string | null, password: string) => Promise<void>;
+  logout: () => void;
   loadFolders: () => Promise<ApiFolderEntry[]>;
   loadProviders: () => Promise<ApiProvider[]>;
   checkForUpdates: () => Promise<UpdateCheckState>;
@@ -91,6 +98,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(getSystemTheme());
   const [health, setHealth] = useState<ApiHealth | null>(null);
   const [workspace, setWorkspace] = useState<ApiBootstrapResponse | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY));
+  const [currentUser, setCurrentUser] = useState<ApiUser | null>(null);
   const [folders, setFolders] = useState<ApiFolderEntry[]>([]);
   const [providers, setProviders] = useState<ApiProvider[]>([]);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheckState>({ status: "idle", currentVersion: __APP_VERSION__ });
@@ -132,14 +141,31 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
 
+  const loadAuthenticatedData = async (activeClient = client) => {
+    const [meResult, foldersResult, providersResult] = await Promise.allSettled([
+      activeClient.me(),
+      activeClient.listFolders(),
+      activeClient.listProviders()
+    ]);
+    if (meResult.status === "fulfilled") {
+      setCurrentUser(meResult.value);
+    } else if (meResult.reason instanceof ApiError && meResult.reason.status === 401) {
+      logout();
+      setLastError("登录已过期，请重新登录");
+      return;
+    }
+    if (foldersResult.status === "fulfilled") {
+      setFolders(foldersResult.value.items);
+    }
+    if (providersResult.status === "fulfilled") {
+      setProviders(providersResult.value.items);
+    }
+  };
+
   const loadWorkspace = async () => {
     setLastError(null);
-    const [healthResult, bootstrapResult, foldersResult, providersResult] = await Promise.allSettled([
-      client.health(),
-      client.bootstrap(),
-      client.listFolders(),
-      client.listProviders()
-    ]);
+    const baseRequests = [client.health(), client.bootstrap()] as const;
+    const [healthResult, bootstrapResult] = await Promise.allSettled(baseRequests);
 
     if (healthResult.status === "fulfilled") {
       setHealth(healthResult.value);
@@ -154,12 +180,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setWorkspace(bootstrapResult.value);
     }
 
-    if (foldersResult.status === "fulfilled") {
-      setFolders(foldersResult.value.items);
-    }
-
-    if (providersResult.status === "fulfilled") {
-      setProviders(providersResult.value.items);
+    if (authToken) {
+      await loadAuthenticatedData(client);
+    } else {
+      setCurrentUser(null);
+      setFolders([]);
+      setProviders([]);
     }
   };
 
@@ -173,19 +199,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setApiBaseUrl(activeBaseUrl);
       setHealth(nextHealth);
       setConnectionState("connected");
-      const [bootstrapResult, foldersResult, providersResult] = await Promise.allSettled([
-        activeClient.bootstrap(),
-        activeClient.listFolders(),
-        activeClient.listProviders()
-      ]);
+      const [bootstrapResult] = await Promise.allSettled([activeClient.bootstrap()]);
       if (bootstrapResult.status === "fulfilled") {
         setWorkspace(bootstrapResult.value);
       }
-      if (foldersResult.status === "fulfilled") {
-        setFolders(foldersResult.value.items);
-      }
-      if (providersResult.status === "fulfilled") {
-        setProviders(providersResult.value.items);
+      if (authToken) {
+        await loadAuthenticatedData(activeClient);
       }
     } catch (error) {
       setHealth(null);
@@ -214,6 +233,34 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setLastError(error instanceof ApiError ? error.message : "读取模型服务失败");
       return [];
     }
+  };
+
+  const login = async (identifier: string, password: string) => {
+    const response = await client.login(identifier, password);
+    localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, response.token);
+    setAuthToken(response.token);
+    setCurrentUser(response.user);
+    const [bootstrapResult] = await Promise.allSettled([client.bootstrap()]);
+    if (bootstrapResult.status === "fulfilled") setWorkspace(bootstrapResult.value);
+    await loadAuthenticatedData(client);
+  };
+
+  const register = async (username: string, email: string | null, password: string) => {
+    const response = await client.register(username, email, password);
+    localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, response.token);
+    setAuthToken(response.token);
+    setCurrentUser(response.user);
+    const [bootstrapResult] = await Promise.allSettled([client.bootstrap()]);
+    if (bootstrapResult.status === "fulfilled") setWorkspace(bootstrapResult.value);
+    await loadAuthenticatedData(client);
+  };
+
+  const logout = () => {
+    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    setAuthToken(null);
+    setCurrentUser(null);
+    setFolders([]);
+    setProviders([]);
   };
 
   const checkForUpdates = async () => {
@@ -248,11 +295,16 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     connectionState,
     lastError,
     workspace,
+    authToken,
+    currentUser,
     folders,
     providers,
     updateCheck,
     refreshConnection,
     loadWorkspace,
+    login,
+    register,
+    logout,
     loadFolders,
     loadProviders,
     checkForUpdates

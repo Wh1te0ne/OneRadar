@@ -1,9 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.dependencies import require_current_user
 from app.api.routers.annotations import router as annotations_router
 from app.api.routers.auth import router as auth_router
 from app.api.routers.daily_news import router as daily_news_router
@@ -67,13 +68,14 @@ app.add_middleware(
 
 app.include_router(health_router, prefix=settings.api_prefix)
 app.include_router(auth_router, prefix=settings.api_prefix)
-app.include_router(daily_news_router, prefix=settings.api_prefix)
-app.include_router(feeds_router, prefix=settings.api_prefix)
-app.include_router(annotations_router, prefix=settings.api_prefix)
-app.include_router(items_router, prefix=settings.api_prefix)
-app.include_router(mcp_router, prefix=settings.api_prefix)
-app.include_router(organization_router, prefix=settings.api_prefix)
-app.include_router(podcasts_router, prefix=settings.api_prefix)
-app.include_router(providers_router, prefix=settings.api_prefix)
-app.include_router(settings_router, prefix=settings.api_prefix)
-app.include_router(tasks_router, prefix=settings.api_prefix)
+protected = [Depends(require_current_user)]
+app.include_router(daily_news_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(feeds_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(annotations_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(items_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(mcp_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(organization_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(podcasts_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(providers_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(settings_router, prefix=settings.api_prefix, dependencies=protected)
+app.include_router(tasks_router, prefix=settings.api_prefix, dependencies=protected)

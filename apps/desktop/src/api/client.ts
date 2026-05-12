@@ -1,5 +1,6 @@
 import type {
   ApiBilibiliCookieParseResponse,
+  ApiAuthSession,
   ApiBilibiliIntegrationSettings,
   ApiBilibiliPreviewResponse,
   ApiBilibiliQrcodeGenerateResponse,
@@ -34,6 +35,8 @@ import type {
   ApiTaskEntry
 } from "./types";
 
+const AUTH_TOKEN_STORAGE_KEY = "oneradar.auth.token";
+
 export class ApiError extends Error {
   status: number;
 
@@ -64,10 +67,12 @@ async function readJson<T>(response: Response): Promise<T> {
 
 async function request<T>(baseUrl: string, path: string, options: RequestInit = {}): Promise<T> {
   try {
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
     const response = await fetch(normalizeBaseUrl(baseUrl) + path, {
       ...options,
       headers: {
         ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.headers ?? {})
       }
     });
@@ -114,6 +119,17 @@ export function createApiClient(baseUrl: string) {
   return {
     health: () => request<ApiHealth>(baseUrl, "/api/health"),
     bootstrap: () => requestFirstAvailable<ApiBootstrapResponse>(baseUrl, ["/api/auth/bootstrap", "/api/bootstrap"]),
+    me: () => request<ApiAuthSession["user"]>(baseUrl, "/api/auth/me"),
+    login: (identifier: string, password: string) =>
+      request<ApiAuthSession>(baseUrl, "/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ identifier, password })
+      }),
+    register: (username: string, email: string | null, password: string) =>
+      request<ApiAuthSession>(baseUrl, "/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ username, email, password })
+      }),
     listFolders: () => requestFirstAvailable<{ items: ApiFolderEntry[] }>(baseUrl, ["/api/items/folders", "/api/folders"]),
     createFolder: (name: string) =>
       request<ApiCreateFolderResponse>(baseUrl, "/api/items/folders", {

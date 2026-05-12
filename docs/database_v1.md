@@ -108,12 +108,13 @@ erDiagram
 
 ### 4.1 `users`
 
-V1 is single-user first, but keep a `users` table so the schema can expand without a rewrite.
+V1 formal mode uses this table for lightweight private-deployment accounts. Existing single-user data is preserved by migrating the first/default user to the configured bootstrap username, currently `whiteone`.
 
 Recommended columns:
 
 - `id uuid pk`
 - `username text not null unique`
+- `email text unique null`
 - `password_hash text not null`
 - `display_name text`
 - `created_at timestamptz not null default now()`
@@ -122,6 +123,7 @@ Recommended columns:
 Indexes:
 
 - unique index on `username`
+- unique index on `email`
 
 ---
 

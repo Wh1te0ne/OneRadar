@@ -21,7 +21,7 @@ Legend:
 
 ## P0 Product Corrections
 
-- [x] Remove user-facing login/account flow from desktop and backend UX.
+- [x] Replace single-user no-login mode with lightweight private-deployment login/register flow.
 - [x] Convert desktop UI copy to Chinese-first.
 - [x] Add Inbox as the default landing state for newly imported items.
 - [x] Add folder system and item move-to-folder flow.
@@ -54,6 +54,8 @@ Legend:
 ## P0 Backend Foundations
 
 - [x] Implement health check and authenticated user bootstrap path.
+- [x] Implement username/email + password login and registration.
+- [x] Scope API requests to the authenticated user.
 - [x] Implement database connection and migration baseline.
 - [x] Implement `content_items` core model.
 - [x] Implement `content_snapshots` model.
@@ -249,7 +251,8 @@ OneRadar now also exposes a built-in `/api/mcp` JSON-RPC endpoint for Hermes Age
 - [ ] Add browser extension capture.
 - [ ] Add mobile packaging strategy.
 - [ ] Add recommendation or related-item ranking.
-- [ ] Add multi-user support.
+- [x] Add lightweight private-deployment multi-user support.
+  This is intentionally first-stage account isolation, not SaaS/team functionality. Existing local/NAS data is preserved under the `whiteone` bootstrap account, while new users receive separate provider settings, RSS state, folders, collections, content, annotations, and reports.
 
 ---
 

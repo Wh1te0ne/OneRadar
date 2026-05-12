@@ -17,7 +17,7 @@ The repo must preserve these V1 boundaries:
 - V1 is server plus Windows desktop client first.
 - The server must support Docker deployment.
 - AI provider configuration must be user-manageable.
-- V1 is single-user and should not require an account/login flow.
+- V1 formal mode supports lightweight private-deployment accounts with username/email plus password login and registration. It is not a SaaS/team system.
 - New imports land in Inbox first and can then be moved into folders.
 - The desktop UI is Chinese-first in V1.
 - The desktop UI must support light, dark, and system theme modes.
@@ -44,6 +44,7 @@ Required backend responsibilities:
 - Podcast audio must not download automatically on subscription; it downloads only after the user adds an episode to Inbox / later reading.
 - Storage of raw materials and readable documents.
 - Provider registry and model selection.
+- Authentication and per-user data isolation for provider settings, RSS state, folders, collections, reading items, annotations, and generated reports.
 - Search, highlights, notes, folders/collections, and reading state.
 
 ### Desktop Client
@@ -55,12 +56,12 @@ Preferred stack:
 
 Required desktop responsibilities:
 
-- Connect to configured server.
+- Connect to configured server and authenticate with username/email plus password.
 - Submit links.
 - Display Inbox, folders, and library lists.
 - Render article text and transcript text in a Reader-like layout.
 - Support annotations, labels, folders, collections, and search.
-- Expose provider, theme, and connection settings.
+- Expose provider, theme, account, and connection settings.
 - Support Bilibili QR-code login as the primary credential flow for authenticated subtitle retrieval.
 
 ### Cross-Platform Principle

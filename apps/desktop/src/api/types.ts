@@ -111,7 +111,13 @@ export type ApiBootstrapThemeMode = "system" | "light" | "dark";
 export type ApiUser = {
   id: string;
   username: string;
+  email?: string | null;
   created_at?: string;
+};
+
+export type ApiAuthSession = {
+  token: string;
+  user: ApiUser;
 };
 
 export type ApiFolderEntry = {

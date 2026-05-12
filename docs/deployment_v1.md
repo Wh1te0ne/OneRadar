@@ -117,7 +117,11 @@ Production `.env` should set:
 ONERADAR_DATA_ROOT=/vol1/1000/Workspace/OneRadar/data
 ONERADAR_STORAGE_ROOT=/app/data/storage
 ONERADAR_WEB_PORT=8081
+ONERADAR_BOOTSTRAP_USERNAME=whiteone
+ONERADAR_BOOTSTRAP_PASSWORD=<set only in the NAS .env>
 ```
+
+`ONERADAR_BOOTSTRAP_PASSWORD` must stay in ignored local or NAS environment files. It is used only to give the existing bootstrap account a real login password; it must not be committed to the repository.
 
 With the baseline NAS deployment, the browser entrypoint is:
 
@@ -148,10 +152,12 @@ The intended update flow is:
 2. Commit and push to the private GitHub repository.
 3. GitHub Actions builds and publishes GHCR images.
 4. SSH to the production NAS.
-5. Run `docker compose pull`.
-6. Run `docker compose up -d`.
-7. Run a health check through the web entrypoint at `/api/health`.
-8. Run `docker image prune -f` after the updated containers are healthy.
+5. For database-affecting releases, create a PostgreSQL backup under `/vol1/1000/Workspace/OneRadar/backups` before replacing containers.
+6. Run `docker compose pull`.
+7. Run `docker compose up -d`.
+8. Run a health check through the web entrypoint at `/api/health`.
+9. Log in as the bootstrap account and verify library/RSS/provider data before pruning old images.
+10. Run `docker image prune -f` after the updated containers are healthy.
 
 Initial command shape, to be refined once the server path and compose wrapper are finalized:
 
