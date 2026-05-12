@@ -118,10 +118,9 @@ ONERADAR_DATA_ROOT=/vol1/1000/Workspace/OneRadar/data
 ONERADAR_STORAGE_ROOT=/app/data/storage
 ONERADAR_WEB_PORT=8081
 ONERADAR_BOOTSTRAP_USERNAME=whiteone
-ONERADAR_BOOTSTRAP_PASSWORD=<set only in the NAS .env>
 ```
 
-`ONERADAR_BOOTSTRAP_PASSWORD` must stay in ignored local or NAS environment files. It is used only to give the existing bootstrap account a real login password; it must not be committed to the repository.
+`ONERADAR_BOOTSTRAP_PASSWORD` is a temporary bootstrap/reset value. Set it only in ignored local or NAS environment files when initializing or recovering the bootstrap account, restart the API once so the password hash is written to the database, then remove it from `.env`. It must not be committed to the repository.
 
 With the baseline NAS deployment, the browser entrypoint is:
 
