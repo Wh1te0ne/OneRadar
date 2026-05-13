@@ -76,6 +76,17 @@ class VisualVideoExtractor(Protocol):
 
 
 class VisualUnderstandingAdapter(Protocol):
+    def analyze_audio(
+        self,
+        *,
+        audio_path: str,
+        mime_type: str | None,
+        provider_config: dict[str, Any],
+        video_metadata: dict[str, Any],
+        transcript_text: str,
+        language: str | None,
+    ) -> VisualUnderstandingResult: ...
+
     def analyze_video(
         self,
         *,
@@ -384,6 +395,47 @@ class OpenAICompatibleVisualUnderstandingAdapter:
         response.metadata["video_size_bytes"] = file_path.stat().st_size
         return response
 
+    def analyze_audio(
+        self,
+        *,
+        audio_path: str,
+        mime_type: str | None,
+        provider_config: dict[str, Any],
+        video_metadata: dict[str, Any],
+        transcript_text: str,
+        language: str | None,
+    ) -> VisualUnderstandingResult:
+        api_key = str(provider_config.get("api_key") or "").strip()
+        model_name = str(provider_config.get("model_name") or "").strip()
+        if not api_key:
+            return VisualUnderstandingResult(ok=False, error_message="audio understanding provider API key is not configured")
+        if not model_name:
+            return VisualUnderstandingResult(ok=False, error_message="audio understanding model is not configured")
+        file_path = Path(audio_path)
+        if not file_path.exists():
+            return VisualUnderstandingResult(ok=False, error_message="audio input does not exist")
+
+        content = [
+            {
+                "type": "audio_url",
+                "audio_url": {
+                    "url": _audio_data_url(file_path, mime_type or "application/octet-stream"),
+                },
+            },
+            {
+                "type": "text",
+                "text": _audio_prompt(
+                    video_metadata=video_metadata,
+                    transcript_text=transcript_text[: self.max_transcript_chars],
+                    language=language,
+                ),
+            },
+        ]
+        response = self._chat(provider_config=provider_config, api_key=api_key, model_name=model_name, content=content)
+        if response.ok:
+            response.metadata["audio_size_bytes"] = file_path.stat().st_size
+        return response
+
     def analyze(
         self,
         *,
@@ -489,6 +541,10 @@ def _video_data_url(path: Path) -> str:
     return "data:video/mp4;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def _audio_data_url(path: Path, mime_type: str) -> str:
+    return f"data:{mime_type};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+
 def _chat_payload(*, model_name: str, content: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "model": model_name,
@@ -541,6 +597,20 @@ def _visual_prompt(*, video_metadata: dict[str, Any], transcript_text: str, lang
         "你是 OneRadar 的视频视觉理解模块。请结合抽样画面、视频元数据和已有字幕/转写，"
         "补充文字转写无法覆盖的画面信息。重点识别：PPT/代码/图表/屏幕内容、人物动作、"
         "演示步骤、镜头变化、画面中的关键实体。不要复述完整字幕，只输出可用于后续摘要的大纲式视觉补充。\n\n"
+        f"输出语言：{language or 'zh-CN'}\n"
+        f"标题：{title}\n"
+        f"简介：{description[:1000]}\n"
+        f"字幕/转写节选：\n{transcript_text}"
+    )
+
+
+def _audio_prompt(*, video_metadata: dict[str, Any], transcript_text: str, language: str | None) -> str:
+    title = str(video_metadata.get("title") or "Bilibili 视频")
+    description = str(video_metadata.get("description") or "")
+    return (
+        "你是 OneRadar 的音频理解模块。请结合音频、视频元数据和字幕文本，补充或校验字幕可能遗漏的内容。"
+        "重点识别：发言主题、关键名词、语气变化、明显的背景音或非语言线索。不要输出逐字稿，"
+        "只输出可用于后续摘要的补充理解。\n\n"
         f"输出语言：{language or 'zh-CN'}\n"
         f"标题：{title}\n"
         f"简介：{description[:1000]}\n"

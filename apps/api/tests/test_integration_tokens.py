@@ -56,6 +56,9 @@ def test_revoked_integration_token_cannot_call_mcp(client) -> None:
     revoked = client.delete(f"/api/integration-tokens/{token_id}")
     assert revoked.status_code == 200, revoked.json()
     assert revoked.json()["revoked"] is True
+    listed = client.get("/api/integration-tokens")
+    assert listed.status_code == 200, listed.json()
+    assert all(item["id"] != token_id for item in listed.json()["items"])
 
     token_client = TestClient(app)
     token_client.headers.update({"Authorization": f"Bearer {token}"})

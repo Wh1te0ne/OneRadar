@@ -43,7 +43,8 @@ Bilibili jobs:
 
 - normalize URL
 - fetch metadata
-- try subtitles first
+- fetch subtitles when available for timestamp navigation and model prompt context
+- use the current LLM provider's input capability flags to decide whether to try sampled video, sampled frames, or extracted audio before ASR
 - fall back to BBDown, direct Bilibili `playurl` audio, then `yt-dlp`, audio extraction and ASR through the configured transcription provider
 - store timestamped transcript
 - generate summary and outline
@@ -70,9 +71,15 @@ The result is intentionally shaped so the API layer can later store:
 - quality score and scoring reasons
 - summary inputs
 
-## Bilibili ASR fallback
+## Bilibili subtitle, multimodal, and ASR fallback
 
-The Bilibili pipeline is subtitle-first. If no usable subtitle transcript is available, it:
+The Bilibili pipeline always tries to fetch subtitles. Subtitle text is kept as timeline and prompt context even when ASR later produces a fuller transcript. If the current LLM provider is configured with video, image, or audio input capabilities, the worker can try multimodal analysis before ASR:
+
+- video input: sampled short clip plus subtitle context
+- image input: sampled frames plus subtitle context
+- audio input: extracted audio plus subtitle context
+
+If multimodal analysis is unavailable, fails, or no readable transcript exists, it:
 
 - extracts audio with a subprocess-based BBDown wrapper first
 - uses a direct Bilibili `x/player/playurl` DASH-audio path before `yt-dlp` so public videos can work without browser cookies when that legacy API is available

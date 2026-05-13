@@ -23,7 +23,7 @@ def handle_mcp_request(payload: dict[str, Any]) -> dict[str, Any]:
         if method == "initialize":
             result = {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {"name": "oneradar-news", "version": "0.1.0"},
+                "serverInfo": {"name": "oneradar-news", "version": "1.0.0"},
                 "capabilities": {"tools": {}},
             }
         elif method == "tools/list":

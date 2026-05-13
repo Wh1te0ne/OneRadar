@@ -83,7 +83,6 @@ def _entry_from_values(
     ready = is_enabled and bool(sessdata and bili_jct)
     return BilibiliIntegrationSettingsEntry(
         is_enabled=is_enabled,
-        visual_enhancement_enabled=bool(values.get('visual_enhancement_enabled')),
         has_cookie_values=has_cookie_values,
         ready_for_authenticated_fetch=ready,
         sessdata_configured=bool(sessdata),
@@ -158,9 +157,6 @@ def update_bilibili_integration_settings(
                 if raw_value is None:
                     continue
                 resolved_values[key] = _normalize_secret(raw_value)
-            if payload.visual_enhancement_enabled is not None:
-                resolved_values['visual_enhancement_enabled'] = payload.visual_enhancement_enabled
-
             if setting is None:
                 user = get_primary_user(session)
                 setting = IntegrationSetting(
@@ -199,8 +195,6 @@ def update_bilibili_integration_settings(
                 if raw_value is None:
                     continue
                 resolved_values[key] = _normalize_secret(raw_value)
-            if payload.visual_enhancement_enabled is not None:
-                resolved_values['visual_enhancement_enabled'] = payload.visual_enhancement_enabled
             entry = _entry_from_values(
                 is_enabled=payload.is_enabled,
                 values=resolved_values,

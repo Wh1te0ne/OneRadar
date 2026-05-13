@@ -40,7 +40,7 @@ Required backend responsibilities:
 - Article fetching and readable-text extraction.
 - Bilibili metadata retrieval and audio-to-text transcription. Platform subtitles may be inspected as metadata, but they are not the default canonical transcript source.
 - Podcast search/subscription, RSS episode discovery, and explicit podcast episode import.
-- Optional Bilibili visual enhancement after subtitle/ASR, without replacing the canonical transcript.
+- Capability-driven Bilibili multimodal enhancement after subtitle retrieval, without replacing the readable transcript or timeline source.
 - Podcast audio must not download automatically on subscription; it downloads only after the user adds an episode to Inbox / later reading.
 - Storage of raw materials and readable documents.
 - Provider registry and model selection.

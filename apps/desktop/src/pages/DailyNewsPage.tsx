@@ -542,7 +542,7 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
         <div className="daily-news-empty">
           <span className="icon icon-lg">newspaper</span>
           <h3>{shareMode ? "分享日报不可用" : `${selectedDate} 还没有日报`}</h3>
-          <p>{shareMode ? "这个分享链接没有对应的日报，或日报还没有生成。" : "点击生成后，会调用已配置的大语言模型，将当天订阅源新闻翻译、筛选并总结成一份固定结构日报。"}</p>
+          {shareMode && <p>这个分享链接没有对应的日报，或日报还没有生成。</p>}
           {!shareMode && (
             <button className="btn btn-primary btn-sm" type="button" disabled={isGeneratingSelectedDate} onClick={() => generateReport(false)}>
               <span className="icon icon-sm">{isGeneratingSelectedDate ? "sync" : "auto_awesome"}</span>
@@ -636,7 +636,6 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
                   {isGeneratingSelectedDate ? "重新生成中…" : "重新生成今日日报"}
                 </button>
               </div>
-              <p>分享页只展示日报正文；重新生成会按当前订阅源的最新缓存重新调用大语言模型，并覆盖这一天已有的日报。</p>
             </section>
           )}
         </main>

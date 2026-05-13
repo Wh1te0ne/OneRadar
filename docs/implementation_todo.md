@@ -80,7 +80,7 @@ Legend:
 - [x] Add desktop-side provider configuration editing for Doubao/OpenAI-compatible experiments.
 
 Provider system note:
-The API now stores provider API keys through a server-side Fernet protection helper derived from `ONERADAR_API_SECRET_KEY`, returns only `api_key_configured` to clients, and exposes a provider registry runtime resolver that maps summarization, embedding, and transcription capabilities to their separate configured models. The desktop settings page supports Doubao, DeepSeek, OpenAI-compatible, and custom LLM providers plus Doubao ASR. Provider records are user-created, must be complete before saving, and only one provider per capability can be current/enabled at a time. LLM providers can also store a unified per-provider thinking-mode preference in provider config. DeepSeek and Doubao both use `thinking.type`; DeepSeek additionally sends `reasoning_effort=medium` when thinking is enabled, while Doubao does not use the LAS-only `thinking_type`.
+The API now stores provider API keys through a server-side Fernet protection helper derived from `ONERADAR_API_SECRET_KEY`, returns only `api_key_configured` to clients, and exposes a provider registry runtime resolver that maps summarization, embedding, and transcription capabilities to their separate configured models. The desktop settings page supports Doubao, DeepSeek, OpenAI-compatible, and custom LLM providers plus Doubao ASR. Provider records are user-created, must be complete before saving, and only one provider per capability can be current/enabled at a time. Provider config records model input capabilities as text, image, audio, and video flags for later media-routing decisions, without asking users to maintain unclear vendor limits such as maximum file size, maximum duration, or long-audio/video support. LLM providers can also store a unified per-provider thinking-mode preference in provider config. DeepSeek and Doubao both use `thinking.type`; DeepSeek additionally sends `reasoning_effort=medium` when thinking is enabled, while Doubao does not use the LAS-only `thinking_type`.
 
 ## P0 Article Ingestion
 
@@ -100,15 +100,15 @@ The current backend now supports normalized manual URL import, duplicate detecti
 
 Bilibili ingestion note:
 The current preferred evaluation order is `BBDown` and `Bilibili All In One` for Bilibili-specific metadata/subtitle flows, with `yt-dlp` reserved as the generic fallback. `Bilibili All In One` should be treated as a technical template candidate until its auth and credential-handling model is explicitly approved for OneRadar.
-The current spike now supports Bilibili URL normalization, metadata retrieval, read-only video preview before item creation, subtitle catalog lookup, QR-code login for Bilibili Cookie acquisition, timestamp-preserving transcript persistence into the `transcripts` table, and an ASR-first canonical transcript path that tries a Bilibili-specific BBDown audio path, then a direct anonymous `x/player/playurl` DASH-audio path for public videos, then `yt-dlp`, before sending extracted audio through a transcription adapter. Platform subtitles are no longer trusted as the default reader body because short uploader subtitle/description snippets can be misleading. Cookie-assisted metadata/media retrieval is wired end to end through the saved QR login state instead of a manual Cookie-entry UI. The ASR path currently uses the configured transcription provider and stores `asr` transcripts without leaking provider API keys into task results. Bilibili cookies are passed to media tools through temporary files/configs and are removed after each extraction attempt. `bilidown` is now tracked as the QR-login product reference, while BBDown and yt-dlp remain media retrieval references.
-Optional multimodal visual enhancement is now modeled as a non-blocking model setting in the desktop settings surface. When enabled, the worker keeps subtitle/ASR as the canonical transcript, tries direct sampled-video-clip analysis first, falls back to sampled frames when needed, and stores visual model output as a `visual_context` summary without exposing provider keys.
+The current spike now supports Bilibili URL normalization, metadata retrieval, read-only video preview before item creation, subtitle catalog lookup, QR-code login for Bilibili Cookie acquisition, timestamp-preserving subtitle transcript persistence into task metadata, and an ASR fallback path that tries a Bilibili-specific BBDown audio path, then a direct anonymous `x/player/playurl` DASH-audio path for public videos, then `yt-dlp`, before sending extracted audio through a transcription adapter. Subtitles are fetched whenever available so reader timestamp jumps and later model prompts have timeline context; ASR remains available when subtitles are missing, when the current text-only path needs a fuller transcript, or when multimodal analysis fails. Cookie-assisted metadata/media retrieval is wired end to end through the saved QR login state instead of a manual Cookie-entry UI. The ASR path currently uses the configured transcription provider and stores `asr` transcripts without leaking provider API keys into task results. Bilibili cookies are passed to media tools through temporary files/configs and are removed after each extraction attempt. `bilidown` is now tracked as the QR-login product reference, while BBDown and yt-dlp remain media retrieval references.
+Multimodal video/audio handling is now driven by each configured LLM provider's input capability flags instead of a separate Bilibili visual-enhancement toggle. For video-capable models, the worker first tries sampled video clip analysis with subtitle context, then falls back to sampled frames if image input is supported, and finally ASR if the multimodal path fails or no readable transcript exists. For audio-capable models, the worker can send extracted audio plus subtitle context before falling back to ASR. Text-only models use the subtitle/ASR text path. Subtitle text is always included in later summary prompts when available, even if ASR produced a similar transcript, to reduce content loss.
 
 - [x] Evaluate `BBDown` integration path.
 - [x] Evaluate `yt-dlp` fallback path.
 - [x] Implement Bilibili link normalization.
 - [x] Implement metadata retrieval for Bilibili items.
 - [x] Add Bilibili video preview before creating the item.
-- [x] Implement ASR-first Bilibili transcript retrieval path.
+- [x] Implement capability-driven Bilibili transcript and multimodal retrieval path.
 - [x] Implement audio extraction fallback path.
 - [x] Implement transcription adapter interface.
 - [x] Preserve segment timestamps in stored transcript format.
@@ -116,7 +116,7 @@ Optional multimodal visual enhancement is now modeled as a non-blocking model se
 - [x] Add Bilibili cookie configuration surface for authenticated subtitle retrieval experiments.
 - [x] Add Bilibili QR-code login flow for acquiring Cookie values.
 - [x] Add desktop-side Chromium cookie import helper for Bilibili.
-- [x] Add optional multimodal visual enhancement after subtitle/ASR transcript generation.
+- [x] Add provider-capability-driven multimodal video/audio analysis with subtitle context and ASR fallback.
 
 ## P0 Podcast Ingestion
 

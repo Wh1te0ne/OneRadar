@@ -87,7 +87,10 @@ def list_integration_tokens() -> IntegrationTokenListResponse:
         tokens = (
             session.execute(
                 select(IntegrationToken)
-                .where(IntegrationToken.user_id == user.id)
+                .where(
+                    IntegrationToken.user_id == user.id,
+                    IntegrationToken.revoked_at.is_(None),
+                )
                 .order_by(IntegrationToken.created_at.desc())
             )
             .scalars()

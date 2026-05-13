@@ -156,10 +156,13 @@ def _source_text(payload: dict[str, Any]) -> str:
 
     if content_type in {"podcast_episode", "bilibili_video"}:
         transcript_text = _transcript_text(payload)
+        subtitle_text = _subtitle_text(payload)
         description_text = _parsed_document_text(payload) or str(payload.get("summary") or payload.get("description") or "").strip()
         sections: list[str] = []
         if description_text:
             sections.append(f"节目/来源简介：\n{description_text[:SOURCE_DESCRIPTION_LIMIT]}")
+        if subtitle_text and subtitle_text != transcript_text:
+            sections.append(f"字幕全文：\n{subtitle_text[:SOURCE_TEXT_LIMIT]}")
         if transcript_text:
             sections.append(f"转写全文：\n{transcript_text[:SOURCE_TEXT_LIMIT]}")
         if sections:
@@ -203,6 +206,28 @@ def _transcript_text(payload: dict[str, Any]) -> str:
             )
             if joined:
                 return joined
+    return ""
+
+
+def _subtitle_text(payload: dict[str, Any]) -> str:
+    raw_meta = payload.get("raw_meta")
+    if not isinstance(raw_meta, dict):
+        raw_meta = payload
+    subtitle = raw_meta.get("subtitle_transcript") if isinstance(raw_meta, dict) else None
+    if not isinstance(subtitle, dict):
+        return ""
+    text = str(subtitle.get("full_text") or "").strip()
+    if text:
+        return text
+    segments = subtitle.get("segments")
+    if isinstance(segments, list):
+        joined = "\n".join(
+            _segment_text(segment)
+            for segment in segments
+            if isinstance(segment, dict) and _segment_text(segment)
+        )
+        if joined:
+            return joined
     return ""
 
 

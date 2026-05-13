@@ -2013,6 +2013,27 @@ button, input, select, textarea { font: inherit; }
   accent-color: var(--primary);
 }
 
+.input-capability-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 8px;
+}
+
+.input-capability-option {
+  min-width: 72px;
+}
+
+.provider-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--outline);
+}
+
 /* ─── Feedback Messages ──────────────────────────────────────── */
 .feedback {
   padding: 10px 14px;
@@ -2696,6 +2717,10 @@ button, input, select, textarea { font: inherit; }
   margin-bottom: 28px;
   padding-bottom: 28px;
   border-bottom: 1px solid rgba(var(--outline-rgb), 0.14);
+}
+
+.article-type-chip {
+  margin-left: auto;
 }
 
 .prose {

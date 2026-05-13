@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     app_name: str = "OneRadar API"
     api_prefix: str = "/api"
     environment: str = "development"
-    version: str = "v1"
+    version: str = "1.0.0"
     cors_origins: list[str] = ["*"]
     database_url: str = "sqlite+pysqlite:///./oneradar.db"
     redis_url: str = "redis://localhost:6379/0"

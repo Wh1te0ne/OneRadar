@@ -195,7 +195,7 @@ Response:
 ```json
 {
   "status": "ok",
-  "version": "v1",
+  "version": "1.0.0",
   "time": "2026-04-13T08:30:00Z"
 }
 ```
@@ -1163,7 +1163,7 @@ Response should return:
 
 For QR-code login, readiness is based on `SESSDATA` plus `bili_jct`; `buvid3` remains useful when imported from a browser but is not required because Bilibili Web QR login may not return it.
 
-The Bilibili integration settings also include `visual_enhancement_enabled`. This flag is independent from Cookie enablement: when it is true, successful Bilibili import still uses subtitle-first/ASR-second text as the canonical transcript, then optionally runs visual frame analysis as a non-blocking enhancement.
+Multimodal video/audio analysis is not controlled by a Bilibili-specific toggle. It is driven by the enabled LLM provider's input capability flags: video, image, and audio inputs can trigger sampled video, sampled frame, or extracted-audio analysis, with subtitle text included as prompt context and ASR kept as fallback.
 
 ### 15.2 Update Bilibili Integration Settings
 

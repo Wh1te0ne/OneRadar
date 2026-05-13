@@ -9,7 +9,6 @@ class BilibiliIntegrationSettingsEntry(BaseModel):
     integration_key: str = "bilibili"
     display_name: str = "Bilibili"
     is_enabled: bool = False
-    visual_enhancement_enabled: bool = False
     has_cookie_values: bool = False
     ready_for_authenticated_fetch: bool = False
     sessdata_configured: bool = False
@@ -23,7 +22,6 @@ class BilibiliIntegrationSettingsEntry(BaseModel):
 
 class BilibiliIntegrationSettingsUpdateRequest(BaseModel):
     is_enabled: bool = True
-    visual_enhancement_enabled: bool | None = None
     cookie_header: str | None = None
     sessdata: str | None = Field(default=None)
     bili_jct: str | None = Field(default=None)

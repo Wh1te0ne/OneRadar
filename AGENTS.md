@@ -89,6 +89,7 @@ curl http://192.168.100.55:8081/api/health
 - When a checkbox-worthy task is completed, update `docs/implementation_todo.md` in the same change.
 - When architecture decisions become concrete, create or update `docs/architecture_v1.md`, `docs/database_v1.md`, and `docs/api_v1.md`.
 - Keep documentation synchronized with code changes.
+- When changing frontend, API, or worker behavior that the user can verify in the browser, update the current local Docker stack before handing back results. From `infra/docker`, rebuild only the affected services with `docker compose up -d --build <service...>` and verify the local entrypoints, normally `http://127.0.0.1:8080/` and `http://127.0.0.1:8000/api/health`. This is separate from NAS rollout.
 - Prefer small, composable adapters over large framework-heavy abstractions.
 - Git worktrees do not carry ignored local state. After creating a worktree, run `rtk pwsh -File infra/scripts/bootstrap-worktree.ps1` in that worktree before local development or tests. Use `-CopyPrivate -SourceRepoRoot E:\OneRadar` only when that worktree explicitly needs ignored deployment access files.
 
@@ -137,3 +138,4 @@ A feature is not done unless all of the following are true:
 - Relevant checklist items are updated.
 - Any changed scope or architecture is reflected in the docs.
 - Basic verification has been run when applicable.
+- If the change affects the Docker-served local browser experience, the affected local Docker services have been rebuilt and the local health/web entrypoints have been checked.

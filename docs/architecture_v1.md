@@ -11,7 +11,7 @@ The architecture must support these constraints:
 - Server-first execution with a Windows desktop client.
 - Docker-based deployment for the server.
 - Subtitle-first, then ASR transcription for video items.
-- Optional multimodal visual enhancement for video items after subtitle/ASR text exists.
+- Capability-driven multimodal video/audio analysis for video items, with subtitles preserved as timeline and prompt context.
 - First-class provider registry for chat, embedding, transcription, and visual-understanding model use.
 - Web-first UI rendered inside a desktop shell.
 
@@ -138,7 +138,7 @@ For Bilibili items, the preferred order is:
 3. Audio extraction.
 4. ASR transcription.
 
-If multimodal visual enhancement is enabled, the worker keeps the subtitle/ASR result as the canonical readable transcript, then sends a sampled short video clip to a video-capable multimodal model. If direct video analysis is unavailable or fails, the worker falls back to sampled video frames. The model output adds supplemental context about slides, diagrams, screen content, demonstrations, actions, and scene changes. Visual enhancement is non-blocking: failure should be recorded as a pipeline step and should not prevent transcript-based import completion.
+If the current LLM provider declares video, image, or audio input support, the worker uses those input capability flags to decide whether to send a sampled video clip, sampled frames, or extracted audio to the model. Subtitle text is fetched whenever available and is included in the multimodal prompt so the model can align visual/audio interpretation with the timeline. If the multimodal path is unavailable or fails, the worker falls back to ASR. The model output adds supplemental context about slides, diagrams, screen content, demonstrations, actions, scene changes, audio cues, and missed spoken context. Multimodal enhancement is non-blocking: failure should be recorded as a pipeline step and should not prevent subtitle/ASR-based import completion.
 
 Implementation note:
 
@@ -267,7 +267,8 @@ flowchart TD
 Implementation notes:
 
 - Subtitle retrieval is the preferred path.
-- ASR is a fallback path, not the default if subtitles exist.
+- Subtitles are fetched whenever available to preserve timeline jumps and provide prompt context.
+- ASR is the fallback when subtitles are missing, when the text-only path needs a fuller transcript, or when multimodal analysis fails.
 - Transcripts must store segment boundaries and timestamps.
 - Jump-back actions in the UI depend on accurate segment metadata.
 
@@ -294,7 +295,7 @@ Implementation baseline:
 - Worker tasks resolve the enabled provider with a configured transcription model before running ASR.
 - When subtitle retrieval returns no transcript, the worker first tries a shell-free BBDown subprocess wrapper, then a direct Bilibili `x/player/playurl` DASH-audio extractor, then a shell-free `yt-dlp` subprocess wrapper, and passes the produced audio file into the transcription adapter.
 - The first adapter is OpenAI-compatible audio transcription using the provider base URL, decrypted server-side key, and configured transcription model.
-- Optional visual enhancement uses the enabled chat/vision-capable provider model after transcript generation, tries direct sampled-video-clip analysis first, falls back to sampled frames when needed, and persists the model output as a `visual_context` summary.
+- Multimodal enhancement uses the enabled LLM provider only when its input capability flags include video, image, or audio. Video input is tried as sampled clip analysis, image input as sampled frame fallback, and audio input as direct audio-plus-subtitle analysis. The output is persisted as a `visual_context` summary.
 - Bilibili cookies are passed to media tools through temporary files/configs, not through persisted task results, and those temporary files are removed after use.
 - Task results and persisted metadata expose provider/model names and transcript status, but not raw provider API keys or source-site cookies.
 
@@ -337,6 +338,7 @@ Each provider entry should describe:
 - Base URL or endpoint.
 - Secret reference or encrypted key.
 - Supported model families.
+- Input capabilities for each model: text, image, audio, and video.
 - Default models by capability.
 - Enabled or disabled state.
 - Connection test metadata.
@@ -364,9 +366,10 @@ Implementation baseline:
 - `ProviderCapability.summarization` resolves to the configured chat/summarization model.
 - `ProviderCapability.embedding` resolves to the configured embedding model.
 - `ProviderCapability.transcription` resolves to the configured transcription model.
-- `ProviderCapability.video_visual_understanding` resolves to the configured chat model for V1, because the provider registry does not yet expose a dedicated visual model field.
+- `ProviderCapability.video_visual_understanding` resolves to the configured chat model for V1, and runtime routing checks that provider's input capability flags before sending video, image, or audio payloads.
 - Runtime provider config may include a decrypted key for server-side adapters, but public API responses expose only whether a key is configured.
 - Provider records are user-created and must be complete before saving. At runtime there is only one enabled/current provider per capability, so LLM and ASR selection are independent instead of sharing a global enabled flag.
+- Provider records may store model input capability flags, but V1 does not ask users to maintain vendor-specific maximum file sizes, maximum media durations, or long-audio/video support because those limits are often undocumented or model-release dependent.
 
 This lets the user mix providers, for example:
 

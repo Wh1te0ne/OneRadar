@@ -99,8 +99,13 @@ def _model_provider_supports_capability(
     declared = str(config.get("capability") or "").strip().lower()
     chat_capabilities = {
         ProviderCapability.summarization,
-        ProviderCapability.video_visual_understanding,
     }
+    if capability == ProviderCapability.video_visual_understanding:
+        return (
+            declared != "asr"
+            and bool(provider.chat_model and provider.api_key_encrypted)
+            and _input_capabilities(config).intersection({"video", "image", "audio"})
+        )
     if capability in chat_capabilities:
         return declared != "asr" and bool(provider.chat_model and provider.api_key_encrypted)
     if capability == ProviderCapability.embedding:
@@ -121,8 +126,13 @@ def _record_supports_capability(record: dict[str, object], capability: ProviderC
     declared = str(config.get("capability") or "").strip().lower()
     chat_capabilities = {
         ProviderCapability.summarization,
-        ProviderCapability.video_visual_understanding,
     }
+    if capability == ProviderCapability.video_visual_understanding:
+        return (
+            declared != "asr"
+            and bool(record.get("chat_model") and record.get("api_key_encrypted"))
+            and _input_capabilities(config).intersection({"video", "image", "audio"})
+        )
     if capability in chat_capabilities:
         return declared != "asr" and bool(
             record.get("chat_model") and record.get("api_key_encrypted")
@@ -188,3 +198,16 @@ def resolve_provider_config(
         if record is None:
             raise ValueError("provider not found") from None
         return _config_from_record(record, capability)
+
+
+def _input_capabilities(config: dict[str, object]) -> set[str]:
+    raw = config.get("input_capabilities")
+    if not isinstance(raw, list):
+        return {"text"}
+    allowed = {"text", "image", "audio", "video"}
+    selected = {
+        str(value or "").strip().lower()
+        for value in raw
+        if str(value or "").strip().lower() in allowed
+    }
+    return selected or {"text"}

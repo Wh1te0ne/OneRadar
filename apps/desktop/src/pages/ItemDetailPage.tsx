@@ -1305,10 +1305,6 @@ export function ItemDetailPage() {
             ) : (
               <span className={statusChipClass(item.status)}>{statusLabel(item.status)}</span>
             )}
-            <span className="chip chip-neutral">
-              <span className="icon icon-sm">{isPodcast ? "podcasts" : isVideo ? "smart_display" : "article"}</span>
-              {isPodcast ? "播客" : isVideo ? "视频" : "文章"}
-            </span>
             {item.source_url && (
               <a className="btn btn-secondary btn-sm" href={item.source_url} target="_blank" rel="noreferrer">
                 <span className="icon icon-sm">open_in_new</span>
@@ -1331,6 +1327,10 @@ export function ItemDetailPage() {
               <span className="chip chip-neutral">UID {uid}</span>
               {item.metadata.author_name && <span className="text-caption">{item.metadata.author_name}</span>}
               {item.metadata.published_at && <span className="text-caption">{formatDisplayDate(item.metadata.published_at)}</span>}
+              <span className="chip chip-neutral article-type-chip">
+                <span className="icon icon-sm">{isPodcast ? "podcasts" : isVideo ? "smart_display" : "article"}</span>
+                {isPodcast ? "播客" : isVideo ? "视频" : "文章"}
+              </span>
             </div>
 
             {(hasActiveTask || visibleTask?.status === "failed" || item.status === "failed" || taskPollError) && (

@@ -146,6 +146,7 @@ export type ApiProvider = {
   provider_name: string;
   provider_type: string;
   capability?: "llm" | "asr";
+  input_capabilities?: Array<"text" | "image" | "audio" | "video">;
   base_url?: string | null;
   api_key_configured?: boolean;
   chat_model?: string | null;
@@ -164,6 +165,7 @@ export type ApiProviderPayload = {
   provider_name: string;
   provider_type: "openai_compatible" | "doubao" | "deepseek" | "custom";
   capability?: "llm" | "asr";
+  input_capabilities?: Array<"text" | "image" | "audio" | "video">;
   base_url?: string | null;
   api_key?: string | null;
   chat_model?: string | null;
@@ -349,7 +351,6 @@ export type ApiBilibiliIntegrationSettings = {
   integration_key: string;
   display_name: string;
   is_enabled: boolean;
-  visual_enhancement_enabled: boolean;
   has_cookie_values: boolean;
   ready_for_authenticated_fetch: boolean;
   sessdata_configured: boolean;

@@ -76,17 +76,20 @@ def _summary_provider_payload(engine, item: dict[str, object]) -> dict[str, obje
 def _visual_provider_payload(engine, item: dict[str, object], integration_payload: dict[str, object]) -> dict[str, object]:
     if str(item.get('content_type') or '') != 'bilibili_video':
         return {}
-    bilibili_config = dict(integration_payload.get('bilibili') or {})
-    if not bilibili_config.get('visual_enhancement_enabled'):
-        return {}
     config = load_visual_understanding_provider_config(engine, str(item['user_id']))
+    input_capabilities = {
+        str(value or '').strip().lower()
+        for value in list(config.get('input_capabilities') or [])
+    }
+    if not input_capabilities.intersection({'video', 'image', 'audio'}):
+        return {}
     payload: dict[str, object] = {
         'visual_enhancement': {
             'enabled': True,
+            'source': 'provider_input_capabilities',
         }
     }
-    if config:
-        payload['visual_understanding_provider'] = config
+    payload['visual_understanding_provider'] = config
     return payload
 
 

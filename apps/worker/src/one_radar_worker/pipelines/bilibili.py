@@ -54,7 +54,7 @@ PREFERRED_SUBTITLE_LANGS = (
     'en-US',
     'en',
 )
-SUBTITLE_TRANSCRIPTS_ENABLED = False
+SUBTITLE_TRANSCRIPTS_ENABLED = True
 
 
 @dataclass(slots=True)
@@ -437,18 +437,57 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
+def _input_capabilities(provider_config: dict[str, Any], *, assume_visual_default: bool = False) -> set[str]:
+    values = provider_config.get('input_capabilities')
+    if not isinstance(values, list):
+        runtime_config = provider_config.get('provider_config')
+        if isinstance(runtime_config, dict):
+            values = runtime_config.get('input_capabilities')
+    if not isinstance(values, list):
+        return {'video', 'image'} if assume_visual_default else set()
+    allowed = {'text', 'image', 'audio', 'video'}
+    return {
+        str(value or '').strip().lower()
+        for value in values
+        if str(value or '').strip().lower() in allowed
+    }
+
+
+def _provider_is_ready(provider_config: dict[str, Any]) -> bool:
+    return bool(provider_config.get('api_key') and provider_config.get('model_name') and provider_config.get('base_url'))
+
+
+def _transcript_context(
+    *,
+    subtitle_transcript: BilibiliTranscriptPayload | None,
+    asr_transcript: BilibiliTranscriptPayload | None,
+    metadata: BilibiliVideoMetadata,
+) -> str:
+    sections: list[str] = []
+    if subtitle_transcript and subtitle_transcript.full_text.strip():
+        sections.append(f"字幕全文：\n{subtitle_transcript.full_text.strip()}")
+    if asr_transcript and asr_transcript.full_text.strip():
+        sections.append(f"ASR 转写全文：\n{asr_transcript.full_text.strip()}")
+    if sections:
+        return "\n\n".join(sections)
+    return metadata.description or metadata.title
+
+
 def _visual_summary_payload(
     visual_result: VisualUnderstandingResult,
     *,
     source_type: str,
     frame_count: int = 0,
     video_size_bytes: int | None = None,
+    audio_size_bytes: int | None = None,
 ) -> dict[str, Any]:
     evidence: dict[str, Any] = {'type': source_type}
     if frame_count:
         evidence['frame_count'] = frame_count
     if video_size_bytes is not None:
         evidence['video_size_bytes'] = video_size_bytes
+    if audio_size_bytes is not None:
+        evidence['audio_size_bytes'] = audio_size_bytes
     return {
         'summary_type': 'visual_context',
         'content': visual_result.summary or '',
@@ -509,14 +548,15 @@ class BilibiliPipeline:
             if selected_track and SUBTITLE_TRANSCRIPTS_ENABLED
             else None
         )
-        transcript: BilibiliTranscriptPayload | None = None
+        transcript: BilibiliTranscriptPayload | None = subtitle_transcript
+        asr_transcript: BilibiliTranscriptPayload | None = None
         steps.append(
             PipelineStepResult(
                 'fetch_subtitles',
                 subtitle_transcript is not None,
                 'Subtitle transcript fetched'
                 if subtitle_transcript
-                else 'Subtitle transcript is ignored by default; ASR is the canonical transcript source',
+                else 'No subtitle transcript available; ASR may be used as fallback',
                 {
                     'catalog': subtitle_catalog_fetch.to_dict(),
                     'selected_track': selected_track.to_dict() if selected_track else None,
@@ -536,7 +576,7 @@ class BilibiliPipeline:
             PipelineStepResult(
                 'extract_audio',
                 audio_result.ok,
-                'Audio extracted for ASR' if audio_result.ok else (audio_result.error_message or 'Audio extraction failed'),
+                'Audio extracted for multimodal analysis or ASR' if audio_result.ok else (audio_result.error_message or 'Audio extraction failed'),
                 {
                     'tool_name': audio_result.tool_name,
                     'mime_type': audio_result.mime_type,
@@ -545,116 +585,86 @@ class BilibiliPipeline:
                 },
             )
         )
-        provider_config = dict(context.payload.get('transcription_provider') or {})
-        if not audio_result.ok or not audio_result.audio_path:
-            steps.append(PipelineStepResult('transcribe_audio', False, 'Audio extraction did not produce an input file', {}))
-        elif not is_transcription_configured(provider_config):
-            steps.append(
-                PipelineStepResult(
-                    'transcribe_audio',
-                    False,
-                    'Transcription provider is not configured',
-                    _provider_step_data(provider_config),
-                )
-            )
-        else:
-            adapter = self.transcription_adapter or select_transcription_adapter(provider_config)
-            try:
-                transcript = adapter.transcribe(
-                    audio_path=audio_result.audio_path,
-                    mime_type=audio_result.mime_type,
-                    provider_config=provider_config,
-                    language=str(context.payload.get('language') or 'zh-CN'),
-                )
-            except TranscriptionError as error:
-                steps.append(
-                    PipelineStepResult(
-                        'transcribe_audio',
-                        False,
-                        str(error),
-                        _provider_step_data(provider_config),
-                    )
-                )
-            else:
-                steps.append(
-                    PipelineStepResult(
-                        'transcribe_audio',
-                        True,
-                        'ASR transcript generated',
-                        {
-                            **_provider_step_data(provider_config),
-                            'segment_count': len(transcript.segments),
-                        },
-                    )
-                )
-
         visual_result: VisualUnderstandingResult | None = None
         visual_source_type = 'none'
         visual_frame_count = 0
         visual_video_size_bytes: int | None = None
+        visual_audio_size_bytes: int | None = None
         visual_config = dict(context.payload.get('visual_enhancement') or {})
-        if visual_config.get('enabled') or integration_config.get('visual_enhancement_enabled'):
-            visual_provider = dict(context.payload.get('visual_understanding_provider') or {})
-            if not visual_provider.get('api_key') or not visual_provider.get('model_name') or not visual_provider.get('base_url'):
+        visual_provider = dict(context.payload.get('visual_understanding_provider') or {})
+        input_capabilities = _input_capabilities(
+            visual_provider,
+            assume_visual_default=bool(visual_config.get('enabled')),
+        )
+        multimodal_enabled = bool(input_capabilities.intersection({'video', 'image', 'audio'}))
+        if multimodal_enabled:
+            if not _provider_is_ready(visual_provider):
                 steps.append(
                     PipelineStepResult(
                         'analyze_visual_context',
                         False,
-                        'Visual understanding provider is not configured',
+                        'Multimodal provider is not configured',
                         _visual_provider_step_data(visual_provider),
                     )
                 )
             else:
                 visual_adapter = self.visual_understanding_adapter or OpenAICompatibleVisualUnderstandingAdapter()
-                video_extractor = self.visual_video_extractor or BilibiliLegacyVideoClipExtractor()
-                video_result = video_extractor.extract_clip(
-                    source_url=video_ref.normalized_url,
-                    referer=video_ref.normalized_url,
-                    cookie_values=cookie_values,
-                    item_id=context.item_id,
-                    duration_seconds=metadata.duration_seconds,
+                transcript_context = _transcript_context(
+                    subtitle_transcript=subtitle_transcript,
+                    asr_transcript=asr_transcript,
+                    metadata=metadata,
                 )
-                visual_video_size_bytes = _safe_int(video_result.metadata.get('size_bytes'))
-                steps.append(
-                    PipelineStepResult(
-                        'extract_visual_video',
-                        video_result.ok,
-                        'Visual video clip extracted'
-                        if video_result.ok
-                        else (video_result.error_message or 'Visual video extraction failed'),
-                        {
-                            'tool_name': video_result.tool_name,
-                            'mime_type': video_result.mime_type,
-                            'has_video': bool(video_result.video_path),
-                            'metadata': video_result.metadata,
-                        },
+                language = (subtitle_transcript.language if subtitle_transcript else None) or str(context.payload.get('language') or 'zh-CN')
+
+                if 'video' in input_capabilities:
+                    video_extractor = self.visual_video_extractor or BilibiliLegacyVideoClipExtractor()
+                    video_result = video_extractor.extract_clip(
+                        source_url=video_ref.normalized_url,
+                        referer=video_ref.normalized_url,
+                        cookie_values=cookie_values,
+                        item_id=context.item_id,
+                        duration_seconds=metadata.duration_seconds,
                     )
-                )
-                if video_result.ok and video_result.video_path:
-                    visual_result = visual_adapter.analyze_video(
-                        video_path=video_result.video_path,
-                        provider_config=visual_provider,
-                        video_metadata=metadata.to_dict(),
-                        transcript_text=transcript.full_text if transcript else metadata.description,
-                        language=(transcript.language if transcript else None)
-                        or str(context.payload.get('language') or 'zh-CN'),
-                    )
-                    visual_source_type = 'sampled_video_clip' if visual_result.ok else 'none'
+                    visual_video_size_bytes = _safe_int(video_result.metadata.get('size_bytes'))
                     steps.append(
                         PipelineStepResult(
-                            'analyze_visual_video',
-                            visual_result.ok,
-                            'Visual context generated from video'
-                            if visual_result.ok
-                            else (visual_result.error_message or 'Visual video analysis failed'),
+                            'extract_visual_video',
+                            video_result.ok,
+                            'Visual video clip extracted'
+                            if video_result.ok
+                            else (video_result.error_message or 'Visual video extraction failed'),
                             {
-                                **_visual_provider_step_data(visual_provider),
-                                'video_size_bytes': visual_video_size_bytes,
+                                'tool_name': video_result.tool_name,
+                                'mime_type': video_result.mime_type,
+                                'has_video': bool(video_result.video_path),
+                                'metadata': video_result.metadata,
                             },
                         )
                     )
+                    if video_result.ok and video_result.video_path:
+                        visual_result = visual_adapter.analyze_video(
+                            video_path=video_result.video_path,
+                            provider_config=visual_provider,
+                            video_metadata=metadata.to_dict(),
+                            transcript_text=transcript_context,
+                            language=language,
+                        )
+                        visual_source_type = 'sampled_video_clip' if visual_result.ok else 'none'
+                        steps.append(
+                            PipelineStepResult(
+                                'analyze_visual_video',
+                                visual_result.ok,
+                                'Visual context generated from video'
+                                if visual_result.ok
+                                else (visual_result.error_message or 'Visual video analysis failed'),
+                                {
+                                    **_visual_provider_step_data(visual_provider),
+                                    'video_size_bytes': visual_video_size_bytes,
+                                },
+                            )
+                        )
 
-                if visual_result is None or not visual_result.ok:
+                if (visual_result is None or not visual_result.ok) and 'image' in input_capabilities:
                     frame_extractor = self.visual_frame_extractor or BilibiliLegacyFrameExtractor()
                     frame_result = frame_extractor.extract_frames(
                         source_url=video_ref.normalized_url,
@@ -686,9 +696,8 @@ class BilibiliPipeline:
                         frame_paths=frame_result.frame_paths,
                         provider_config=visual_provider,
                         video_metadata=metadata.to_dict(),
-                        transcript_text=transcript.full_text if transcript else metadata.description,
-                        language=(transcript.language if transcript else None)
-                        or str(context.payload.get('language') or 'zh-CN'),
+                        transcript_text=transcript_context,
+                        language=language,
                     )
                     visual_source_type = 'sampled_video_frames' if visual_result.ok else 'none'
                     steps.append(
@@ -704,8 +713,84 @@ class BilibiliPipeline:
                     )
                 elif frame_result is not None:
                     steps.append(PipelineStepResult('analyze_visual_context', False, 'Skipped because no visual frames were extracted', {}))
+
+                if (visual_result is None or not visual_result.ok) and 'audio' in input_capabilities:
+                    if not audio_result.ok or not audio_result.audio_path:
+                        steps.append(PipelineStepResult('analyze_audio_context', False, 'Skipped because no audio input was extracted', {}))
+                    else:
+                        visual_audio_size_bytes = _safe_int(audio_result.metadata.get('size_bytes'))
+                        visual_result = visual_adapter.analyze_audio(
+                            audio_path=audio_result.audio_path,
+                            mime_type=audio_result.mime_type,
+                            provider_config=visual_provider,
+                            video_metadata=metadata.to_dict(),
+                            transcript_text=transcript_context,
+                            language=language,
+                        )
+                        visual_source_type = 'sampled_audio' if visual_result.ok else 'none'
+                        steps.append(
+                            PipelineStepResult(
+                                'analyze_audio_context',
+                                visual_result.ok,
+                                'Audio context generated'
+                                if visual_result.ok
+                                else (visual_result.error_message or 'Audio analysis failed'),
+                                {
+                                    **_visual_provider_step_data(visual_provider),
+                                    'audio_size_bytes': visual_audio_size_bytes,
+                                },
+                            )
+                        )
         else:
-            steps.append(PipelineStepResult('analyze_visual_context', False, 'Skipped because visual enhancement is disabled', {}))
+            steps.append(PipelineStepResult('analyze_visual_context', False, 'Skipped because current LLM is text-only', {}))
+
+        should_run_asr = transcript is None or not (visual_result is not None and visual_result.ok)
+        provider_config = dict(context.payload.get('transcription_provider') or {})
+        if should_run_asr:
+            if not audio_result.ok or not audio_result.audio_path:
+                steps.append(PipelineStepResult('transcribe_audio', False, 'Audio extraction did not produce an input file', {}))
+            elif not is_transcription_configured(provider_config):
+                steps.append(
+                    PipelineStepResult(
+                        'transcribe_audio',
+                        False,
+                        'Transcription provider is not configured',
+                        _provider_step_data(provider_config),
+                    )
+                )
+            else:
+                adapter = self.transcription_adapter or select_transcription_adapter(provider_config)
+                try:
+                    asr_transcript = adapter.transcribe(
+                        audio_path=audio_result.audio_path,
+                        mime_type=audio_result.mime_type,
+                        provider_config=provider_config,
+                        language=str(context.payload.get('language') or 'zh-CN'),
+                    )
+                    transcript = asr_transcript
+                except TranscriptionError as error:
+                    steps.append(
+                        PipelineStepResult(
+                            'transcribe_audio',
+                            False,
+                            str(error),
+                            _provider_step_data(provider_config),
+                        )
+                    )
+                else:
+                    steps.append(
+                        PipelineStepResult(
+                            'transcribe_audio',
+                            True,
+                            'ASR transcript generated',
+                            {
+                                **_provider_step_data(provider_config),
+                                'segment_count': len(transcript.segments),
+                            },
+                        )
+                    )
+        else:
+            steps.append(PipelineStepResult('transcribe_audio', False, 'Skipped because multimodal analysis and subtitle context are available', {}))
 
         quality = _quality_score(transcript, metadata.description)
         parsed_plain_text = transcript.full_text if transcript else metadata.description or metadata.title
@@ -718,10 +803,11 @@ class BilibiliPipeline:
                     source_type=visual_source_type,
                     frame_count=visual_frame_count,
                     video_size_bytes=visual_video_size_bytes,
+                    audio_size_bytes=visual_audio_size_bytes,
                 )
             )
         parsed_document = {
-            'parser_name': 'bilibili_asr_first',
+            'parser_name': 'bilibili_capability_driven',
             'parser_version': 'v0_spike',
             'title': metadata.title,
             'excerpt': metadata.description[:280] if metadata.description else None,
@@ -760,15 +846,18 @@ class BilibiliPipeline:
                     'duration_seconds': metadata.duration_seconds,
                     'part_title': metadata.part_title,
                     'subtitle_track': selected_track.to_dict() if selected_track else None,
+                    'subtitle_transcript': subtitle_transcript.to_dict() if subtitle_transcript else None,
                     'content_hash': f"bilibili:{metadata.bvid or metadata.aid}:{metadata.cid or 'nocid'}",
                     'transcript_status': transcript.transcript_type if transcript else 'unavailable',
-                    'visual_enhancement_status': 'completed' if summaries else ('enabled' if visual_config.get('enabled') or integration_config.get('visual_enhancement_enabled') else 'disabled'),
+                    'visual_enhancement_status': 'completed' if summaries else ('enabled' if multimodal_enabled else 'disabled'),
                     'visual_enhancement': {
                         'provider_name': visual_result.provider_name if visual_result else None,
                         'model_name': visual_result.model_name if visual_result else None,
                         'source_type': visual_source_type,
                         'frame_count': visual_frame_count,
                         'video_size_bytes': visual_video_size_bytes,
+                        'audio_size_bytes': visual_audio_size_bytes,
+                        'input_capabilities': sorted(input_capabilities),
                     },
                 },
             },

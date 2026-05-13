@@ -172,7 +172,7 @@ export function createApiClient(baseUrl: string) {
         method: "POST",
         body: JSON.stringify({ name, scopes })
       }),
-    revokeIntegrationToken: (tokenId: string) =>
+    deleteIntegrationToken: (tokenId: string) =>
       request<{ id: string; revoked: boolean }>(baseUrl, "/api/integration-tokens/" + tokenId, {
         method: "DELETE"
       }),
@@ -418,7 +418,6 @@ export function createApiClient(baseUrl: string) {
     getBilibiliIntegration: () => request<ApiBilibiliIntegrationSettings>(baseUrl, "/api/settings/integrations/bilibili"),
     updateBilibiliIntegration: (payload: {
       is_enabled: boolean;
-      visual_enhancement_enabled?: boolean;
       cookie_header?: string;
       sessdata?: string;
       bili_jct?: string;

@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.schemas.common import ProviderType
-from app.schemas.providers import ProviderCreateRequest
+from app.schemas.providers import ProviderCreateRequest, ProviderUpdateRequest
 from app.services import providers_service
 from app.services.provider_registry import ProviderCapability, resolve_provider_config
 from app.services.store import STORE
@@ -19,6 +19,7 @@ def test_create_provider_protects_api_key_in_fallback_store(monkeypatch) -> None
         ProviderCreateRequest(
             provider_name="Local OpenAI",
             provider_type=ProviderType.openai_compatible,
+            input_capabilities=["text", "image"],
             base_url="https://api.example.test/v1",
             api_key="sk-test-secret",
             chat_model="chat-model",
@@ -44,6 +45,7 @@ def test_provider_registry_resolves_models_by_capability(monkeypatch) -> None:
         ProviderCreateRequest(
             provider_name="Capability Provider",
             provider_type=ProviderType.openai_compatible,
+            input_capabilities=["text", "image"],
             base_url="https://api.example.test/v1",
             api_key="sk-capability-secret",
             chat_model="chat-model",
@@ -185,6 +187,45 @@ def test_provider_service_persists_llm_thinking_mode(monkeypatch) -> None:
     stored = STORE.providers[provider.id]
     assert provider.thinking_mode == "enabled"
     assert stored["config"]["llm"]["thinking_mode"] == "enabled"
+
+
+def test_provider_service_persists_model_input_capabilities(monkeypatch) -> None:
+    def failing_session_local():
+        raise SQLAlchemyError("database unavailable")
+
+    monkeypatch.setattr(providers_service, "SessionLocal", failing_session_local)
+
+    provider = providers_service.create_provider(
+        ProviderCreateRequest(
+            provider_name="Video Model",
+            provider_type=ProviderType.openai_compatible,
+            capability="llm",
+            input_capabilities=["text", "audio", "video"],
+            base_url="https://api.example.test/v1",
+            api_key="sk-video",
+            chat_model="video-chat",
+            is_enabled=True,
+        )
+    )
+
+    assert provider.input_capabilities == ["text", "audio", "video"]
+    assert STORE.providers[provider.id]["config"]["input_capabilities"] == ["text", "audio", "video"]
+
+    updated = providers_service.update_provider(
+        provider.id,
+        ProviderUpdateRequest(
+            provider_name="Video Model",
+            provider_type=ProviderType.openai_compatible,
+            capability="llm",
+            input_capabilities=["text"],
+            base_url="https://api.example.test/v1",
+            chat_model="video-chat",
+            is_enabled=True,
+        ),
+    )
+
+    assert updated.input_capabilities == ["text"]
+    assert STORE.providers[provider.id]["config"]["input_capabilities"] == ["text"]
 
 
 def test_provider_service_normalizes_legacy_auto_thinking_mode(monkeypatch) -> None:

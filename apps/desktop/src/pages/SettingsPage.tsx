@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createApiClient } from "../api";
-import type { ApiBilibiliIntegrationSettings, ApiIntegrationToken, ApiProvider } from "../api";
+import type { ApiIntegrationToken, ApiProvider } from "../api";
 import { useAppState } from "../state/appState";
-import { displayFolderName } from "../utils/display";
 
 const DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
@@ -16,10 +15,19 @@ const themeOptions = [
 type ProviderKind = "doubao" | "openai_compatible" | "deepseek" | "custom";
 type ProviderCapability = "llm" | "asr";
 type ThinkingMode = "default" | "enabled" | "disabled";
+type ModelInputCapability = "text" | "image" | "audio" | "video";
+
+const modelInputCapabilityOptions: Array<{ value: ModelInputCapability; label: string }> = [
+  { value: "text", label: "文字" },
+  { value: "image", label: "图片" },
+  { value: "audio", label: "音频" },
+  { value: "video", label: "视频" },
+];
 
 type ProviderFormState = {
   id: string | null;
   capability: ProviderCapability;
+  input_capabilities: ModelInputCapability[];
   provider_name: string;
   provider_type: ProviderKind;
   base_url: string;
@@ -43,25 +51,36 @@ function providerTypeLabel(t: string) {
   }
 }
 
-function connectionLabel(state: "idle" | "checking" | "connected" | "unavailable") {
-  switch (state) {
-    case "checking": return "连接中";
-    case "connected": return "服务端在线";
-    case "unavailable": return "服务端不可用";
-    default: return "等待连接";
-  }
-}
-
 function capabilityOf(provider: ApiProvider): ProviderCapability {
   if (provider.capability === "asr" || provider.capability === "llm") return provider.capability;
   if ((provider.transcription_model || provider.transcription_app_id) && !provider.chat_model) return "asr";
   return "llm";
 }
 
+function defaultInputCapabilities(capability: ProviderCapability): ModelInputCapability[] {
+  return capability === "asr" ? ["audio"] : ["text"];
+}
+
+function normalizeInputCapabilities(value: Array<string> | undefined, capability: ProviderCapability): ModelInputCapability[] {
+  const selected = new Set(value?.filter((item): item is ModelInputCapability => (
+    item === "text" || item === "image" || item === "audio" || item === "video"
+  )));
+  const normalized = modelInputCapabilityOptions
+    .map((option) => option.value)
+    .filter((value) => selected.has(value));
+  return normalized.length ? normalized : defaultInputCapabilities(capability);
+}
+
+function inputCapabilityLabels(value: Array<string> | undefined, capability: ProviderCapability) {
+  const normalized = normalizeInputCapabilities(value, capability);
+  return normalized.map((item) => modelInputCapabilityOptions.find((option) => option.value === item)?.label ?? item);
+}
+
 function emptyProviderForm(capability: ProviderCapability): ProviderFormState {
   return {
     id: null,
     capability,
+    input_capabilities: defaultInputCapabilities(capability),
     provider_name: capability === "llm" ? "Doubao LLM" : "Doubao ASR",
     provider_type: "doubao",
     base_url: capability === "llm" ? DOUBAO_BASE_URL : "",
@@ -81,6 +100,7 @@ function providerToForm(provider: ApiProvider): ProviderFormState {
   return {
     id: provider.id,
     capability,
+    input_capabilities: normalizeInputCapabilities(provider.input_capabilities, capability),
     provider_name: provider.provider_name,
     provider_type: (provider.provider_type as ProviderKind | undefined) ?? "custom",
     base_url: provider.base_url ?? "",
@@ -177,24 +197,14 @@ export function SettingsPage() {
   const {
     apiBaseUrl,
     checkForUpdates,
-    connectionState,
-    folders,
-    lastError,
-    loadFolders,
     loadProviders,
     providers,
     resolvedTheme,
     setThemeMode,
     themeMode,
-    updateCheck,
-    workspace
+    updateCheck
   } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
-  const [bilibiliIntegration, setBilibiliIntegration] = useState<ApiBilibiliIntegrationSettings | null>(null);
-  const [integrationLoading, setIntegrationLoading] = useState(true);
-  const [integrationSaving, setIntegrationSaving] = useState(false);
-  const [integrationMessage, setIntegrationMessage] = useState<string | null>(null);
-  const [integrationError, setIntegrationError] = useState<string | null>(null);
   const [llmForm, setLlmForm] = useState<ProviderFormState>(() => emptyProviderForm("llm"));
   const [asrForm, setAsrForm] = useState<ProviderFormState>(() => emptyProviderForm("asr"));
   const [editing, setEditing] = useState<ProviderCapability | null>(null);
@@ -202,7 +212,7 @@ export function SettingsPage() {
   const [providerError, setProviderError] = useState<string | null>(null);
   const [providerTestingId, setProviderTestingId] = useState<string | null>(null);
   const [integrationTokens, setIntegrationTokens] = useState<ApiIntegrationToken[]>([]);
-  const [tokenName, setTokenName] = useState("Hermes MCP");
+  const [tokenName, setTokenName] = useState("MCP 调用");
   const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [tokenBusy, setTokenBusy] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
@@ -212,8 +222,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (!providers.length) void loadProviders();
-    if (!folders.length) void loadFolders();
-  }, [folders.length, loadFolders, loadProviders, providers.length]);
+  }, [loadProviders, providers.length]);
 
   async function loadIntegrationTokens() {
     setTokenError(null);
@@ -228,44 +237,6 @@ export function SettingsPage() {
   useEffect(() => {
     void loadIntegrationTokens();
   }, [client]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadIntegration() {
-      setIntegrationLoading(true);
-      setIntegrationError(null);
-      try {
-        const result = await client.getBilibiliIntegration();
-        if (!cancelled) setBilibiliIntegration(result);
-      } catch (e) {
-        if (!cancelled) setIntegrationError(e instanceof Error ? e.message : "读取视频增强设置失败");
-      } finally {
-        if (!cancelled) setIntegrationLoading(false);
-      }
-    }
-    void loadIntegration();
-    return () => {
-      cancelled = true;
-    };
-  }, [client]);
-
-  async function handleVisualEnhancementChange(enabled: boolean) {
-    setIntegrationSaving(true);
-    setIntegrationMessage(null);
-    setIntegrationError(null);
-    try {
-      const result = await client.updateBilibiliIntegration({
-        is_enabled: Boolean(bilibiliIntegration?.is_enabled),
-        visual_enhancement_enabled: enabled,
-      });
-      setBilibiliIntegration(result);
-      setIntegrationMessage(enabled ? "已开启多模态视觉增强。" : "已关闭多模态视觉增强。");
-    } catch (e) {
-      setIntegrationError(e instanceof Error ? e.message : "保存视频增强设置失败");
-    } finally {
-      setIntegrationSaving(false);
-    }
-  }
 
   async function saveProvider(form: ProviderFormState) {
     const existingProvider = providers.find((provider) => provider.id === form.id);
@@ -317,6 +288,7 @@ export function SettingsPage() {
         provider_name: name,
         provider_type: form.provider_type,
         capability: form.capability,
+        input_capabilities: normalizeInputCapabilities(form.input_capabilities, form.capability),
         base_url: form.capability === "llm" ? baseUrl : null,
         api_key: form.capability === "llm" ? apiKey || null : null,
         chat_model: form.capability === "llm" ? chatModel : null,
@@ -364,6 +336,7 @@ export function SettingsPage() {
         provider_name: provider.provider_name,
         provider_type: provider.provider_type as ProviderKind,
         capability,
+        input_capabilities: normalizeInputCapabilities(provider.input_capabilities, capability),
         base_url: capability === "llm" ? provider.base_url ?? null : null,
         api_key: null,
         chat_model: capability === "llm" ? provider.chat_model ?? null : null,
@@ -445,15 +418,15 @@ export function SettingsPage() {
     }
   }
 
-  async function revokeToken(tokenId: string) {
+  async function deleteToken(tokenId: string) {
     setTokenBusy(true);
     setTokenError(null);
     try {
-      await client.revokeIntegrationToken(tokenId);
-      await loadIntegrationTokens();
-      showAppToast("集成令牌已吊销。", "success");
+      await client.deleteIntegrationToken(tokenId);
+      setIntegrationTokens((current) => current.filter((token) => token.id !== tokenId));
+      showAppToast("集成令牌已删除。", "success");
     } catch (e) {
-      setTokenError(e instanceof Error ? e.message : "吊销集成令牌失败");
+      setTokenError(e instanceof Error ? e.message : "删除集成令牌失败");
     } finally {
       setTokenBusy(false);
     }
@@ -462,6 +435,7 @@ export function SettingsPage() {
   function providerRow(provider: ApiProvider) {
     const capability = capabilityOf(provider);
     const isAsr = capability === "asr";
+    const capabilityLabels = inputCapabilityLabels(provider.input_capabilities, capability);
     return (
       <div key={provider.id} className="provider-row">
         <div className="provider-icon" style={{ background: provider.is_enabled ? "rgba(var(--primary-rgb),0.1)" : "var(--surface-high)" }}>
@@ -474,7 +448,10 @@ export function SettingsPage() {
           <div style={{ fontSize: 12, color: "var(--outline)" }}>
             {providerTypeLabel(provider.provider_type)} · {isAsr ? provider.transcription_app_id ?? "APP ID 未配置" : provider.base_url ?? "BaseURL 未配置"}
           </div>
-          {!isAsr && <div style={{ fontSize: 12, color: "var(--outline)", marginTop: 2 }}>{thinkingModeLabel(provider.thinking_mode)}</div>}
+          <div className="provider-row-meta">
+            {capabilityLabels.map((label) => <span key={label} className="chip chip-neutral">{label}</span>)}
+            {!isAsr && <span>{thinkingModeLabel(provider.thinking_mode)}</span>}
+          </div>
         </div>
         <div className="provider-row-actions">
           {provider.is_enabled ? (
@@ -545,6 +522,29 @@ export function SettingsPage() {
             onChange={(event) => setForm((current) => ({ ...current, provider_name: event.target.value }))}
           />
         </label>
+        <div>
+          <span className="text-caption">输入能力</span>
+          <div className="input-capability-grid" role="group" aria-label="模型输入能力">
+            {modelInputCapabilityOptions.map((option) => (
+              <label key={option.value} className="checkbox-row input-capability-option">
+                <input
+                  type="checkbox"
+                  checked={form.input_capabilities.includes(option.value)}
+                  onChange={(event) => setForm((current) => {
+                    const selected = new Set(current.input_capabilities);
+                    if (event.target.checked) selected.add(option.value);
+                    else selected.delete(option.value);
+                    return {
+                      ...current,
+                      input_capabilities: normalizeInputCapabilities(Array.from(selected), current.capability),
+                    };
+                  })}
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
         {!isAsr && (
           <>
             <label>
@@ -649,7 +649,7 @@ export function SettingsPage() {
       <div className="page-header">
         <p className="page-eyebrow">设置</p>
         <h2 className="page-title">系统配置</h2>
-        <p className="page-lead">主题外观、工作区信息、模型服务与知识库管理。</p>
+        <p className="page-lead">主题外观、模型服务与系统集成。</p>
       </div>
 
       <div className="stack-lg" style={{ maxWidth: 820 }}>
@@ -673,35 +673,6 @@ export function SettingsPage() {
             ))}
           </div>
           <p className="text-meta">当前：{resolvedTheme === "dark" ? "深色模式" : "浅色模式"}。界面语言固定为中文。</p>
-        </div>
-
-        <div className="settings-section">
-          <div className="settings-section-title">
-            <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>workspaces</span>
-            工作区
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            {[
-              { label: "工作区名称", value: workspace?.workspace_name ?? "OneRadar", icon: "badge" },
-              { label: "服务端状态", value: connectionLabel(connectionState), icon: "cloud_done", status: connectionState },
-              { label: "服务端地址", value: apiBaseUrl, icon: "dns" },
-              { label: "界面语言", value: "中文", icon: "translate" },
-              { label: "单用户模式", value: workspace?.single_user_mode ? "是" : "—", icon: "person" },
-            ].map((item) => (
-              <div key={item.label} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", background: "var(--surface-container)", borderRadius: "var(--radius-sm)" }}>
-                {item.status ? (
-                  <span className={`status-dot status-${item.status}`} style={{ marginTop: 7 }} />
-                ) : (
-                  <span className="icon" style={{ color: "var(--outline)", marginTop: 1 }}>{item.icon}</span>
-                )}
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--outline)", textTransform: "uppercase", marginBottom: 4 }}>{item.label}</div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: "var(--on-surface)", wordBreak: "break-all" }}>{item.value}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          {lastError && <div className="feedback feedback-error">{lastError}</div>}
         </div>
 
         <div className="settings-section">
@@ -754,7 +725,7 @@ export function SettingsPage() {
             <div className="settings-model-block-header">
               <div>
                 <h3>服务集成</h3>
-                <p>用于 Hermes MCP 等服务间调用，令牌绑定当前账号，创建后只显示一次。</p>
+                <p>用于 MCP 调用，令牌绑定当前账号，创建后只显示一次。</p>
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "end" }}>
@@ -782,7 +753,7 @@ export function SettingsPage() {
               {integrationTokens.length ? integrationTokens.map((token) => (
                 <div key={token.id} className="provider-row">
                   <div className="provider-icon">
-                    <span className="icon icon-sm">{token.revoked_at ? "block" : "vpn_key"}</span>
+                    <span className="icon icon-sm">vpn_key</span>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{token.name}</div>
@@ -790,13 +761,9 @@ export function SettingsPage() {
                       {token.token_prefix}… · {token.scopes.join(", ")} · {token.last_used_at ? `上次使用 ${new Date(token.last_used_at).toLocaleString()}` : "尚未使用"}
                     </div>
                   </div>
-                  {token.revoked_at ? (
-                    <span className="chip chip-neutral">已吊销</span>
-                  ) : (
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => void revokeToken(token.id)} disabled={tokenBusy}>
-                      吊销
-                    </button>
-                  )}
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void deleteToken(token.id)} disabled={tokenBusy}>
+                    删除
+                  </button>
                 </div>
               )) : <p className="text-meta">还没有创建集成令牌。</p>}
             </div>
@@ -849,45 +816,6 @@ export function SettingsPage() {
               <div className="feedback feedback-error">{providerError}</div>
             </div>
           )}
-
-          <div className="settings-subsection">
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={Boolean(bilibiliIntegration?.visual_enhancement_enabled)}
-                disabled={integrationLoading || integrationSaving}
-                onChange={(e) => void handleVisualEnhancementChange(e.target.checked)}
-              />
-              <span>启用视频多模态视觉增强</span>
-            </label>
-            <p className="text-caption visual-enhancement-note">
-              开启后，B站视频仍优先使用字幕，没有字幕再走音频转写；在已有文本基础上额外调用支持视频/图像的大模型分析画面。
-            </p>
-            {integrationLoading && <p className="text-meta">正在读取视频增强设置…</p>}
-            {integrationMessage && <div className="feedback feedback-success">{integrationMessage}</div>}
-            {integrationError && <div className="feedback feedback-error">{integrationError}</div>}
-          </div>
-        </div>
-
-        <div className="settings-section">
-          <div className="settings-section-title">
-            <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>folder</span>
-            知识库 <span style={{ fontWeight: 400, color: "var(--outline)", fontSize: 13 }}>（{folders.length} 个）</span>
-          </div>
-          <div className="stack-sm">
-            {folders.map((f) => (
-              <div key={f.id} className="provider-row">
-                <div className="provider-icon">
-                  <span className="icon icon-sm">{f.is_builtin ? "inbox" : "folder"}</span>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{displayFolderName(f.name, f.is_builtin)}</div>
-                  <div style={{ fontSize: 12, color: "var(--outline)" }}>{f.is_builtin ? "内置入口" : "收藏夹"}</div>
-                </div>
-                <span className="chip chip-neutral">{f.item_count} 条</span>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </div>

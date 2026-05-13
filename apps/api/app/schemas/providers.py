@@ -16,6 +16,7 @@ class ProviderCreateRequest(BaseModel):
     provider_name: str = Field(min_length=1)
     provider_type: ProviderType
     capability: str | None = None
+    input_capabilities: list[str] | None = None
     base_url: str | None = None
     api_key: str | None = None
     chat_model: str | None = None
@@ -42,6 +43,7 @@ class ProviderEntry(BaseModel):
     provider_name: str
     provider_type: ProviderType
     capability: str = "llm"
+    input_capabilities: list[str] = Field(default_factory=lambda: ["text"])
     base_url: str | None = None
     api_key_configured: bool = False
     chat_model: str | None = None

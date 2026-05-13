@@ -870,6 +870,7 @@ def load_visual_understanding_provider_config(engine: Engine, user_id: str) -> d
         if row is None or not row.get('api_key_encrypted') or not row.get('chat_model'):
             return {}
         config = dict(row.get('config') or {})
+        input_capabilities = _input_capabilities_from_config(config)
         return {
             'provider_id': str(row['id']),
             'provider_name': row['provider_name'],
@@ -877,6 +878,7 @@ def load_visual_understanding_provider_config(engine: Engine, user_id: str) -> d
             'base_url': row['base_url'],
             'api_key': reveal_secret(row['api_key_encrypted']),
             'model_name': row['chat_model'],
+            'input_capabilities': input_capabilities,
             'provider_config': config,
         }
 
@@ -900,3 +902,16 @@ def _select_provider_for_capability(rows: list[dict[str, Any]], capability: str)
             ):
                 fallback = row
     return fallback
+
+
+def _input_capabilities_from_config(config: dict[str, Any]) -> list[str]:
+    values = config.get('input_capabilities')
+    if not isinstance(values, list):
+        return ['text']
+    allowed = ('text', 'image', 'audio', 'video')
+    selected = {
+        str(value or '').strip().lower()
+        for value in values
+        if str(value or '').strip().lower() in allowed
+    }
+    return [value for value in allowed if value in selected] or ['text']

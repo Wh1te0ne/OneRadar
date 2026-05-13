@@ -27,6 +27,8 @@ from app.services.credential_crypto import protect_secret, reveal_secret
 from app.services.db_access import get_model_provider, get_primary_user
 from app.services.store import STORE, seed_store
 
+SUPPORTED_INPUT_CAPABILITIES = ("text", "image", "audio", "video")
+
 
 def list_presets() -> list[ProviderPresetEntry]:
     return [
@@ -60,6 +62,7 @@ def _to_provider_entry(provider: ModelProvider) -> ProviderEntry:
         provider_name=provider.provider_name,
         provider_type=ProviderType(provider.provider_type),
         capability=capability,
+        input_capabilities=_provider_input_capabilities(config, capability),
         base_url=provider.base_url,
         api_key_configured=bool(provider.api_key_encrypted),
         chat_model=provider.chat_model,
@@ -91,6 +94,15 @@ def _provider_config_from_payload(
     capability = (payload.capability or "").strip().lower()
     if capability in {"llm", "asr"}:
         config["capability"] = capability
+    else:
+        capability = str(config.get("capability") or "llm").strip().lower()
+        if capability not in {"llm", "asr"}:
+            capability = "llm"
+    if payload.input_capabilities is not None:
+        config["input_capabilities"] = _normalize_input_capabilities(
+            payload.input_capabilities,
+            capability,
+        )
     llm = dict(config.get("llm") or {})
     if payload.thinking_mode is not None:
         thinking_mode = _normalize_thinking_mode(payload.thinking_mode)
@@ -133,6 +145,27 @@ def _provider_capability(
     if (transcription_model or transcription_config) and not chat_model:
         return "asr"
     return "llm"
+
+
+def _default_input_capabilities(capability: str) -> list[str]:
+    if capability == "asr":
+        return ["audio"]
+    return ["text"]
+
+
+def _normalize_input_capabilities(value: object, capability: str) -> list[str]:
+    if not isinstance(value, list):
+        return _default_input_capabilities(capability)
+    normalized = {
+        str(item or "").strip().lower()
+        for item in value
+        if str(item or "").strip().lower() in SUPPORTED_INPUT_CAPABILITIES
+    }
+    return [capability_name for capability_name in SUPPORTED_INPUT_CAPABILITIES if capability_name in normalized] or _default_input_capabilities(capability)
+
+
+def _provider_input_capabilities(config: dict, capability: str) -> list[str]:
+    return _normalize_input_capabilities(config.get("input_capabilities"), capability)
 
 
 def _provider_is_configured(
@@ -263,6 +296,7 @@ def _to_provider_entry_from_record(record: dict[str, object]) -> ProviderEntry:
         provider_name=str(record["provider_name"]),
         provider_type=record["provider_type"],
         capability=capability,
+        input_capabilities=_provider_input_capabilities(config, capability),
         base_url=record["base_url"],
         api_key_configured=bool(record.get("api_key_encrypted")),
         chat_model=record["chat_model"],
@@ -305,7 +339,7 @@ def _ensure_builtin_provider(session) -> ModelProvider:
         transcription_model=None,
         is_enabled=False,
         is_builtin=True,
-        config={"capability": "llm"},
+        config={"capability": "llm", "input_capabilities": ["text"]},
         last_test_status=None,
         last_tested_at=None,
     )
