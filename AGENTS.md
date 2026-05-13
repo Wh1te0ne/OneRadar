@@ -82,6 +82,13 @@ docker compose --env-file .env ps
 curl http://192.168.100.55:8081/api/health
 ```
 
+Current NAS access note for Codex runs:
+
+- The `wh1teone` SSH account currently cannot access `/var/run/docker.sock` directly. Docker Compose commands on the NAS must run through `sudo`.
+- Do not start a plain interactive `ssh wh1teone@192.168.100.55` deployment command from Codex and wait for a password prompt; it will hang unattended.
+- Use the ignored local access note under `infra/private/` to obtain the SSH password without printing it, authenticate with local `sshpass`, and feed the same password to remote `sudo -S`.
+- Before a long pull, verify the path and Docker privilege with a short remote command such as `sudo -S docker ps`. If `docker compose pull` appears stuck, check remote Docker/pull processes before retrying.
+
 ## Operating Rules
 
 - Read the required docs before implementing anything substantial.

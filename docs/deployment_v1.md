@@ -60,6 +60,8 @@ docker image prune -f
 
 The normal update path must stay image-registry based: push code to GitHub, let GitHub Actions publish GHCR images, then make the NAS pull those images. Do not use SSH/SFTP to copy built images or source files to the NAS as a deployment shortcut. The current GHCR packages are public, so NAS updates should not require `docker login ghcr.io` or a GitHub package token.
 
+Current NAS permission reality: `wh1teone` can SSH to the NAS, but cannot talk to the Docker daemon without `sudo`. For Codex-driven updates from the Windows workstation, avoid interactive SSH password prompts. Read the password only from ignored local deployment access files, use local `sshpass` for SSH authentication, and provide the same password to remote `sudo -S` without echoing it in logs or task output. Do not attempt bare `docker compose pull` as `wh1teone`; it fails with Docker socket permission errors.
+
 Because the NAS runtime directory keeps `.env` beside `docker-compose.yml`, Compose loads it automatically when commands are run from `/vol1/1000/Workspace/OneRadar`. Use `--env-file .env` only when intentionally running Compose from a different working directory or with a non-default env file.
 
 `docker compose pull` fetches the current `:main` image digest, but Docker does not automatically delete the previous local image objects that are no longer used after `up -d` recreates containers. Run `docker image prune -f` after the new containers are healthy to remove dangling old image digests without deleting images still used by running containers. Do not use broad prune commands such as `docker system prune -a` in the normal update path because they can remove useful caches and stopped-service images outside this stack.
