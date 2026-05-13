@@ -3,7 +3,7 @@ import { Link, Navigate, Route, Routes, useLocation, useSearchParams } from "rea
 import { createApiClient } from "./api";
 import { AuthPage } from "./pages/AuthPage";
 import { ConnectPage } from "./pages/ConnectPage";
-import { DailyNewsPage } from "./pages/DailyNewsPage";
+import { DailyNewsPage, DailyNewsSharePage } from "./pages/DailyNewsPage";
 import { FeedArticlePreviewPage } from "./pages/FeedArticlePreviewPage";
 import { FeedPage } from "./pages/FeedPage";
 import { ImportPage } from "./pages/ImportPage";
@@ -236,6 +236,15 @@ export default function App() {
       )}
     </>
   );
+
+  if (location.pathname.startsWith("/share/daily/")) {
+    return (
+      <Routes>
+        <Route path="/share/daily/:shareKey/:date" element={<DailyNewsSharePage />} />
+        <Route path="*" element={<Navigate to="/daily" replace />} />
+      </Routes>
+    );
+  }
 
   if (!authToken && workspace?.requires_login !== false) {
     return <AuthPage />;

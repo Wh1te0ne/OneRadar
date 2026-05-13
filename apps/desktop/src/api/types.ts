@@ -183,6 +183,21 @@ export type ApiProviderTestResponse = {
   message?: string | null;
 };
 
+export type ApiIntegrationToken = {
+  id: string;
+  name: string;
+  token_prefix: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+};
+
+export type ApiIntegrationTokenCreateResponse = {
+  item: ApiIntegrationToken;
+  token: string;
+};
+
 export type ApiReadingState = {
   progress_percent: number;
   is_read?: boolean;

@@ -70,6 +70,8 @@ Recommended default:
 - Protected API examples require `Authorization: Bearer <token>`.
 - If deployment-level protection is needed, put it outside the V1 product UX, for example behind a reverse proxy or local network boundary.
 
+Service integrations should not reuse browser login tokens. Use user-created integration tokens instead: the logged-in user creates a token, the raw token is shown once, the server stores only its hash, and service calls resolve back to the token owner.
+
 ### 3.1 Workspace Bootstrap
 
 Recommended V1 workspace endpoints:
@@ -101,6 +103,44 @@ Recommended V1 workspace endpoints:
   }
 }
 ```
+
+### 3.3 Integration Tokens
+
+Integration tokens are personal access tokens for service-to-service use, such as Hermes calling OneRadar MCP. They are bound to the user who creates them and are not default-mapped to a hard-coded account.
+
+```http
+GET /api/integration-tokens
+POST /api/integration-tokens
+DELETE /api/integration-tokens/{token_id}
+```
+
+Create request:
+
+```json
+{
+  "name": "Hermes MCP",
+  "scopes": ["mcp:read"]
+}
+```
+
+Create response:
+
+```json
+{
+  "item": {
+    "id": "uuid",
+    "name": "Hermes MCP",
+    "token_prefix": "ort_xxxxxxxx",
+    "scopes": ["mcp:read"],
+    "created_at": "2026-05-13T08:30:00Z",
+    "last_used_at": null,
+    "revoked_at": null
+  },
+  "token": "ort_full_token_shown_once"
+}
+```
+
+List responses never include the raw `token`; they only include metadata and `token_prefix`. Deleting a token revokes it.
 
 ## 4. Error Format
 
@@ -654,6 +694,24 @@ GET /api/daily-news?date=2026-05-07
 Returns the saved daily report for a date. If it has not been generated, the response uses `status: "missing"` so the client can show a generation action.
 
 ```http
+POST /api/daily-news/share
+```
+
+Request body:
+
+```json
+{ "date": "2026-05-07" }
+```
+
+Creates or reuses a stable opaque `share_key` for the authenticated user and a per-report `share_id` for compatibility. New share URLs should use `share_key + date`, so the same URL continues to point at that user's latest saved report for the date after regeneration.
+
+```http
+GET /api/public/daily-news/users/{share_key}/2026-05-07
+```
+
+Returns the saved daily report for a valid user share key and date without requiring desktop authentication. This endpoint is read-only and exists only for public share pages that render the daily brief content without source-management, save-to-Inbox, date navigation, or regeneration controls. Different users sharing the same date have different `share_key` values.
+
+```http
 POST /api/daily-news/generate
 ```
 
@@ -679,6 +737,12 @@ The endpoint accepts JSON-RPC 2.0 MCP-style requests. The initial tools are:
 - `get_news_window_status`: returns per-source counts for a time window without returning entries.
 - `get_news_window`: returns raw structured RSS entries for a time window. `since` and `until` are ISO 8601 strings; if omitted, the default window is the previous 24 hours. `limit` defaults to 1000 and supports `next_cursor` pagination.
 
+MCP accepts either a normal user bearer token or a user-created integration token with `mcp:read` scope. Hermes should use an integration token:
+
+```http
+Authorization: Bearer ort_...
+```
+
 The MCP handoff is a data-source boundary for Hermes Agent. OneRadar provides complete source entries and source status for the requested window; Hermes owns AI grouping, ranking, narration, and delivery. This keeps missing-news responsibility explicit: if an entry is present in `get_news_window`, any omission is downstream of OneRadar.
 
 Recommended Hermes MCP configuration:
@@ -687,7 +751,10 @@ Recommended Hermes MCP configuration:
 {
   "mcpServers": {
     "oneradar-news": {
-      "url": "http://192.168.100.55:8081/api/mcp"
+      "url": "http://192.168.100.55:8081/api/mcp",
+      "headers": {
+        "Authorization": "Bearer <OneRadar integration token>"
+      }
     }
   }
 }

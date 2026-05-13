@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { layout, prepare } from "@chenglou/pretext";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError, createApiClient } from "../api";
 import type { ApiDailyNewsEntry, ApiDailyNewsItem, ApiDailyNewsReportResponse } from "../api/types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -9,6 +9,7 @@ import { hasConfiguredLlmProvider } from "../utils/providers";
 
 const DAILY_NEWS_GENERATION_KEY = "oneradar.daily-news.generation";
 const DAILY_NEWS_GENERATION_TTL_MS = 12 * 60 * 1000;
+const RUNTIME_SHARE_BASE_URL = window.__ONERADAR_CONFIG__?.shareBaseUrl;
 
 function todayDate() {
   const now = new Date();
@@ -156,6 +157,11 @@ function isFreshGeneratedReport(report: ApiDailyNewsReportResponse | null, pendi
   return new Date(report.generated_at).getTime() >= new Date(pending.startedAt).getTime() - 2000;
 }
 
+function publicShareBaseUrl() {
+  const configured = RUNTIME_SHARE_BASE_URL?.trim().replace(/\/+$/, "");
+  return configured || window.location.origin;
+}
+
 function shouldKeepDailyNewsPendingAfterError(error: unknown) {
   if (!(error instanceof ApiError)) return true;
   return error.status === 0 || error.status === 408 || error.status === 499 || error.status === 504;
@@ -223,16 +229,26 @@ function buildDailyNewsLayoutPlan(width: number, report: ApiDailyNewsReportRespo
   return { pageClass, headlineClass, sectionClasses };
 }
 
-export function DailyNewsPage() {
+type DailyNewsPageProps = {
+  shareMode?: boolean;
+};
+
+export function DailyNewsSharePage() {
+  return <DailyNewsPage shareMode />;
+}
+
+export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
   const { apiBaseUrl, loadProviders, providers } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const navigate = useNavigate();
+  const routeParams = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const selectedDate = searchParams.get("date") || todayDate();
+  const shareKey = routeParams.shareKey || "";
   const dateClusterRef = useRef<HTMLDivElement | null>(null);
   const dailyNewsContentRef = useRef<HTMLElement | null>(null);
 
   const [report, setReport] = useState<ApiDailyNewsReportResponse | null>(null);
+  const selectedDate = shareMode ? routeParams.date || report?.report_date || todayDate() : searchParams.get("date") || todayDate();
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [pendingGeneration, setPendingGeneration] = useState<PendingGeneration | null>(() => readPendingGeneration());
@@ -260,7 +276,7 @@ export function DailyNewsPage() {
     if (!options?.silent) setLoading(true);
     setError(null);
     try {
-      setReport(await client.getDailyNews(date));
+      setReport(shareMode ? await client.getPublicDailyNews(shareKey, date) : await client.getDailyNews(date));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "读取每日新闻失败");
       setReport(null);
@@ -304,6 +320,7 @@ export function DailyNewsPage() {
   }
 
   function generateReport(force: boolean) {
+    if (shareMode) return;
     if (force && report?.status === "ready") {
       setConfirmRegenerate(true);
       return;
@@ -312,19 +329,37 @@ export function DailyNewsPage() {
   }
 
   function toggleCalendar() {
+    if (shareMode) return;
     setCalendarMonth(startOfMonth(selectedDate));
     setCalendarOpen((open) => !open);
   }
 
   function selectCalendarDate(nextDate: string) {
+    if (shareMode) return;
     setDate(nextDate);
     setCalendarOpen(false);
+  }
+
+  async function copyShareLink() {
+    try {
+      const share = await client.createDailyNewsShare(selectedDate);
+      const shareUrl = `${publicShareBaseUrl()}/share/daily/${share.share_key}/${share.report_date}`;
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        window.dispatchEvent(new CustomEvent("oneradar:toast", { detail: { message: "已复制分享链接", tone: "success" } }));
+      } catch {
+        window.prompt("复制分享链接", shareUrl);
+      }
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : "创建分享链接失败";
+      setError(message);
+    }
   }
 
   useEffect(() => {
     void loadReport(selectedDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, selectedDate]);
+  }, [client, selectedDate, shareKey, shareMode]);
 
   useEffect(() => {
     const pending = readPendingGeneration();
@@ -333,7 +368,7 @@ export function DailyNewsPage() {
   }, [selectedDate]);
 
   useEffect(() => {
-    if (!pendingGeneration || pendingGeneration.date !== selectedDate) return;
+    if (shareMode || !pendingGeneration || pendingGeneration.date !== selectedDate) return;
     if (isFreshGeneratedReport(report, pendingGeneration)) {
       clearPendingGeneration(selectedDate);
       setPendingGeneration(null);
@@ -345,11 +380,12 @@ export function DailyNewsPage() {
     }, 3500);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingGeneration, report, selectedDate]);
+  }, [pendingGeneration, report, selectedDate, shareMode]);
 
   useEffect(() => {
+    if (shareMode) return;
     if (!providers.length) void loadProviders();
-  }, [loadProviders, providers.length]);
+  }, [loadProviders, providers.length, shareMode]);
 
   useEffect(() => {
     if (!calendarOpen) return;
@@ -368,6 +404,7 @@ export function DailyNewsPage() {
   }, [calendarOpen]);
 
   const filteredSections = useMemo(() => {
+    if (shareMode) return report?.sections ?? [];
     const keyword = (searchParams.get("q") || "").trim().toLowerCase();
     const sections = report?.sections ?? [];
     if (!keyword) return sections;
@@ -377,7 +414,7 @@ export function DailyNewsPage() {
         items: section.items.filter((item) => [item.title, item.summary, item.entry?.source_title ?? ""].join(" ").toLowerCase().includes(keyword)),
       }))
       .filter((section) => section.items.length > 0 || section.title.toLowerCase().includes(keyword) || section.summary.toLowerCase().includes(keyword));
-  }, [report, searchParams]);
+  }, [report, searchParams, shareMode]);
 
   const ready = report?.status === "ready";
 
@@ -403,9 +440,16 @@ export function DailyNewsPage() {
   const today = todayDate();
   const isNextMonthDisabled = shiftMonth(calendarMonth, 1) > startOfMonth(today);
 
+  function updateSharePointer(event: PointerEvent<HTMLElement>) {
+    if (!shareMode) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.style.setProperty("--daily-news-pointer-x", `${event.clientX - rect.left}px`);
+    event.currentTarget.style.setProperty("--daily-news-pointer-y", `${event.clientY - rect.top}px`);
+  }
+
   return (
-    <div className="daily-news-page">
-      <header className="daily-news-header">
+    <div className={shareMode ? "daily-news-page daily-news-share-page" : "daily-news-page"}>
+      {!shareMode && <header className="daily-news-header">
         <button className="btn btn-ghost btn-sm daily-news-corner-nav daily-news-corner-nav-prev" type="button" onClick={() => setDate(shiftDate(selectedDate, -1))}>
           <span className="icon icon-sm">chevron_left</span>
           前一天
@@ -480,7 +524,7 @@ export function DailyNewsPage() {
           <p className="page-eyebrow">Daily Brief</p>
           <h2 className="page-title">每日新闻</h2>
         </div>
-      </header>
+      </header>}
 
       {isGeneratingSelectedDate && (
         <div className="feedback feedback-info daily-news-feedback">
@@ -497,19 +541,25 @@ export function DailyNewsPage() {
       ) : !ready ? (
         <div className="daily-news-empty">
           <span className="icon icon-lg">newspaper</span>
-          <h3>{selectedDate} 还没有日报</h3>
-          <p>点击生成后，会调用已配置的大语言模型，将当天订阅源新闻翻译、筛选并总结成一份固定结构日报。</p>
-          <button className="btn btn-primary btn-sm" type="button" disabled={isGeneratingSelectedDate} onClick={() => generateReport(false)}>
-            <span className="icon icon-sm">{isGeneratingSelectedDate ? "sync" : "auto_awesome"}</span>
-            {isGeneratingSelectedDate ? "生成中…" : "生成这一天"}
-          </button>
+          <h3>{shareMode ? "分享日报不可用" : `${selectedDate} 还没有日报`}</h3>
+          <p>{shareMode ? "这个分享链接没有对应的日报，或日报还没有生成。" : "点击生成后，会调用已配置的大语言模型，将当天订阅源新闻翻译、筛选并总结成一份固定结构日报。"}</p>
+          {!shareMode && (
+            <button className="btn btn-primary btn-sm" type="button" disabled={isGeneratingSelectedDate} onClick={() => generateReport(false)}>
+              <span className="icon icon-sm">{isGeneratingSelectedDate ? "sync" : "auto_awesome"}</span>
+              {isGeneratingSelectedDate ? "生成中…" : "生成这一天"}
+            </button>
+          )}
         </div>
       ) : (
-        <main ref={dailyNewsContentRef} className={`daily-news-content ${dailyNewsLayoutPlan.pageClass} ${dailyNewsLayoutPlan.headlineClass}`}>
+        <main
+          ref={dailyNewsContentRef}
+          className={`daily-news-content ${shareMode ? "daily-news-share-content" : ""} ${dailyNewsLayoutPlan.pageClass} ${dailyNewsLayoutPlan.headlineClass}`}
+          onPointerMove={updateSharePointer}
+        >
           <div className="daily-news-meta-line">
             <span>{report?.entry_count ?? 0} 条候选新闻</span>
             <span>生成于 {displayGeneratedAt(report?.generated_at)}</span>
-            {report?.model_name && <span>{report.provider_name ?? "模型"} · {report.model_name}</span>}
+            {report?.provider_name && <span>{report.provider_name}</span>}
           </div>
 
           <section className="daily-news-lead">
@@ -517,14 +567,20 @@ export function DailyNewsPage() {
               <span className="daily-news-source-dot" />
               {report?.lead?.entry ? `${report.lead.entry.source_title} · ${displayPublishedAt(report.lead.entry.published_at)}` : "今日重点"}
             </p>
-            <button
-              type="button"
-              className="daily-news-lead-title"
-              onClick={() => report?.lead?.entry && navigate(feedArticlePreviewPath(report.lead.entry))}
-              disabled={!report?.lead?.entry}
-            >
-              {report?.lead?.title || report?.headline || "每日新闻"}
-            </button>
+            {shareMode && report?.lead?.entry ? (
+              <a className="daily-news-lead-title" href={report.lead.entry.link} target="_blank" rel="noreferrer">
+                {report?.lead?.title || report?.headline || "每日新闻"}
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="daily-news-lead-title"
+                onClick={() => report?.lead?.entry && navigate(feedArticlePreviewPath(report.lead.entry))}
+                disabled={!report?.lead?.entry}
+              >
+                {report?.lead?.title || report?.headline || "每日新闻"}
+              </button>
+            )}
             <p>{report?.lead?.summary || report?.headline}</p>
           </section>
 
@@ -542,14 +598,20 @@ export function DailyNewsPage() {
                 <div className="daily-news-entry-list">
                   {section.items.map((item, itemIndex) => (
                     <article className="daily-news-entry" key={itemKey(item, `${sectionIndex}-${itemIndex}`)}>
-                      <button
-                        type="button"
-                        className="daily-news-entry-title"
-                        onClick={() => item.entry && navigate(feedArticlePreviewPath(item.entry))}
-                        disabled={!item.entry}
-                      >
-                        {item.title}
-                      </button>
+                      {shareMode && item.entry ? (
+                        <a className="daily-news-entry-title" href={item.entry.link} target="_blank" rel="noreferrer">
+                          {item.title}
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          className="daily-news-entry-title"
+                          onClick={() => item.entry && navigate(feedArticlePreviewPath(item.entry))}
+                          disabled={!item.entry}
+                        >
+                          {item.title}
+                        </button>
+                      )}
                       <p>{item.summary}</p>
                       <div className="daily-news-entry-footer">
                         <span>
@@ -562,13 +624,21 @@ export function DailyNewsPage() {
               </section>
             ))}
           </div>
-          <section className="daily-news-regenerate-zone">
-            <button className="btn btn-secondary btn-sm" type="button" disabled={isGeneratingSelectedDate || loading} onClick={() => generateReport(true)}>
-              <span className="icon icon-sm">{isGeneratingSelectedDate ? "sync" : "auto_awesome"}</span>
-              {isGeneratingSelectedDate ? "重新生成中…" : "重新生成今日日报"}
-            </button>
-            <p>会按当前订阅源的最新缓存重新调用大语言模型，并覆盖这一天已有的日报。</p>
-          </section>
+          {!shareMode && (
+            <section className="daily-news-regenerate-zone">
+              <div className="daily-news-share-actions">
+                <button className="btn btn-secondary btn-sm" type="button" onClick={() => void copyShareLink()}>
+                  <span className="icon icon-sm">ios_share</span>
+                  复制分享链接
+                </button>
+                <button className="btn btn-secondary btn-sm" type="button" disabled={isGeneratingSelectedDate || loading} onClick={() => generateReport(true)}>
+                  <span className="icon icon-sm">{isGeneratingSelectedDate ? "sync" : "auto_awesome"}</span>
+                  {isGeneratingSelectedDate ? "重新生成中…" : "重新生成今日日报"}
+                </button>
+              </div>
+              <p>分享页只展示日报正文；重新生成会按当前订阅源的最新缓存重新调用大语言模型，并覆盖这一天已有的日报。</p>
+            </section>
+          )}
         </main>
       )}
       {confirmRegenerate && (

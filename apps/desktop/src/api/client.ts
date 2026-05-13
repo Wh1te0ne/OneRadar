@@ -15,6 +15,8 @@ import type {
   ApiFeedStateResponse,
   ApiFolderEntry,
   ApiHealth,
+  ApiIntegrationToken,
+  ApiIntegrationTokenCreateResponse,
   ApiHighlight,
   ApiImportResponse,
   ApiItemDetail,
@@ -164,6 +166,16 @@ export function createApiClient(baseUrl: string) {
       request<ApiProviderTestResponse>(baseUrl, "/api/providers/" + providerId + "/test", {
         method: "POST"
       }),
+    listIntegrationTokens: () => request<ApiListResponse<ApiIntegrationToken>>(baseUrl, "/api/integration-tokens"),
+    createIntegrationToken: (name: string, scopes = ["mcp:read"]) =>
+      request<ApiIntegrationTokenCreateResponse>(baseUrl, "/api/integration-tokens", {
+        method: "POST",
+        body: JSON.stringify({ name, scopes })
+      }),
+    revokeIntegrationToken: (tokenId: string) =>
+      request<{ id: string; revoked: boolean }>(baseUrl, "/api/integration-tokens/" + tokenId, {
+        method: "DELETE"
+      }),
     getFeedPreview: (url: string, limit = 0) => {
       const params = new URLSearchParams({ url, limit: String(limit) });
       return request<ApiFeedPreviewResponse>(baseUrl, "/api/feeds/preview?" + params.toString());
@@ -194,6 +206,16 @@ export function createApiClient(baseUrl: string) {
       const suffix = params.toString() ? "?" + params.toString() : "";
       return request<ApiDailyNewsReportResponse>(baseUrl, "/api/daily-news" + suffix);
     },
+    getPublicDailyNews: (shareKey: string, date: string) =>
+      request<ApiDailyNewsReportResponse>(
+        baseUrl,
+        "/api/public/daily-news/users/" + encodeURIComponent(shareKey) + "/" + encodeURIComponent(date)
+      ),
+    createDailyNewsShare: (date: string) =>
+      request<{ share_id: string; share_key: string; report_date: string }>(baseUrl, "/api/daily-news/share", {
+        method: "POST",
+        body: JSON.stringify({ date })
+      }),
     generateDailyNews: (date: string, force = false) =>
       request<ApiDailyNewsReportResponse>(baseUrl, "/api/daily-news/generate", {
         method: "POST",

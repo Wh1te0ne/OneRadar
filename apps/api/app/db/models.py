@@ -32,6 +32,7 @@ class User(TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    daily_news_share_key: Mapped[str | None] = mapped_column(String(48), nullable=True, unique=True)
 
     content_items: Mapped[list['ContentItem']] = relationship(back_populates='user')
     folders: Mapped[list['Folder']] = relationship(back_populates='user')
@@ -43,6 +44,7 @@ class User(TimestampMixin, Base):
     processing_tasks: Mapped[list['ProcessingTask']] = relationship(back_populates='user')
     model_providers: Mapped[list['ModelProvider']] = relationship(back_populates='user')
     integration_settings: Mapped[list['IntegrationSetting']] = relationship(back_populates='user')
+    integration_tokens: Mapped[list['IntegrationToken']] = relationship(back_populates='user')
     feed_sources: Mapped[list['FeedSource']] = relationship(back_populates='user')
     feed_entry_read_states: Mapped[list['FeedEntryReadState']] = relationship(back_populates='user')
     daily_news_reports: Mapped[list['DailyNewsReport']] = relationship(back_populates='user')
@@ -85,6 +87,27 @@ class IntegrationSetting(TimestampMixin, Base):
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
     user: Mapped[User] = relationship(back_populates='integration_settings')
+
+
+class IntegrationToken(TimestampMixin, Base):
+    __tablename__ = 'integration_tokens'
+    __table_args__ = (
+        UniqueConstraint('token_hash', name='uq_integration_tokens_token_hash'),
+        Index('ix_integration_tokens_user_created_at', 'user_id', 'created_at'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates='integration_tokens')
 
 
 class FeedSource(TimestampMixin, Base):
@@ -164,6 +187,7 @@ class DailyNewsReport(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'report_date', name='uq_daily_news_reports_user_date'),
         Index('ix_daily_news_reports_user_date', 'user_id', 'report_date'),
+        Index('ix_daily_news_reports_share_id', 'share_id', unique=True),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -171,6 +195,7 @@ class DailyNewsReport(TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False
     )
     report_date: Mapped[str] = mapped_column(String, nullable=False)
+    share_id: Mapped[str | None] = mapped_column(String(48), nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default='ready')
     headline: Mapped[str] = mapped_column(Text, nullable=False)
     lead: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

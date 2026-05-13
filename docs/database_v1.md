@@ -83,6 +83,7 @@ erDiagram
     users ||--o{ collections : owns
     users ||--o{ model_providers : configures
     users ||--o{ feed_sources : subscribes
+    users ||--o{ integration_tokens : creates
 
     content_items ||--o{ content_snapshots : has
     content_items ||--o{ content_parsed_documents : has
@@ -735,6 +736,32 @@ Rationale:
 
 ---
 
+### 4.18 `integration_tokens`
+
+Stores user-created personal access tokens for service integrations such as Hermes MCP. These tokens are not browser login sessions; they are long-lived credentials that bind an external integration to the user who created them.
+
+Recommended columns:
+
+- `id uuid pk`
+- `user_id uuid not null fk users(id)`
+- `name text not null`
+- `token_hash text not null unique`
+- `token_prefix text not null`
+- `scopes jsonb not null default '[]'`
+- `last_used_at timestamptz`
+- `revoked_at timestamptz`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
+
+Rules:
+
+- The raw token is returned only once at creation time.
+- The database stores only an HMAC hash derived from `ONERADAR_API_SECRET_KEY`, never the raw token.
+- MCP requires the `mcp:read` scope.
+- Revoked tokens must stop working immediately.
+
+---
+
 ## 5. Relationship Rules
 
 ### 5.1 Ownership
@@ -990,6 +1017,7 @@ Implement in this order:
 14. `processing_tasks`
 15. `model_providers`
 16. `integration_settings`
+17. `integration_tokens`
 
 Reason:
 

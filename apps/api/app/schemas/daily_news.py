@@ -50,3 +50,13 @@ class DailyNewsReportResponse(BaseModel):
 class DailyNewsGenerateRequest(BaseModel):
     date: str | None = None
     force: bool = False
+
+
+class DailyNewsShareRequest(BaseModel):
+    date: str
+
+
+class DailyNewsShareResponse(BaseModel):
+    share_id: str
+    share_key: str
+    report_date: str

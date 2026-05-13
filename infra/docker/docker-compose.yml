@@ -58,6 +58,7 @@ services:
     restart: unless-stopped
     environment:
       ONERADAR_PUBLIC_API_URL: ${ONERADAR_PUBLIC_API_URL:-}
+      ONERADAR_PUBLIC_SHARE_BASE_URL: ${ONERADAR_PUBLIC_SHARE_BASE_URL:-}
     depends_on:
       - api
     ports:

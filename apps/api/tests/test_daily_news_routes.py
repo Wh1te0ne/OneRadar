@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from fastapi.testclient import TestClient
+
+from app.main import app
 from app.schemas.feeds import FeedPreviewItem, FeedPreviewResponse, FeedStateResponse
 from app.services import daily_news_service
 
@@ -76,11 +79,11 @@ def test_generate_daily_news_persists_one_report_per_date(client, monkeypatch) -
                     "title": "大模型技术进展",
                     "summary": "模型能力继续快速迭代。",
                     "items": [
-                            {
-                                "title": "OpenAI 发布新模型",
-                                "summary": "代码与推理能力增强。",
-                                "entry_id": entries[0]["id"],
-                            }
+                        {
+                            "title": "OpenAI 发布新模型",
+                            "summary": "代码与推理能力增强。",
+                            "entry_id": entries[0]["id"],
+                        }
                     ],
                 }
             ],
@@ -103,6 +106,38 @@ def test_generate_daily_news_persists_one_report_per_date(client, monkeypatch) -
     second = client.get("/api/daily-news", params={"date": "2026-05-07"})
     assert second.status_code == 200
     assert second.json()["headline"] == "今日 AI 新闻"
+
+    share_response = client.post("/api/daily-news/share", json={"date": "2026-05-07"})
+    assert share_response.status_code == 200
+    share_id = share_response.json()["share_id"]
+    share_key = share_response.json()["share_key"]
+    assert share_id
+    assert share_key
+
+    second_share_response = client.post("/api/daily-news/share", json={"date": "2026-05-07"})
+    assert second_share_response.status_code == 200
+    assert second_share_response.json()["share_id"] == share_id
+    assert second_share_response.json()["share_key"] == share_key
+
+    public_client = TestClient(app)
+    public_response = public_client.get(f"/api/public/daily-news/users/{share_key}/2026-05-07")
+    assert public_response.status_code == 200
+    assert public_response.json()["headline"] == "今日 AI 新闻"
+
+    legacy_public_response = public_client.get(f"/api/public/daily-news/shares/{share_id}")
+    assert legacy_public_response.status_code == 200
+    assert legacy_public_response.json()["headline"] == "今日 AI 新闻"
+
+
+def test_public_daily_news_share_requires_valid_share_id() -> None:
+    public_client = TestClient(app)
+    response = public_client.get("/api/public/daily-news/shares/not-found")
+
+    assert response.status_code == 404
+
+    response = public_client.get("/api/public/daily-news/users/not-found/2026-05-07")
+
+    assert response.status_code == 404
 
 
 def test_generate_daily_news_requires_force_when_report_exists(client, monkeypatch) -> None:
@@ -154,6 +189,8 @@ def test_daily_news_prompt_requires_ai_first_and_games_last() -> None:
     prompt = daily_news_service._daily_news_prompt(entries, "2026-05-07")
 
     assert "lead 和 headline 必须优先选择 AI 新闻" in prompt
+    assert "sections 按素材自然组织" in prompt
+    assert "通常做 4 到 6 个主题" in prompt
     assert "第一个主题必须是 AI 相关新闻" in prompt
     assert "AI 相关新闻的篇幅和条目数量应明显多于其他主题" in prompt
-    assert "游戏新闻只能放在最后一个主题" in prompt
+    assert "如果包含游戏新闻，游戏新闻必须放在最后一个主题" in prompt

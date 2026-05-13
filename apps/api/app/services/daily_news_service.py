@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -13,13 +14,15 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.db.models import DailyNewsReport
+from app.db.models import DailyNewsReport, User
 from app.db.session import SessionLocal
 from app.schemas.daily_news import (
     DailyNewsGenerateRequest,
     DailyNewsLead,
     DailyNewsReportResponse,
     DailyNewsSection,
+    DailyNewsShareRequest,
+    DailyNewsShareResponse,
 )
 from app.services.db_access import get_primary_user
 from app.services.feed_state_service import get_feed_state
@@ -42,6 +45,37 @@ def get_daily_news(report_date: str | None = None) -> DailyNewsReportResponse:
     if record is None:
         return DailyNewsReportResponse(report_date=normalized_date, status="missing")
     return _response_from_record(record)
+
+
+def get_public_daily_news_by_share_id(share_id: str) -> DailyNewsReportResponse:
+    normalized_share_id = share_id.strip()
+    if not normalized_share_id:
+        raise HTTPException(status_code=404, detail="分享日报不存在。")
+    record = _get_report_record_by_share_id(normalized_share_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="分享日报不存在。")
+    return _response_from_record(record)
+
+
+def get_public_daily_news_by_user_share_key(share_key: str, report_date: str) -> DailyNewsReportResponse:
+    normalized_share_key = share_key.strip()
+    normalized_date = _normalize_report_date(report_date)
+    if not normalized_share_key:
+        raise HTTPException(status_code=404, detail="分享日报不存在。")
+    record = _get_report_record_by_user_share_key(normalized_share_key, normalized_date)
+    if record is None:
+        raise HTTPException(status_code=404, detail="分享日报不存在。")
+    return _response_from_record(record)
+
+
+def create_daily_news_share(payload: DailyNewsShareRequest) -> DailyNewsShareResponse:
+    report_date = _normalize_report_date(payload.date)
+    record = _get_report_record(report_date)
+    if record is None:
+        raise HTTPException(status_code=404, detail="这一天还没有可分享的日报。")
+    share_id = _ensure_report_share_id(record)
+    share_key = _ensure_current_user_share_key()
+    return DailyNewsShareResponse(share_id=share_id, share_key=share_key, report_date=report_date)
 
 
 def generate_daily_news(payload: DailyNewsGenerateRequest) -> DailyNewsReportResponse:
@@ -240,8 +274,9 @@ def _daily_news_prompt(entries: list[dict[str, Any]], report_date: str) -> str:
         "2. lead 必须选择当天最重头、影响最大、最值得优先阅读的一条新闻，"
         "而不是最新的一条；如果存在 AI 相关新闻，lead 和 headline 必须优先选择 AI 新闻。"
         "必须返回它的 entry_id。\n"
-        "3. sections 做 3 到 5 个主题，第一个主题必须是 AI 相关新闻，"
-        "AI 相关新闻的篇幅和条目数量应明显多于其他主题；游戏新闻只能放在最后一个主题。"
+        "3. sections 按素材自然组织，通常做 4 到 6 个主题，不要机械固定为某个数量；"
+        "第一个主题必须是 AI 相关新闻，AI 相关新闻的篇幅和条目数量应明显多于其他主题；"
+        "如果包含游戏新闻，游戏新闻必须放在最后一个主题。"
         "每个主题包含 summary 和 2 到 5 条 item。"
         "主题标题应像新闻专题，例如“大模型技术进展”。\n"
         "4. 每条 item 也必须返回 entry_id，并给出中文 title 与一到两句 summary。\n"
@@ -365,6 +400,86 @@ def _get_report_record(report_date: str) -> dict[str, Any] | DailyNewsReport | N
     except SQLAlchemyError:
         seed_store()
         return STORE.daily_reports.get(report_date)
+
+
+def _get_report_record_by_share_id(share_id: str) -> dict[str, Any] | DailyNewsReport | None:
+    try:
+        with SessionLocal() as session:
+            return session.execute(
+                select(DailyNewsReport).where(DailyNewsReport.share_id == share_id)
+            ).scalar_one_or_none()
+    except SQLAlchemyError:
+        seed_store()
+        return next(
+            (
+                record
+                for record in STORE.daily_reports.values()
+                if isinstance(record, dict) and record.get("share_id") == share_id
+            ),
+            None,
+        )
+
+
+def _get_report_record_by_user_share_key(share_key: str, report_date: str) -> DailyNewsReport | None:
+    try:
+        with SessionLocal() as session:
+            user = session.execute(
+                select(User).where(User.daily_news_share_key == share_key)
+            ).scalar_one_or_none()
+            if user is None:
+                return None
+            return session.execute(
+                select(DailyNewsReport).where(
+                    DailyNewsReport.user_id == user.id,
+                    DailyNewsReport.report_date == report_date,
+                )
+            ).scalar_one_or_none()
+    except SQLAlchemyError:
+        return None
+
+
+def _ensure_current_user_share_key() -> str:
+    try:
+        with SessionLocal() as session:
+            user = get_primary_user(session)
+            if user.daily_news_share_key:
+                return user.daily_news_share_key
+            user.daily_news_share_key = _new_share_id()
+            session.add(user)
+            session.commit()
+            return user.daily_news_share_key
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail="创建日报分享链接失败。") from error
+
+
+def _ensure_report_share_id(record: dict[str, Any] | DailyNewsReport) -> str:
+    if isinstance(record, DailyNewsReport):
+        if record.share_id:
+            return record.share_id
+        try:
+            with SessionLocal() as session:
+                current = session.get(DailyNewsReport, record.id)
+                if current is None:
+                    raise HTTPException(status_code=404, detail="这一天还没有可分享的日报。")
+                if current.share_id:
+                    return current.share_id
+                current.share_id = _new_share_id()
+                session.add(current)
+                session.commit()
+                return current.share_id
+        except SQLAlchemyError as error:
+            raise HTTPException(status_code=500, detail="创建日报分享链接失败。") from error
+
+    share_id = str(record.get("share_id") or "").strip()
+    if share_id:
+        return share_id
+    share_id = _new_share_id()
+    record["share_id"] = share_id
+    return share_id
+
+
+def _new_share_id() -> str:
+    return secrets.token_urlsafe(24)
 
 
 def _response_from_record(record: dict[str, Any] | DailyNewsReport) -> DailyNewsReportResponse:

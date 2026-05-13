@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createApiClient } from "../api";
-import type { ApiBilibiliIntegrationSettings, ApiProvider } from "../api";
+import type { ApiBilibiliIntegrationSettings, ApiIntegrationToken, ApiProvider } from "../api";
 import { useAppState } from "../state/appState";
 import { displayFolderName } from "../utils/display";
 
@@ -201,6 +201,11 @@ export function SettingsPage() {
   const [providerSaving, setProviderSaving] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
   const [providerTestingId, setProviderTestingId] = useState<string | null>(null);
+  const [integrationTokens, setIntegrationTokens] = useState<ApiIntegrationToken[]>([]);
+  const [tokenName, setTokenName] = useState("Hermes MCP");
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   const llmProviders = providers.filter((provider) => capabilityOf(provider) === "llm");
   const asrProviders = providers.filter((provider) => capabilityOf(provider) === "asr");
@@ -209,6 +214,20 @@ export function SettingsPage() {
     if (!providers.length) void loadProviders();
     if (!folders.length) void loadFolders();
   }, [folders.length, loadFolders, loadProviders, providers.length]);
+
+  async function loadIntegrationTokens() {
+    setTokenError(null);
+    try {
+      const result = await client.listIntegrationTokens();
+      setIntegrationTokens(result.items);
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : "读取集成令牌失败");
+    }
+  }
+
+  useEffect(() => {
+    void loadIntegrationTokens();
+  }, [client]);
 
   useEffect(() => {
     let cancelled = false;
@@ -392,6 +411,51 @@ export function SettingsPage() {
       showAppToast("当前已经是最新版本。", "success");
     } else if (result.status === "error") {
       showAppToast(result.message ?? "更新检查失败。", "error");
+    }
+  }
+
+  async function createToken() {
+    const name = tokenName.trim();
+    if (!name) {
+      setTokenError("请输入令牌名称。");
+      return;
+    }
+    setTokenBusy(true);
+    setTokenError(null);
+    setCreatedToken(null);
+    try {
+      const result = await client.createIntegrationToken(name, ["mcp:read"]);
+      setCreatedToken(result.token);
+      await loadIntegrationTokens();
+      showAppToast("集成令牌已创建，只会显示这一次。", "success");
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : "创建集成令牌失败");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  async function copyCreatedToken() {
+    if (!createdToken) return;
+    try {
+      await navigator.clipboard.writeText(createdToken);
+      showAppToast("令牌已复制。", "success");
+    } catch {
+      setTokenError("复制失败，请手动选中令牌。");
+    }
+  }
+
+  async function revokeToken(tokenId: string) {
+    setTokenBusy(true);
+    setTokenError(null);
+    try {
+      await client.revokeIntegrationToken(tokenId);
+      await loadIntegrationTokens();
+      showAppToast("集成令牌已吊销。", "success");
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : "吊销集成令牌失败");
+    } finally {
+      setTokenBusy(false);
     }
   }
 
@@ -679,6 +743,65 @@ export function SettingsPage() {
             </div>
           </div>
           <p className="text-meta">OneRadar 会每 10 分钟自动检查一次，有可用更新时顶部设置按钮会显示红点。</p>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-title">
+            <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>key</span>
+            集成令牌
+          </div>
+          <div className="settings-model-block">
+            <div className="settings-model-block-header">
+              <div>
+                <h3>服务集成</h3>
+                <p>用于 Hermes MCP 等服务间调用，令牌绑定当前账号，创建后只显示一次。</p>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "end" }}>
+              <label>
+                <span className="text-caption">令牌名称</span>
+                <input className="input" value={tokenName} onChange={(event) => setTokenName(event.target.value)} />
+              </label>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => void createToken()} disabled={tokenBusy}>
+                <span className="icon icon-sm">add</span>
+                创建令牌
+              </button>
+            </div>
+            {createdToken && (
+              <div className="feedback feedback-success">
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>新令牌只显示一次</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <code style={{ flex: 1, wordBreak: "break-all" }}>{createdToken}</code>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void copyCreatedToken()}>
+                    复制
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="stack-sm">
+              {integrationTokens.length ? integrationTokens.map((token) => (
+                <div key={token.id} className="provider-row">
+                  <div className="provider-icon">
+                    <span className="icon icon-sm">{token.revoked_at ? "block" : "vpn_key"}</span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{token.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--outline)" }}>
+                      {token.token_prefix}… · {token.scopes.join(", ")} · {token.last_used_at ? `上次使用 ${new Date(token.last_used_at).toLocaleString()}` : "尚未使用"}
+                    </div>
+                  </div>
+                  {token.revoked_at ? (
+                    <span className="chip chip-neutral">已吊销</span>
+                  ) : (
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => void revokeToken(token.id)} disabled={tokenBusy}>
+                      吊销
+                    </button>
+                  )}
+                </div>
+              )) : <p className="text-meta">还没有创建集成令牌。</p>}
+            </div>
+            {tokenError && <div className="feedback feedback-error">{tokenError}</div>}
+          </div>
         </div>
 
         <div className="settings-section">
