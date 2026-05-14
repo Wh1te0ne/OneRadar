@@ -15,6 +15,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { TrashPage } from "./pages/TrashPage";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Toast, type ToastState } from "./components/Toast";
+import { MobileApp } from "./MobileApp";
 import { useAppState } from "./state/appState";
 
 type PrimaryContext = "daily" | "feed" | "podcasts" | "inbox" | "library" | "import" | "settings" | "trash";
@@ -72,6 +73,26 @@ const navItems = [
   { to: "/import", label: "Bilibili", icon: "smart_display", ctx: "import" as PrimaryContext },
 ];
 
+function useIsMobileViewport() {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 760px)").matches : false
+  );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 760px)");
+    const update = () => setIsMobile(mediaQuery.matches);
+    update();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", update);
+      return () => mediaQuery.removeEventListener("change", update);
+    }
+    mediaQuery.addListener(update);
+    return () => mediaQuery.removeListener(update);
+  }, []);
+
+  return isMobile;
+}
+
 export default function App() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -87,6 +108,7 @@ export default function App() {
   const [toast, setToast] = useState<ToastState>(null);
   const { apiBaseUrl, authToken, connectionState, currentUser, folders, loadFolders, logout, updateCheck, workspace } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
+  const isMobileViewport = useIsMobileViewport();
 
   const inboxFolder = workspace?.default_inbox_folder ?? folders.find((f) => f.id === "inbox");
   const sidebarFolders = folders.filter((f) => f.id !== inboxFolder?.id);
@@ -248,6 +270,10 @@ export default function App() {
 
   if (!authToken && workspace?.requires_login !== false) {
     return <AuthPage />;
+  }
+
+  if (isMobileViewport) {
+    return <MobileApp />;
   }
 
   return (

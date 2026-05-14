@@ -1,0 +1,1691 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>OneRadar Mobile Prototype</title>
+  <style>
+    :root {
+      --bg: #f7f5f2;
+      --surface: #fffdf9;
+      --surface-low: #f0ece5;
+      --surface-mid: #e7e0d7;
+      --surface-high: #dbd3c8;
+      --ink: #37352f;
+      --muted: #716b62;
+      --faint: #9b9287;
+      --line: rgba(135, 125, 112, 0.18);
+      --accent: #53627e;
+      --accent-soft: #dde5f0;
+      --accent-ink: #253148;
+      --success: #3f7152;
+      --warning: #8a6a25;
+      --danger: #a5575f;
+      --shadow: 0 20px 60px rgba(55, 53, 47, 0.12);
+      --shadow-soft: 0 8px 28px rgba(55, 53, 47, 0.08);
+      color-scheme: light;
+    }
+
+    :root[data-theme="dark"] {
+      --bg: #191714;
+      --surface: #211e1a;
+      --surface-low: #28231f;
+      --surface-mid: #322d27;
+      --surface-high: #413a32;
+      --ink: #eee6dc;
+      --muted: #b7aea2;
+      --faint: #8e8375;
+      --line: rgba(190, 178, 160, 0.16);
+      --accent: #a6b5d2;
+      --accent-soft: #2c384b;
+      --accent-ink: #e7edf8;
+      --success: #8fbd9d;
+      --warning: #d6b46c;
+      --danger: #df9ca4;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.34);
+      --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.22);
+      color-scheme: dark;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.34), transparent 240px),
+        var(--bg);
+      color: var(--ink);
+      font-family: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.62;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, textarea {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .stage {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .phone {
+      width: min(430px, 100vw);
+      height: min(920px, 100vh);
+      min-height: 720px;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 34px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      position: relative;
+    }
+
+    .app {
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.24), transparent 180px),
+        var(--bg);
+    }
+
+    .topbar {
+      padding: max(16px, env(safe-area-inset-top)) 18px 12px;
+      background: color-mix(in srgb, var(--bg) 92%, transparent);
+      backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--line);
+      position: relative;
+      z-index: 4;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-row,
+    .reader-topbar,
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(180deg, var(--accent-soft), color-mix(in srgb, var(--surface) 78%, var(--accent-soft)));
+      border: 1px solid var(--line);
+      color: var(--accent-ink);
+      font-weight: 800;
+      letter-spacing: 0;
+      flex: 0 0 auto;
+    }
+
+    .brand-title {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .brand-title strong {
+      display: block;
+      font-size: 16px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .brand-title span {
+      display: block;
+      margin-top: 2px;
+      font-size: 11px;
+      color: var(--faint);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .icon-btn {
+      width: 36px;
+      height: 36px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--muted);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      transition: transform 160ms ease, background 160ms ease, color 160ms ease;
+    }
+
+    .icon-btn:active {
+      transform: scale(0.94);
+    }
+
+    .icon-btn.active,
+    .icon-btn:hover {
+      background: var(--surface-low);
+      color: var(--accent);
+    }
+
+    .search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 13px;
+      border-radius: 999px;
+      background: var(--surface-low);
+      border: 1px solid transparent;
+    }
+
+    .topbar-action {
+      min-width: 54px;
+      height: 40px;
+      padding: 0 13px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      box-shadow: var(--shadow-soft);
+      font-size: 13px;
+      font-weight: 760;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .search:focus-within {
+      background: var(--surface);
+      border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+
+    .search input {
+      min-width: 0;
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .search input::placeholder {
+      color: var(--faint);
+    }
+
+    .viewport {
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .screen {
+      position: absolute;
+      inset: 0;
+      overflow-y: auto;
+      padding: 16px 18px 92px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(18px);
+      transition: opacity 220ms ease, transform 220ms ease;
+      scrollbar-width: none;
+    }
+
+    .screen::-webkit-scrollbar { display: none; }
+
+    .screen.active {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(0);
+    }
+
+    .screen.leaving-left {
+      transform: translateX(-18px);
+    }
+
+    .section-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 4px 0 14px;
+    }
+
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--faint);
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p {
+      margin: 0;
+    }
+
+    .page-title {
+      font-size: 24px;
+      line-height: 1.1;
+      letter-spacing: 0;
+      font-weight: 820;
+    }
+
+    .date-chip,
+    .pill,
+    .mini-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      border-radius: 999px;
+      background: var(--surface-low);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .date-chip {
+      height: 34px;
+      padding: 0 12px;
+    }
+
+    .pill {
+      min-height: 32px;
+      padding: 5px 11px;
+      border: 0;
+      cursor: pointer;
+      transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+    }
+
+    .pill:active {
+      transform: scale(0.97);
+    }
+
+    .pill.active {
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+    }
+
+    .mini-chip {
+      min-height: 25px;
+      padding: 3px 8px;
+      font-size: 11px;
+      border: 0;
+      background: color-mix(in srgb, var(--surface-low) 78%, transparent);
+    }
+
+    .hero-brief {
+      padding: 22px 0 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .source-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--faint);
+      font-size: 12px;
+      font-weight: 680;
+      margin-bottom: 9px;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+
+    .hero-title {
+      width: 100%;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      text-align: left;
+      color: var(--ink);
+      font-size: 24px;
+      line-height: 1.28;
+      font-weight: 820;
+      letter-spacing: 0;
+      cursor: pointer;
+    }
+
+    .hero-brief p {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.72;
+    }
+
+    .daily-date-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0 16px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+      padding: 1px 2px 3px;
+      scroll-snap-type: x proximity;
+    }
+
+    .daily-date-row::-webkit-scrollbar { display: none; }
+
+    .daily-date-row .date-chip {
+      flex: 0 0 auto;
+      height: 46px;
+      padding: 0 11px;
+      border-radius: 15px;
+      scroll-snap-align: end;
+    }
+
+    .date-strip {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 8px;
+    }
+
+    .date-tile {
+      flex: 0 0 44px;
+      min-height: 48px;
+      scroll-snap-align: start;
+      border: 0;
+      border-radius: 15px;
+      background: var(--surface-low);
+      color: var(--muted);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      gap: 1px;
+      font-weight: 760;
+    }
+
+    .date-tile strong {
+      font-size: 17px;
+      line-height: 1;
+      font-weight: 780;
+    }
+
+    .date-tile span {
+      font-size: 10px;
+      color: var(--faint);
+      line-height: 1;
+    }
+
+    .date-tile.active {
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+      outline: 2px solid color-mix(in srgb, var(--accent) 54%, transparent);
+      outline-offset: -2px;
+    }
+
+    .daily-card {
+      border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+      border-radius: 22px;
+      background: var(--surface);
+      padding: 16px;
+      box-shadow: var(--shadow-soft);
+      display: grid;
+      grid-template-columns: 58px minmax(0, 1fr);
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 20px;
+      cursor: pointer;
+    }
+
+    .daily-card-visual {
+      width: 58px;
+      height: 58px;
+      border-radius: 18px;
+      background:
+        linear-gradient(145deg, color-mix(in srgb, var(--accent-soft) 86%, white), var(--surface-low));
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-size: 28px;
+    }
+
+    .daily-card h2 {
+      font-size: 21px;
+      line-height: 1.25;
+      margin-bottom: 4px;
+    }
+
+    .daily-card p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .daily-card .primary-btn {
+      margin-top: 10px;
+      min-height: 34px;
+      border-radius: 999px;
+      padding: 0 14px;
+      width: fit-content;
+      font-size: 13px;
+    }
+
+    .daily-state {
+      border-radius: 20px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow-soft);
+      padding: 16px;
+      margin: 4px 0 18px;
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 13px;
+      align-items: center;
+    }
+
+    .daily-state-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 15px;
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+    }
+
+    .daily-state h2 {
+      font-size: 20px;
+      line-height: 1.28;
+      margin-bottom: 4px;
+    }
+
+    .daily-state p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .daily-state .primary-btn,
+    .daily-state .secondary-btn {
+      margin-top: 10px;
+      min-height: 34px;
+      border-radius: 999px;
+      padding: 0 14px;
+      font-size: 13px;
+    }
+
+    .daily-empty-state {
+      display: none;
+      text-align: center;
+      grid-template-columns: minmax(0, 1fr);
+      padding: 28px 18px;
+    }
+
+    .daily-empty-state.show {
+      display: grid;
+    }
+
+    .daily-content.hide {
+      display: none;
+    }
+
+    .daily-heading {
+      margin: 20px 0 12px;
+    }
+
+    .brief-section {
+      padding: 18px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brief-section h3 {
+      font-size: 17px;
+      line-height: 1.28;
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+
+    .brief-section > p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.65;
+      margin-bottom: 12px;
+    }
+
+    .brief-item {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr);
+      gap: 10px;
+      padding: 11px 0;
+      border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
+      cursor: pointer;
+    }
+
+    .brief-index {
+      color: var(--faint);
+      font-size: 12px;
+      font-weight: 800;
+      padding-top: 2px;
+    }
+
+    .brief-item strong {
+      display: block;
+      font-size: 14px;
+      line-height: 1.42;
+      letter-spacing: 0;
+    }
+
+    .brief-item span {
+      display: block;
+      margin-top: 5px;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 3px 0 14px;
+      scrollbar-width: none;
+    }
+
+    .filter-row::-webkit-scrollbar { display: none; }
+
+    .feed-list,
+    .inbox-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .item-row {
+      width: 100%;
+      border: 0;
+      border-radius: 16px;
+      padding: 14px;
+      background: var(--surface);
+      color: var(--ink);
+      text-align: left;
+      box-shadow: var(--shadow-soft);
+      cursor: pointer;
+      display: grid;
+      gap: 10px;
+      transition: transform 160ms ease, background 160ms ease;
+    }
+
+    .item-row:active {
+      transform: scale(0.985);
+    }
+
+    .item-row.compact {
+      box-shadow: none;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 74%, transparent);
+    }
+
+    .item-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 720;
+    }
+
+    .item-row h3 {
+      font-size: 17px;
+      line-height: 1.36;
+      letter-spacing: 0;
+    }
+
+    .item-row p {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.58;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .progress-line {
+      height: 4px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--surface-mid);
+    }
+
+    .progress-line i {
+      display: block;
+      height: 100%;
+      width: var(--value);
+      background: var(--accent);
+      border-radius: inherit;
+    }
+
+    .import-panel {
+      background: var(--surface);
+      border-radius: 20px;
+      padding: 16px;
+      box-shadow: var(--shadow-soft);
+      display: grid;
+      gap: 14px;
+    }
+
+    .import-field {
+      min-height: 112px;
+      resize: none;
+      border: 1px solid var(--line);
+      outline: 0;
+      border-radius: 16px;
+      padding: 13px;
+      background: var(--surface-low);
+      color: var(--ink);
+    }
+
+    .import-field:focus {
+      border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+
+    .primary-btn,
+    .secondary-btn {
+      min-height: 44px;
+      border: 0;
+      border-radius: 14px;
+      padding: 0 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-weight: 760;
+      cursor: pointer;
+      transition: transform 160ms ease, opacity 160ms ease;
+    }
+
+    .primary-btn {
+      background: var(--accent);
+      color: var(--surface);
+    }
+
+    .secondary-btn {
+      background: var(--surface-low);
+      color: var(--ink);
+    }
+
+    .primary-btn:active,
+    .secondary-btn:active {
+      transform: scale(0.98);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .timeline-row {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 9px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      margin-top: 7px;
+      border-radius: 999px;
+      background: var(--surface-high);
+    }
+
+    .status-dot.done { background: var(--success); }
+    .status-dot.running { background: var(--warning); animation: pulse 1.1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.82); }
+    }
+
+    .timeline-row strong {
+      display: block;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    .timeline-row span {
+      display: block;
+      margin-top: 2px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .reader {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      background: var(--bg);
+      transform: translateX(104%);
+      transition: transform 260ms ease;
+    }
+
+    .reader.open {
+      transform: translateX(0);
+    }
+
+    .reader-topbar {
+      padding: max(14px, env(safe-area-inset-top)) 14px 10px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg) 92%, transparent);
+      backdrop-filter: blur(18px);
+      z-index: 2;
+    }
+
+    .reader-title-mini {
+      min-width: 0;
+      flex: 1;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 720;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .reader-body {
+      overflow-y: auto;
+      padding: 18px 18px 120px;
+      scrollbar-width: none;
+    }
+
+    .reader-body::-webkit-scrollbar { display: none; }
+
+    .reader-hero {
+      padding: 12px 0 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .reader-hero h1 {
+      margin-top: 8px;
+      font-size: 28px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .reader-hero p {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .tabbar {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 4px;
+      padding: 8px 0;
+      margin: 0 0 12px;
+      background: var(--bg);
+    }
+
+    .tabbar button {
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      min-height: 34px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .tabbar button.active {
+      background: var(--surface-low);
+      color: var(--accent);
+    }
+
+    .reader-panel {
+      display: none;
+      animation: rise 220ms ease;
+    }
+
+    .daily-regenerate-footer {
+      padding: 18px 0 4px;
+      margin-top: 8px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: center;
+    }
+
+    .daily-regenerate-footer .secondary-btn {
+      min-height: 38px;
+      border-radius: 999px;
+      padding: 0 16px;
+      font-size: 13px;
+    }
+
+    .reader-panel.active {
+      display: block;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .article-text p {
+      margin: 0 0 18px;
+      font-size: 16px;
+      line-height: 1.86;
+      letter-spacing: 0;
+    }
+
+    .digest-overview {
+      margin: 14px 0 18px;
+      padding: 16px;
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .digest-overview p {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+      text-align: center;
+    }
+
+    .reader-section-title {
+      margin: 24px 0 14px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      font-size: 24px;
+      line-height: 1.2;
+    }
+
+    .reader-section-title::after {
+      content: "";
+      display: block;
+      width: 38px;
+      height: 4px;
+      border-radius: 999px;
+      margin-top: 10px;
+      background: var(--accent);
+    }
+
+    .source-entry {
+      padding: 16px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .source-entry h3 {
+      font-size: 18px;
+      line-height: 1.48;
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+
+    .source-entry p {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .library-tools {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .library-tools .search {
+      height: 38px;
+    }
+
+    .folder-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .folder-row {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      padding: 13px;
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      gap: 11px;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .folder-row .glyph {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: var(--surface-low);
+      color: var(--accent);
+    }
+
+    .folder-row strong {
+      display: block;
+      font-size: 15px;
+      line-height: 1.3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .folder-row span {
+      display: block;
+      color: var(--faint);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .folder-count {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    .article-text mark {
+      background: color-mix(in srgb, #f0d986 48%, transparent);
+      color: inherit;
+      border-radius: 4px;
+      padding: 0 2px;
+    }
+
+    .outline-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .outline-item {
+      padding: 14px;
+      border-radius: 16px;
+      background: var(--surface);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .outline-item strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 15px;
+    }
+
+    .outline-item p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .note-row {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .note-row blockquote {
+      margin: 0 0 8px;
+      padding-left: 12px;
+      border-left: 3px solid var(--accent);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .note-row p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .bottom-nav {
+      padding: 8px 12px max(10px, env(safe-area-inset-bottom));
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(20px);
+      border-top: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 2px;
+      z-index: 5;
+    }
+
+    .nav-btn {
+      min-width: 0;
+      border: 0;
+      border-radius: 14px;
+      padding: 7px 2px 5px;
+      display: grid;
+      place-items: center;
+      gap: 2px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 11px;
+      line-height: 1.2;
+      font-weight: 730;
+      transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+    }
+
+    .nav-btn .glyph {
+      font-size: 19px;
+      line-height: 1;
+    }
+
+    .nav-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+    }
+
+    .nav-btn:active {
+      transform: scale(0.96);
+    }
+
+    .sheet-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      background: rgba(24, 21, 18, 0.26);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+
+    .sheet-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .sheet {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 21;
+      padding: 10px 18px max(18px, env(safe-area-inset-bottom));
+      background: var(--surface);
+      border-top-left-radius: 26px;
+      border-top-right-radius: 26px;
+      box-shadow: 0 -24px 60px rgba(55, 53, 47, 0.16);
+      transform: translateY(104%);
+      transition: transform 220ms ease;
+    }
+
+    .sheet.open {
+      transform: translateY(0);
+    }
+
+    .grabber {
+      width: 42px;
+      height: 4px;
+      margin: 0 auto 14px;
+      border-radius: 999px;
+      background: var(--surface-high);
+    }
+
+    .sheet h3 {
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    .sheet-actions {
+      display: grid;
+      gap: 8px;
+    }
+
+    .sheet-action {
+      width: 100%;
+      border: 0;
+      border-radius: 16px;
+      padding: 14px;
+      background: var(--surface-low);
+      text-align: left;
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .sheet-action .glyph {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--accent);
+      font-size: 18px;
+    }
+
+    .sheet-action strong {
+      display: block;
+      font-size: 14px;
+      line-height: 1.3;
+    }
+
+    .sheet-action span:last-child {
+      display: block;
+      margin-top: 2px;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .toast {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      bottom: 86px;
+      z-index: 30;
+      min-height: 44px;
+      padding: 11px 14px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--surface);
+      background: color-mix(in srgb, var(--ink) 92%, transparent);
+      box-shadow: var(--shadow-soft);
+      opacity: 0;
+      transform: translateY(14px);
+      pointer-events: none;
+      transition: opacity 180ms ease, transform 180ms ease;
+      font-size: 13px;
+      font-weight: 720;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 520px) {
+      .stage {
+        padding: 0;
+        display: block;
+      }
+
+      .phone {
+        width: 100vw;
+        height: 100vh;
+        min-height: 100vh;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div class="phone" role="application" aria-label="OneRadar 手机端原型">
+      <div class="app">
+        <header class="topbar">
+          <label class="search" aria-label="搜索">
+            <span>⌕</span>
+            <input id="searchInput" type="search" placeholder="搜索每日新闻…" />
+          </label>
+          <button class="topbar-action" id="themeBtn" type="button" aria-label="切换主题">◐</button>
+          <button class="topbar-action" id="sheetBtn" type="button" aria-label="快速操作">＋</button>
+        </header>
+
+        <main class="viewport">
+          <section class="screen active" data-screen="daily">
+            <div class="daily-date-row">
+              <div class="date-strip" aria-label="日期选择">
+                <button class="date-tile" type="button" data-date-mode="ready"><strong>08</strong><span>周五</span></button>
+                <button class="date-tile" type="button" data-date-mode="ready"><strong>09</strong><span>周六</span></button>
+                <button class="date-tile" type="button" data-date-mode="ready"><strong>10</strong><span>周日</span></button>
+                <button class="date-tile" type="button" data-date-mode="ready"><strong>11</strong><span>周一</span></button>
+                <button class="date-tile" type="button" data-date-mode="ready"><strong>12</strong><span>周二</span></button>
+                <button class="date-tile" type="button" data-date-mode="empty"><strong>13</strong><span>周三</span></button>
+                <button class="date-tile active" type="button" data-date-mode="ready"><strong>今</strong><span>周四</span></button>
+              </div>
+              <button class="date-chip" type="button" id="dateBtn">05/14</button>
+            </div>
+
+            <section class="daily-state daily-empty-state" id="dailyEmptyState">
+              <span class="daily-state-icon">▤</span>
+              <div>
+                <h2>这一天还没有日报</h2>
+                <p>可以像桌面版一样手动生成，系统会读取该日期窗口内的订阅源缓存。</p>
+                <button class="primary-btn" type="button" id="generateDailyBtn">生成这一天</button>
+              </div>
+            </section>
+
+            <article class="daily-content" id="dailyContent">
+              <div class="daily-heading">
+                <p class="eyebrow">Daily Brief</p>
+                <h1 class="page-title">每日新闻</h1>
+              </div>
+              <h2 class="reader-section-title">AI 技术新进展</h2>
+              <article class="source-entry open-reader" data-title="字节跳动提出视觉生成新模型 GRN">
+                <h3>字节跳动提出视觉生成新模型 GRN</h3>
+                <p>GRN 开辟了扩散和自回归模型之外的第三条技术路线，能像人类一样边画边改，并根据复杂度自适应调整。</p>
+                <div class="item-meta"><span>量子位 · 公众号</span><span>查看文章 ›</span></div>
+              </article>
+              <article class="source-entry open-reader" data-title="百度发布秒哒 3.0，降低 AI 应用开发门槛">
+                <h3>百度发布秒哒 3.0，降低 AI 应用开发门槛</h3>
+                <p>新版本强调直接生成 iOS 和 Web 应用，适合观察低代码与 Agent 开发工具的融合趋势。</p>
+                <div class="item-meta"><span>机器之心</span><span>查看文章 ›</span></div>
+              </article>
+
+              <h2 class="reader-section-title">AI 产品动态</h2>
+              <article class="source-entry open-reader" data-title="多模态摘要开始成为阅读器标配">
+                <h3>多模态摘要开始成为阅读器标配</h3>
+                <p>阅读器不再只清洗正文，而是把摘要、大纲、证据和原文跳转合并成一个阅读流程。</p>
+                <div class="item-meta"><span>InfoQ</span><span>查看文章 ›</span></div>
+              </article>
+              <div class="daily-regenerate-footer">
+                <button class="secondary-btn" type="button" id="regenerateDailyBtn">重新生成今日日报</button>
+              </div>
+            </article>
+          </section>
+
+          <section class="screen" data-screen="inbox">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Read Later</p>
+                <h1 class="page-title">稍后阅读</h1>
+              </div>
+              <span class="date-chip">12 条</span>
+            </div>
+            <div class="filter-row">
+              <button class="pill active" type="button" data-filter="all">全部</button>
+              <button class="pill" type="button" data-filter="article">文章</button>
+              <button class="pill" type="button" data-filter="video">视频</button>
+              <button class="pill" type="button" data-filter="podcast">播客</button>
+            </div>
+            <div class="inbox-list" id="inboxList">
+              <button class="item-row open-reader" type="button" data-kind="article" data-title="移动端阅读体验应该先做成一个专注空间">
+                <div class="item-meta"><span class="mini-chip">文章</span><span>少数派 · 12 分钟</span></div>
+                <h3>移动端阅读体验应该先做成一个专注空间</h3>
+                <p>列表负责挑选，阅读页负责沉浸，动作留在内容附近，避免把桌面侧栏硬塞到手机上。</p>
+                <div class="progress-line" style="--value: 62%"><i></i></div>
+              </button>
+              <button class="item-row open-reader" type="button" data-kind="video" data-title="Bilibili 长视频的时间戳摘要和跳转">
+                <div class="item-meta"><span class="mini-chip">视频</span><span>Bilibili · 38:20</span></div>
+                <h3>Bilibili 长视频的时间戳摘要和跳转</h3>
+                <p>手机端优先展示 AI 摘要和关键片段，再展开完整转写文本。</p>
+                <div class="progress-line" style="--value: 18%"><i></i></div>
+              </button>
+              <button class="item-row open-reader" type="button" data-kind="podcast" data-title="播客阅读页应该以音频和笔记为核心">
+                <div class="item-meta"><span class="mini-chip">播客</span><span>Acquired · 1:08:12</span></div>
+                <h3>播客阅读页应该以音频和笔记为核心</h3>
+                <p>原文转写不抢首屏，音频、摘要、笔记和时间点先出现。</p>
+                <div class="progress-line" style="--value: 41%"><i></i></div>
+              </button>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="feed">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Sources</p>
+                <h1 class="page-title">订阅源</h1>
+              </div>
+              <button class="date-chip" type="button">刷新</button>
+            </div>
+            <div class="filter-row">
+              <button class="pill active" type="button">今天</button>
+              <button class="pill" type="button">近 7 天</button>
+              <button class="pill" type="button">AI</button>
+              <button class="pill" type="button">开发</button>
+            </div>
+            <div class="feed-list">
+              <button class="item-row compact open-reader" type="button" data-title="RSS 条目在手机上先预览再加入稍后阅读">
+                <div class="item-meta"><span>36Kr · 07:58</span><span class="mini-chip">未读</span></div>
+                <h3>RSS 条目在手机上先预览再加入稍后阅读</h3>
+                <p>轻量预览减少保存噪音，真正值得回看的内容再进入阅读库。</p>
+              </button>
+              <button class="item-row compact open-reader" type="button" data-title="日报生成更适合放在移动首页">
+                <div class="item-meta"><span>InfoQ · 09:21</span><span class="mini-chip">已读</span></div>
+                <h3>日报生成更适合放在移动首页</h3>
+                <p>早上打开手机时，日报比完整订阅源更适合作为默认入口。</p>
+              </button>
+              <button class="item-row compact open-reader" type="button" data-title="自托管服务的移动端入口可以先从 PWA 开始">
+                <div class="item-meta"><span>GitHub · 13:44</span><span class="mini-chip">已保存</span></div>
+                <h3>自托管服务的移动端入口可以先从 PWA 开始</h3>
+                <p>同一套 Web 核心可以先覆盖手机浏览器和桌面壳。</p>
+              </button>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="me">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Account</p>
+                <h1 class="page-title">我</h1>
+              </div>
+              <span class="date-chip">已登录</span>
+            </div>
+            <div class="import-panel">
+              <div class="row">
+                <span class="daily-state-icon">白</span>
+                <div>
+                  <h2 style="font-size:20px;line-height:1.25;margin:0 0 3px">whiteone</h2>
+                  <p style="color:var(--muted);font-size:13px;margin:0">私有部署账号 · 服务器已连接</p>
+                </div>
+              </div>
+            </div>
+            <div class="timeline">
+              <div class="timeline-row">
+                <i class="status-dot done"></i>
+                <div><strong>服务器地址</strong><span>http://192.168.100.55:8081</span></div>
+                <span class="mini-chip">可用</span>
+              </div>
+              <div class="timeline-row">
+                <i class="status-dot done"></i>
+                <div><strong>Bilibili Cookie</strong><span>用于视频字幕、音频和登录态抓取</span></div>
+                <span class="mini-chip">已配置</span>
+              </div>
+              <div class="timeline-row">
+                <i class="status-dot done"></i>
+                <div><strong>模型服务</strong><span>摘要、转写和多模态能力分开配置</span></div>
+                <span class="mini-chip">设置</span>
+              </div>
+              <div class="timeline-row">
+                <i class="status-dot done"></i>
+                <div><strong>主题与阅读</strong><span>跟随系统、字体大小、行宽和缓存</span></div>
+                <span class="mini-chip">设置</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="library">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Archive</p>
+                <h1 class="page-title">知识库</h1>
+              </div>
+              <button class="date-chip" type="button">新建</button>
+            </div>
+            <div class="library-tools">
+              <label class="search" aria-label="搜索收藏夹">
+                <span>⌕</span>
+                <input type="search" placeholder="搜索文件夹或标签" />
+              </label>
+              <button class="topbar-action" type="button">排序</button>
+            </div>
+            <div class="filter-row">
+              <button class="pill active" type="button">全部</button>
+              <button class="pill" type="button">置顶</button>
+              <button class="pill" type="button">最近</button>
+              <button class="pill" type="button">AI</button>
+              <button class="pill" type="button">产品</button>
+              <button class="pill" type="button">视频</button>
+            </div>
+            <div class="folder-list" aria-label="收藏夹列表">
+              <div class="folder-row">
+                <span class="glyph">▧</span>
+                <span><strong>稍后归档 / Inbox 清理</strong><span>最近更新 · 今天 09:18</span></span>
+                <b class="folder-count">31</b>
+              </div>
+              <div class="folder-row">
+                <span class="glyph">▧</span>
+                <span><strong>AI 产品与模型动态</strong><span>3 个子分类 · 端侧模型、Agent、工具</span></span>
+                <b class="folder-count">86</b>
+              </div>
+              <div class="folder-row">
+                <span class="glyph">▧</span>
+                <span><strong>Bilibili 长视频资料</strong><span>按 UP 主和专题继续分组</span></span>
+                <b class="folder-count">24</b>
+              </div>
+              <div class="folder-row">
+                <span class="glyph">▧</span>
+                <span><strong>播客转写与节目笔记</strong><span>音频、摘要、时间点</span></span>
+                <b class="folder-count">18</b>
+              </div>
+            </div>
+            <div class="inbox-list">
+              <button class="item-row open-reader" type="button" data-title="端侧模型资料夹">
+                <div class="item-meta"><span class="mini-chip">收藏夹</span><span>23 条内容</span></div>
+                <h3>端侧模型资料夹</h3>
+                <p>手机系统层、端侧推理、离线摘要和个人知识库相关材料。</p>
+              </button>
+              <button class="item-row open-reader" type="button" data-title="阅读器交互参考">
+                <div class="item-meta"><span class="mini-chip">收藏夹</span><span>17 条内容</span></div>
+                <h3>阅读器交互参考</h3>
+                <p>高亮、笔记、进度、时间戳跳转和长文排版。</p>
+              </button>
+            </div>
+          </section>
+
+          <aside class="reader" id="reader" aria-hidden="true">
+            <header class="reader-topbar">
+              <button class="icon-btn" id="closeReader" type="button" aria-label="返回">‹</button>
+              <div class="reader-title-mini" id="readerMiniTitle">阅读</div>
+              <button class="icon-btn" id="highlightBtn" type="button" aria-label="高亮">⌁</button>
+              <button class="icon-btn" id="moreReaderBtn" type="button" aria-label="更多">⋯</button>
+            </header>
+            <div class="reader-body">
+              <article class="reader-hero">
+                <div class="item-meta"><span class="mini-chip">UID 8F42-C1</span><span>阅读进度 42%</span></div>
+                <h1 id="readerTitle">端侧模型开始进入手机系统层</h1>
+                <p>这里模拟普通条目的移动阅读页，用来查看从日报、订阅源、稍后阅读进入的单篇内容。</p>
+              </article>
+              <section class="article-text">
+                <p>移动端不是把桌面页面压窄，而是重新排列同一套信息结构。OneRadar 的手机入口应该让用户先看到今天值得处理的内容，再进入稍后阅读和知识库。</p>
+                <p>在阅读页里，标题、来源、摘要和进度是首屏信息。高亮、笔记、加入收藏夹等动作需要靠近正文，但不应该长期占用阅读区域。</p>
+                <p><mark>最重要的差异是导航模型。</mark>桌面可以承载侧边栏和多列布局，手机更适合底部导航、全屏阅读和短暂出现的操作面板。</p>
+                <p>这个原型保留了 OneRadar 当前的中文优先、低 chrome、暖中性色和阅读库气质，同时把交互收敛为手机上可触摸的形态。</p>
+              </section>
+            </div>
+          </aside>
+        </main>
+
+        <nav class="bottom-nav" aria-label="主导航">
+          <button class="nav-btn active" type="button" data-target="daily"><span class="glyph">▤</span><span>日报</span></button>
+          <button class="nav-btn" type="button" data-target="inbox"><span class="glyph">▥</span><span>稍后</span></button>
+          <button class="nav-btn" type="button" data-target="feed"><span class="glyph">◌</span><span>订阅</span></button>
+          <button class="nav-btn" type="button" data-target="library"><span class="glyph">▧</span><span>知识库</span></button>
+          <button class="nav-btn" type="button" data-target="me"><span class="glyph">◎</span><span>我</span></button>
+        </nav>
+      </div>
+
+      <div class="sheet-backdrop" id="sheetBackdrop"></div>
+      <section class="sheet" id="sheet" aria-hidden="true">
+        <div class="grabber"></div>
+        <h3>快速操作</h3>
+        <div class="sheet-actions">
+          <button class="sheet-action" type="button" data-sheet-action="import">
+            <span class="glyph">＋</span>
+            <span><strong>粘贴链接</strong><span>文章、视频或播客单集进入稍后阅读</span></span>
+          </button>
+          <button class="sheet-action" type="button" data-sheet-action="refresh">
+            <span class="glyph">↻</span>
+            <span><strong>刷新订阅源</strong><span>读取已保存 RSS 源的最新条目</span></span>
+          </button>
+          <button class="sheet-action" type="button" data-sheet-action="note">
+            <span class="glyph">⌁</span>
+            <span><strong>新建笔记</strong><span>保存当前阅读想法到知识库</span></span>
+          </button>
+        </div>
+      </section>
+      <div class="toast" id="toast">已完成</div>
+    </div>
+  </div>
+
+  <script>
+    const labels = {
+      daily: ["Daily Brief", "搜索每日新闻…"],
+      inbox: ["Read Later", "搜索稍后阅读…"],
+      feed: ["Sources", "搜索订阅源…"],
+      library: ["Archive", "搜索知识库…"],
+      me: ["Account", "搜索设置…"]
+    };
+
+    const screens = [...document.querySelectorAll(".screen")];
+    const navButtons = [...document.querySelectorAll(".nav-btn")];
+    const searchInput = document.getElementById("searchInput");
+    const reader = document.getElementById("reader");
+    const readerTitle = document.getElementById("readerTitle");
+    const readerMiniTitle = document.getElementById("readerMiniTitle");
+    const sheet = document.getElementById("sheet");
+    const sheetBackdrop = document.getElementById("sheetBackdrop");
+    const toast = document.getElementById("toast");
+    const dailyEmptyState = document.getElementById("dailyEmptyState");
+    const dailyContent = document.getElementById("dailyContent");
+    const dateBtn = document.getElementById("dateBtn");
+    let toastTimer = null;
+    let activeScreen = "daily";
+
+    function showToast(message) {
+      window.clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add("show");
+      toastTimer = window.setTimeout(() => toast.classList.remove("show"), 1800);
+    }
+
+    function setScreen(name) {
+      if (name === activeScreen) return;
+      const currentIndex = screens.findIndex((screen) => screen.dataset.screen === activeScreen);
+      const nextIndex = screens.findIndex((screen) => screen.dataset.screen === name);
+      screens.forEach((screen) => {
+        screen.classList.toggle("active", screen.dataset.screen === name);
+        screen.classList.toggle("leaving-left", screen.dataset.screen !== name && nextIndex > currentIndex);
+      });
+      navButtons.forEach((button) => button.classList.toggle("active", button.dataset.target === name));
+      searchInput.placeholder = labels[name][1];
+      searchInput.value = "";
+      activeScreen = name;
+    }
+
+    function openReader(title, mode) {
+      readerTitle.textContent = title;
+      readerMiniTitle.textContent = title;
+      reader.classList.toggle("daily-mode", mode === "daily");
+      reader.classList.add("open");
+      reader.setAttribute("aria-hidden", "false");
+    }
+
+    function closeReader() {
+      reader.classList.remove("open");
+      reader.setAttribute("aria-hidden", "true");
+    }
+
+    function toggleSheet(force) {
+      const open = typeof force === "boolean" ? force : !sheet.classList.contains("open");
+      sheet.classList.toggle("open", open);
+      sheetBackdrop.classList.toggle("open", open);
+      sheet.setAttribute("aria-hidden", String(!open));
+    }
+
+    function setDailyState(state) {
+      const empty = state === "empty";
+      dailyContent.classList.toggle("hide", empty);
+      dailyEmptyState.classList.toggle("show", empty);
+      dateBtn.textContent = empty ? "05/13" : "05/14";
+    }
+
+    navButtons.forEach((button) => {
+      button.addEventListener("click", () => setScreen(button.dataset.target));
+    });
+
+    document.querySelectorAll(".open-reader").forEach((item) => {
+      item.addEventListener("click", () => openReader(item.dataset.title || item.textContent.trim(), item.dataset.mode));
+    });
+
+    document.getElementById("closeReader").addEventListener("click", closeReader);
+    document.getElementById("sheetBtn").addEventListener("click", () => toggleSheet());
+    sheetBackdrop.addEventListener("click", () => toggleSheet(false));
+
+    document.querySelectorAll("[data-filter]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const filter = button.dataset.filter;
+        document.querySelectorAll("[data-filter]").forEach((candidate) => candidate.classList.toggle("active", candidate === button));
+        document.querySelectorAll("#inboxList .item-row").forEach((row) => {
+          row.style.display = filter === "all" || row.dataset.kind === filter ? "" : "none";
+        });
+      });
+    });
+
+    searchInput.addEventListener("input", () => {
+      const keyword = searchInput.value.trim().toLowerCase();
+      const active = document.querySelector(`.screen[data-screen="${activeScreen}"]`);
+      active.querySelectorAll(".item-row, .brief-item, .source-entry, .folder-row, .timeline-row").forEach((row) => {
+        row.style.display = row.textContent.toLowerCase().includes(keyword) ? "" : "none";
+      });
+    });
+
+    document.getElementById("themeBtn").addEventListener("click", () => {
+      const dark = document.documentElement.dataset.theme !== "dark";
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      showToast(dark ? "已切换到深色" : "已切换到浅色");
+    });
+
+    document.getElementById("highlightBtn").addEventListener("click", () => {
+      showToast("已模拟创建高亮");
+    });
+
+    document.getElementById("moreReaderBtn").addEventListener("click", () => {
+      toggleSheet(true);
+    });
+
+    document.querySelectorAll(".date-tile").forEach((tile) => {
+      tile.addEventListener("click", () => {
+        document.querySelectorAll(".date-tile").forEach((candidate) => candidate.classList.toggle("active", candidate === tile));
+        setDailyState(tile.dataset.dateMode === "empty" ? "empty" : "ready");
+      });
+    });
+
+    dateBtn.addEventListener("click", () => {
+      showToast("点击日期格可切换已生成 / 未生成状态");
+    });
+
+    document.getElementById("generateDailyBtn").addEventListener("click", () => {
+      showToast("正在模拟生成日报…");
+      window.setTimeout(() => {
+        document.querySelectorAll(".date-tile").forEach((candidate) => candidate.classList.remove("active"));
+        document.querySelector('.date-tile[data-date-mode="empty"]').classList.add("active");
+        setDailyState("ready");
+        dateBtn.textContent = "05/13";
+        showToast("日报已生成");
+      }, 800);
+    });
+
+    document.getElementById("regenerateDailyBtn").addEventListener("click", () => {
+      showToast("已模拟重新生成今日日报");
+    });
+
+    document.querySelectorAll("[data-sheet-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const action = button.dataset.sheetAction;
+        toggleSheet(false);
+        if (action === "import") showToast("正式版这里会弹出统一链接导入面板");
+        if (action === "refresh") showToast("订阅源已模拟刷新");
+        if (action === "note") showToast("已模拟新建笔记");
+      });
+    });
+  </script>
+</body>
+</html>

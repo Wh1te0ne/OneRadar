@@ -73,6 +73,7 @@ Implications:
 - Reuse business logic and page structure where possible.
 - Do not overfit interaction design to desktop-only assumptions.
 - Keep native-shell integrations isolated from core UI logic.
+- Mobile Web/PWA surfaces are responsive shells over the same React client, API client, auth state, and backend data. They may reorganize navigation and reading layout for phone ergonomics, but they must not introduce a separate mobile-only backend, import path, settings store, or content model.
 
 ## Required Repo Structure
 
