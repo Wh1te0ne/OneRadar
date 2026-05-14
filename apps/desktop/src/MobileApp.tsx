@@ -575,12 +575,6 @@ function flattenFeeds(feeds: Record<string, ApiFeedPreviewResponse>) {
     .sort((a, b) => Date.parse(b.published_at || "") - Date.parse(a.published_at || ""));
 }
 
-function feedSourceStatusLabel(source: ApiFeedSourceEntry) {
-  if (source.last_refresh_status === "failed") return "刷新失败";
-  if (source.last_refresh_status === "ok") return "正常";
-  return "已订阅";
-}
-
 function MobileFeedPage() {
   const { apiBaseUrl } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
@@ -590,6 +584,10 @@ function MobileFeedPage() {
   const [sources, setSources] = useState<ApiFeedSourceEntry[]>([]);
   const [entries, setEntries] = useState<FeedEntry[]>([]);
   const [selectedSource, setSelectedSource] = useState<string>("all");
+  const [showAddSource, setShowAddSource] = useState(false);
+  const [rssUrl, setRssUrl] = useState("");
+  const [addingSource, setAddingSource] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -633,6 +631,34 @@ function MobileFeedPage() {
     }
   }
 
+  async function addFeedSource() {
+    const targetUrl = rssUrl.trim();
+    if (!targetUrl) {
+      setSourceError("请先粘贴 RSS 源地址。");
+      return;
+    }
+    setAddingSource(true);
+    setSourceError(null);
+    try {
+      const preview = await client.getFeedPreview(targetUrl, 0);
+      const state = await client.cacheFeedPreview(preview);
+      setSources(state.sources);
+      setEntries(flattenFeeds(state.feeds));
+      setSelectedSource(preview.source_url);
+      setRssUrl("");
+      setShowAddSource(false);
+      dispatchToast(`已添加订阅源：${preview.site_title || compactSource(preview.source_url)}`, "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "RSS 读取失败";
+      setSourceError(message);
+      void client.markFeedSourceError(targetUrl, message).catch(() => {
+        // The visible error is enough for the mobile add flow.
+      });
+    } finally {
+      setAddingSource(false);
+    }
+  }
+
   const sourceStats = sources.map((source) => {
     const sourceEntries = entries.filter((entry) => entry.sourceUrl === source.source_url);
     const latestEntry = sourceEntries[0];
@@ -651,55 +677,40 @@ function MobileFeedPage() {
     <section className="mobile-screen">
       <div className="mobile-section-title mobile-title-row">
         <div>
-          <p>Subscriptions</p>
           <h1>订阅</h1>
+          <span className="mobile-feed-count">{sources.length} 个来源 · {entries.length} 篇更新</span>
         </div>
-        <button type="button" className="mobile-secondary-btn" disabled={refreshing} onClick={() => void refresh()}>
-          {refreshing ? "刷新中" : "刷新"}
-        </button>
+        <div className="mobile-title-actions">
+          <button type="button" className="mobile-topbar-btn" aria-label="新增订阅源" onClick={() => { setShowAddSource(true); setSourceError(null); }}>
+            <MobileIcon name="add" />
+          </button>
+          <button type="button" className="mobile-secondary-btn" disabled={refreshing} onClick={() => void refresh()}>
+            {refreshing ? "刷新中" : "刷新"}
+          </button>
+        </div>
       </div>
       {loading ? (
         <div className="mobile-empty">正在加载订阅更新…</div>
       ) : (
         <>
-          <div className="mobile-feed-overview mobile-setting-card">
-            <div className="mobile-setting-line">
-              <strong>订阅源</strong>
-              <span>{sources.length} 个来源 · {entries.length} 篇更新</span>
-            </div>
-            <button type="button" className={`mobile-source-row ${selectedSource === "all" ? "active" : ""}`} onClick={() => setSelectedSource("all")}>
-              <div className="mobile-source-mark">
-                <MobileIcon name="layers" />
-              </div>
-              <div>
-                <strong>全部订阅</strong>
-                <span>按发布时间汇总所有来源</span>
-              </div>
+          <div className="mobile-source-strip mobile-feed-filter-rail">
+            <button type="button" className={`mobile-source-chip ${selectedSource === "all" ? "active" : ""}`} onClick={() => setSelectedSource("all")}>
+              <span>全部</span>
               <em>{entries.length}</em>
             </button>
             {sourceStats.map((source) => (
-              <button key={source.source_url} type="button" className={`mobile-source-row ${selectedSource === source.source_url ? "active" : ""}`} onClick={() => setSelectedSource(source.source_url)}>
-                <div className="mobile-source-mark">
-                  <MobileIcon name="rss_feed" />
-                </div>
-                <div>
-                  <strong>{source.site_title || compactSource(source.source_url)}</strong>
-                  <span>
-                    {feedSourceStatusLabel(source)}
-                    {" · "}
-                    {source.latestEntry ? displayTime(source.latestEntry.published_at) : displayTime(source.last_refreshed_at || source.last_loaded_at)}
-                  </span>
-                </div>
+              <button key={source.source_url} type="button" className={`mobile-source-chip ${selectedSource === source.source_url ? "active" : ""}`} onClick={() => setSelectedSource(source.source_url)}>
+                <span>{source.site_title || compactSource(source.source_url)}</span>
                 <em>{source.entryCount}</em>
               </button>
             ))}
           </div>
 
-          <div className="mobile-library-header">
+          <div className="mobile-library-header mobile-feed-heading">
             <strong>最新更新</strong>
             <span>{selectedSourceTitle}</span>
           </div>
-          <div className="mobile-feed-list">
+          <div className="mobile-feed-list mobile-reader-feed-list">
             {visibleEntries.length === 0 && <div className="mobile-empty">还没有订阅更新</div>}
             {visibleEntries.map((entry) => (
               <button key={`${entry.sourceUrl}-${entry.id || entry.link}`} type="button" className="mobile-feed-row" onClick={() => navigate(feedArticlePreviewPath(entry))}>
@@ -710,6 +721,30 @@ function MobileFeedPage() {
             ))}
           </div>
         </>
+      )}
+      {showAddSource && (
+        <div className="mobile-sheet-backdrop" onClick={() => setShowAddSource(false)}>
+          <div className="mobile-quick-sheet" onClick={(event) => event.stopPropagation()}>
+            <h2>新增订阅源</h2>
+            <p>粘贴 RSS 地址，添加后会和桌面端使用同一套订阅数据。</p>
+            <label>
+              <span>RSS 地址</span>
+              <input
+                value={rssUrl}
+                onChange={(event) => setRssUrl(event.target.value)}
+                placeholder="https://example.com/feed.xml"
+                autoFocus
+              />
+            </label>
+            {sourceError && <div className="mobile-alert">{sourceError}</div>}
+            <div className="mobile-sheet-actions">
+              <button type="button" className="mobile-primary-btn" disabled={addingSource} onClick={() => void addFeedSource()}>
+                {addingSource ? "读取中" : "添加并查看"}
+              </button>
+              <button type="button" className="mobile-text-btn" disabled={addingSource} onClick={() => setShowAddSource(false)}>取消</button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );
