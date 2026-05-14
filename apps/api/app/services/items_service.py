@@ -1277,14 +1277,6 @@ def list_items(
                     .order_by(ContentItem.created_at.desc())
                 ).scalars()
             )
-            expired_deleted = [item for item in items if _is_expired_deleted_item(item)]
-            for item in expired_deleted:
-                _remove_audio_artifact(item.raw_meta)
-                session.delete(item)
-            if expired_deleted:
-                session.commit()
-                items = [item for item in items if item not in expired_deleted]
-
             items = [item for item in items if not _is_deleted_item(item)]
             items = _filtered_items(items, folder_id, inbox_only)
             items = [
@@ -1471,9 +1463,6 @@ def get_item(item_id: str) -> ItemDetailResponse:
             ).scalar_one_or_none()
             if item is not None:
                 if _is_expired_deleted_item(item):
-                    _remove_audio_artifact(item.raw_meta)
-                    session.delete(item)
-                    session.commit()
                     raise ValueError("item not found")
                 if _is_deleted_item(item):
                     raise ValueError("item not found")
@@ -1719,14 +1708,7 @@ def list_deleted_items(page: int, page_size: int) -> ItemListResponse:
                     .order_by(ContentItem.updated_at.desc())
                 ).scalars()
             )
-            expired_deleted = [item for item in items if _is_expired_deleted_item(item)]
-            for item in expired_deleted:
-                _remove_audio_artifact(item.raw_meta)
-                session.delete(item)
-            if expired_deleted:
-                session.commit()
-                items = [item for item in items if item not in expired_deleted]
-            items = [item for item in items if _is_deleted_item(item)]
+            items = [item for item in items if _is_deleted_item(item) and not _is_expired_deleted_item(item)]
             start = (page - 1) * page_size
             end = start + page_size
             return ItemListResponse(
