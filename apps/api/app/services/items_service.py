@@ -121,11 +121,7 @@ def _trash_expires_at(deleted_at: datetime | None) -> datetime | None:
 
 
 def _is_deleted_meta(raw_meta: dict[str, object] | None) -> bool:
-    deleted_at = _deleted_at_from_meta(raw_meta)
-    if deleted_at is None:
-        return False
-    expires_at = _trash_expires_at(deleted_at)
-    return expires_at is None or expires_at > now_utc()
+    return _deleted_at_from_meta(raw_meta) is not None
 
 
 def _is_deleted_item(item: ContentItem) -> bool:
@@ -139,9 +135,7 @@ def _is_expired_deleted_item(item: ContentItem) -> bool:
 
 
 def _is_deleted_store_record(record: dict[str, object]) -> bool:
-    deleted_at = _parse_datetime(record.get("deleted_at"))
-    expires_at = _trash_expires_at(deleted_at)
-    return deleted_at is not None and (expires_at is None or expires_at > now_utc())
+    return _parse_datetime(record.get("deleted_at")) is not None
 
 
 def _is_expired_deleted_store_record(record: dict[str, object]) -> bool:
