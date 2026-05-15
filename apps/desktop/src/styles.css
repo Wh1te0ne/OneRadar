@@ -4112,6 +4112,13 @@ button, input, select, textarea { font: inherit; }
   font-family: var(--mobile-sans);
 }
 
+@supports (height: 100dvh) {
+  .mobile-app {
+    min-height: 100dvh;
+    height: 100dvh;
+  }
+}
+
 .mobile-topbar {
   flex: 0 0 auto;
   display: flex;
@@ -4168,12 +4175,13 @@ button, input, select, textarea { font: inherit; }
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-bottom: calc(78px + env(safe-area-inset-bottom));
+  padding-bottom: calc(118px + env(safe-area-inset-bottom));
+  scroll-padding-bottom: calc(118px + env(safe-area-inset-bottom));
   -webkit-overflow-scrolling: touch;
 }
 
 .mobile-screen {
-  padding: 0 14px 22px;
+  padding: 0 14px 44px;
 }
 
 .mobile-section-title {
