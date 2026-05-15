@@ -370,7 +370,7 @@ function MobileItemList({ items, emptyText }: { items: ApiItemSummary[]; emptyTe
               <span>{displayTime(item.updated_at || item.created_at)}</span>
             </div>
             <h3>{item.title || compactSource(item.source_url)}</h3>
-            <p>{item.summary || compactSource(item.source_url)}</p>
+            <p>{compactSource(item.source_url)}</p>
             <div className="mobile-item-footer">
               <span>{item.folder_name}</span>
               <span>{item.is_read ? "已读" : "未读"}</span>
@@ -407,7 +407,7 @@ function MobileInboxItemRow({
               <span>{displayTime(item.updated_at || item.created_at)}</span>
             </div>
             <h3>{item.title || compactSource(item.source_url)}</h3>
-            <p>{item.summary || compactSource(item.source_url)}</p>
+            <p>{compactSource(item.source_url)}</p>
             <div className="mobile-item-footer">
               <span>{item.folder_name}</span>
               <span>{item.is_read ? "已读" : "未读"}</span>
