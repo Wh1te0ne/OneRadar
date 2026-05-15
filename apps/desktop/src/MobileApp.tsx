@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { createApiClient } from "./api";
@@ -207,13 +207,20 @@ function MobileBottomNav() {
 
 function MobileDateStrip({ selectedDate, onSelect }: { selectedDate: string; onSelect: (date: string) => void }) {
   const dates = Array.from({ length: 7 }, (_, index) => shiftDate(todayDate(), index - 6));
+  const stripRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const active = stripRef.current?.querySelector<HTMLButtonElement>(`[data-date="${selectedDate}"]`);
+    active?.scrollIntoView({ block: "nearest", inline: "end" });
+  }, [selectedDate]);
+
   return (
-    <div className="mobile-date-strip" aria-label="日报日期">
+    <div ref={stripRef} className="mobile-date-strip" aria-label="日报日期">
       <div className="mobile-date-track">
         {dates.map((date) => {
           const selected = date === selectedDate;
           return (
-            <button key={date} type="button" className={`mobile-date-tile ${selected ? "active" : ""}`} onClick={() => onSelect(date)}>
+            <button key={date} type="button" data-date={date} className={`mobile-date-tile ${selected ? "active" : ""}`} onClick={() => onSelect(date)}>
               <strong>{date === todayDate() ? "今" : displayDay(date)}</strong>
               <span>{displayWeekday(date)}</span>
             </button>
@@ -597,6 +604,19 @@ function MobileFeedPage() {
     setEntries(flattenFeeds(state.feeds));
   }
 
+  async function refresh(options?: { silent?: boolean }) {
+    if (!options?.silent) setRefreshing(true);
+    try {
+      await client.refreshFeeds();
+      await loadState();
+      if (!options?.silent) dispatchToast("订阅源已刷新", "success");
+    } catch (error) {
+      if (!options?.silent) dispatchToast(error instanceof Error ? error.message : "刷新失败", "error");
+    } finally {
+      if (!options?.silent) setRefreshing(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -605,6 +625,9 @@ function MobileFeedPage() {
         if (cancelled) return;
         setSources(state.sources);
         setEntries(flattenFeeds(state.feeds));
+        if (state.sources.length > 0) {
+          void refresh({ silent: true });
+        }
       })
       .catch(() => {
         if (!cancelled) {
@@ -616,20 +639,8 @@ function MobileFeedPage() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client]);
-
-  async function refresh() {
-    setRefreshing(true);
-    try {
-      await client.refreshFeeds();
-      await loadState();
-      dispatchToast("订阅源已刷新", "success");
-    } catch (error) {
-      dispatchToast(error instanceof Error ? error.message : "刷新失败", "error");
-    } finally {
-      setRefreshing(false);
-    }
-  }
 
   async function addFeedSource() {
     const targetUrl = rssUrl.trim();

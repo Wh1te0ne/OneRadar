@@ -107,7 +107,7 @@ export function FeedPage() {
   const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>({});
   const [readEntries, setReadEntries] = useState<Set<string>>(new Set());
   const [serverHydrated, setServerHydrated] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -133,6 +133,9 @@ export function FeedPage() {
         setFeeds(state.feeds);
         setSavedSources(serverSources);
         setReadEntries(new Set(state.read_entries));
+        if (serverSources.length > 0) {
+          void refreshSources(serverSources, { background: true });
+        }
       })
       .catch((nextError) => {
         setError(nextError instanceof Error ? nextError.message : "订阅源状态读取失败");
@@ -211,14 +214,14 @@ export function FeedPage() {
     }
   }
 
-  async function refreshSources(sources = savedSources) {
+  async function refreshSources(sources = savedSources, options?: { background?: boolean }) {
     const nextSources = sources;
     if (nextSources.length === 0) {
       setError(null);
       setImportMessage(null);
       return;
     }
-    setLoading(true);
+    if (!options?.background) setLoading(true);
     setError(null);
     setImportMessage(null);
     const results = await Promise.allSettled(nextSources.map((source) => fetchFeed(source.sourceUrl)));
@@ -248,15 +251,8 @@ export function FeedPage() {
       const reason = firstFailure?.reason instanceof Error ? firstFailure.reason.message : "RSS 读取失败";
       setError(`${failedCount} 个订阅源读取失败，已显示其余可用内容。原因：${reason}`);
     }
-    setLoading(false);
+    if (!options?.background) setLoading(false);
   }
-
-  useEffect(() => {
-    if (serverHydrated && Object.keys(feeds).length === 0 && savedSources.length > 0) {
-      void refreshSources(savedSources);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverHydrated, savedSources.length]);
 
   useEffect(() => {
     if (!sourceParam) return;
