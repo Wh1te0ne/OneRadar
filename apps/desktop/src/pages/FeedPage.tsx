@@ -26,6 +26,15 @@ type FeedEntry = ApiFeedPreviewItem & {
   sourceDescription?: string | null;
 };
 
+type FeedPageSnapshot = {
+  apiBaseUrl: string;
+  savedSources: SavedFeedSource[];
+  feeds: Record<string, ApiFeedPreviewResponse>;
+  readEntries: string[];
+};
+
+let feedPageSnapshot: FeedPageSnapshot | null = null;
+
 function formatPublishedAt(value?: string | null) {
   if (!value) return "未知时间";
   const date = new Date(value);
@@ -98,16 +107,17 @@ export function FeedPage() {
   const navigate = useNavigate();
   const { apiBaseUrl } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
+  const cachedSnapshot = feedPageSnapshot?.apiBaseUrl === apiBaseUrl ? feedPageSnapshot : null;
 
   const [filter, setFilter] = useState<FeedFilter>("week");
   const [selectedSource, setSelectedSource] = useState<SelectedSource>("all");
   const [showAddRss, setShowAddRss] = useState(false);
-  const [savedSources, setSavedSources] = useState<SavedFeedSource[]>([]);
+  const [savedSources, setSavedSources] = useState<SavedFeedSource[]>(cachedSnapshot?.savedSources ?? []);
   const [rssUrl, setRssUrl] = useState("");
-  const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>({});
-  const [readEntries, setReadEntries] = useState<Set<string>>(new Set());
+  const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>(cachedSnapshot?.feeds ?? {});
+  const [readEntries, setReadEntries] = useState<Set<string>>(() => new Set(cachedSnapshot?.readEntries ?? []));
   const [serverHydrated, setServerHydrated] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cachedSnapshot);
   const [error, setError] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -143,12 +153,23 @@ export function FeedPage() {
       .finally(() => {
         if (!cancelled) {
           setServerHydrated(true);
+          setLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
   }, [client]);
+
+  useEffect(() => {
+    if (!serverHydrated && savedSources.length === 0 && Object.keys(feeds).length === 0) return;
+    feedPageSnapshot = {
+      apiBaseUrl,
+      savedSources,
+      feeds,
+      readEntries: Array.from(readEntries),
+    };
+  }, [apiBaseUrl, feeds, readEntries, savedSources, serverHydrated]);
 
   async function fetchFeed(targetUrl: string) {
     const url = targetUrl.trim();
@@ -355,6 +376,8 @@ export function FeedPage() {
   const weekCount = sourceEntries.filter((item) => isRecent(item.published_at)).length;
   const selectedFeed = selectedSource === "all" ? null : feeds[selectedSource];
   const selectedSourceLabel = selectedFeed?.site_title ?? savedSources.find((source) => source.sourceUrl === selectedSource)?.siteTitle ?? "全部订阅源";
+  const hasFeedSnapshot = serverHydrated || savedSources.length > 0 || Object.keys(feeds).length > 0;
+  const countLabel = (count: number) => (hasFeedSnapshot ? String(count) : "…");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -377,10 +400,10 @@ export function FeedPage() {
           </div>
           <div className="podcast-tabbar">
             {([
-              ["today", "今天", todayCount],
-              ["week", "近 7 天", weekCount],
-              ["all", "全部", sourceEntries.length],
-            ] as [FeedFilter, string, number][]).map(([value, label, count]) => (
+              ["today", "今天", countLabel(todayCount)],
+              ["week", "近 7 天", countLabel(weekCount)],
+              ["all", "全部", countLabel(sourceEntries.length)],
+            ] as [FeedFilter, string, string][]).map(([value, label, count]) => (
               <button
                 key={value}
                 type="button"
@@ -493,7 +516,7 @@ export function FeedPage() {
           >
             <span className="source-item-icon icon icon-sm">dynamic_feed</span>
             <span className="source-item-title">全部订阅源</span>
-            <span className="source-item-count">{allEntries.length}</span>
+            <span className="source-item-count">{countLabel(allEntries.length)}</span>
           </button>
           {savedSources.map((source) => {
             const loadedFeed = feeds[source.sourceUrl];

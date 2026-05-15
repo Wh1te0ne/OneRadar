@@ -26,6 +26,14 @@ type FeedEntry = ApiFeedPreviewItem & {
   sourceTitle: string;
 };
 
+type MobileFeedSnapshot = {
+  apiBaseUrl: string;
+  sources: ApiFeedSourceEntry[];
+  entries: FeedEntry[];
+};
+
+let mobileFeedSnapshot: MobileFeedSnapshot | null = null;
+
 const DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 
@@ -588,14 +596,15 @@ function MobileFeedPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const keyword = (searchParams.get("q") ?? "").trim().toLowerCase();
-  const [sources, setSources] = useState<ApiFeedSourceEntry[]>([]);
-  const [entries, setEntries] = useState<FeedEntry[]>([]);
+  const cachedSnapshot = mobileFeedSnapshot?.apiBaseUrl === apiBaseUrl ? mobileFeedSnapshot : null;
+  const [sources, setSources] = useState<ApiFeedSourceEntry[]>(cachedSnapshot?.sources ?? []);
+  const [entries, setEntries] = useState<FeedEntry[]>(cachedSnapshot?.entries ?? []);
   const [selectedSource, setSelectedSource] = useState<string>("all");
   const [showAddSource, setShowAddSource] = useState(false);
   const [rssUrl, setRssUrl] = useState("");
   const [addingSource, setAddingSource] = useState(false);
   const [sourceError, setSourceError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cachedSnapshot);
   const [refreshing, setRefreshing] = useState(false);
 
   async function loadState() {
@@ -619,7 +628,7 @@ function MobileFeedPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    setLoading(!cachedSnapshot);
     client.getFeedState()
       .then((state) => {
         if (cancelled) return;
@@ -641,6 +650,15 @@ function MobileFeedPage() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client]);
+
+  useEffect(() => {
+    if (loading && sources.length === 0 && entries.length === 0) return;
+    mobileFeedSnapshot = {
+      apiBaseUrl,
+      sources,
+      entries,
+    };
+  }, [apiBaseUrl, entries, loading, sources]);
 
   async function addFeedSource() {
     const targetUrl = rssUrl.trim();
@@ -683,13 +701,16 @@ function MobileFeedPage() {
     if (!keyword) return true;
     return `${entry.title} ${entry.summary ?? ""} ${entry.sourceTitle}`.toLowerCase().includes(keyword);
   });
+  const feedCountLabel = loading && sources.length === 0 && entries.length === 0
+    ? "正在读取订阅…"
+    : `${sources.length} 个来源 · ${entries.length} 篇更新`;
 
   return (
     <section className="mobile-screen">
       <div className="mobile-section-title mobile-title-row">
         <div>
           <h1>订阅</h1>
-          <span className="mobile-feed-count">{sources.length} 个来源 · {entries.length} 篇更新</span>
+          <span className="mobile-feed-count">{feedCountLabel}</span>
         </div>
         <div className="mobile-title-actions">
           <button type="button" className="mobile-topbar-btn" aria-label="新增订阅源" onClick={() => { setShowAddSource(true); setSourceError(null); }}>
