@@ -32,7 +32,42 @@ type MobileFeedSnapshot = {
   entries: FeedEntry[];
 };
 
+const MOBILE_FEED_SNAPSHOT_KEY = "oneradar.mobile.feed.snapshot.v1";
+
 let mobileFeedSnapshot: MobileFeedSnapshot | null = null;
+
+function parseStoredMobileFeedSnapshot(apiBaseUrl: string): MobileFeedSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(MOBILE_FEED_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<MobileFeedSnapshot>;
+    if (
+      parsed.apiBaseUrl !== apiBaseUrl ||
+      !Array.isArray(parsed.sources) ||
+      !Array.isArray(parsed.entries)
+    ) {
+      return null;
+    }
+    return {
+      apiBaseUrl: parsed.apiBaseUrl,
+      sources: parsed.sources,
+      entries: parsed.entries,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function rememberMobileFeedSnapshot(snapshot: MobileFeedSnapshot) {
+  mobileFeedSnapshot = snapshot;
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(MOBILE_FEED_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {
+    // A transient UI snapshot is optional; API state remains the source of truth.
+  }
+}
 
 const DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
@@ -596,7 +631,7 @@ function MobileFeedPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const keyword = (searchParams.get("q") ?? "").trim().toLowerCase();
-  const cachedSnapshot = mobileFeedSnapshot?.apiBaseUrl === apiBaseUrl ? mobileFeedSnapshot : null;
+  const cachedSnapshot = mobileFeedSnapshot?.apiBaseUrl === apiBaseUrl ? mobileFeedSnapshot : parseStoredMobileFeedSnapshot(apiBaseUrl);
   const [sources, setSources] = useState<ApiFeedSourceEntry[]>(cachedSnapshot?.sources ?? []);
   const [entries, setEntries] = useState<FeedEntry[]>(cachedSnapshot?.entries ?? []);
   const [selectedSource, setSelectedSource] = useState<string>("all");
@@ -606,11 +641,13 @@ function MobileFeedPage() {
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!cachedSnapshot);
   const [refreshing, setRefreshing] = useState(false);
+  const [initialBackgroundRefresh, setInitialBackgroundRefresh] = useState(false);
 
   async function loadState() {
     const state = await client.getFeedState();
+    const nextEntries = flattenFeeds(state.feeds);
     setSources(state.sources);
-    setEntries(flattenFeeds(state.feeds));
+    setEntries(nextEntries);
   }
 
   async function refresh(options?: { silent?: boolean }) {
@@ -632,16 +669,27 @@ function MobileFeedPage() {
     client.getFeedState()
       .then((state) => {
         if (cancelled) return;
+        const nextEntries = flattenFeeds(state.feeds);
         setSources(state.sources);
-        setEntries(flattenFeeds(state.feeds));
+        setEntries((current) => {
+          if (cachedSnapshot && state.sources.length > 0 && nextEntries.length === 0 && current.length > 0) {
+            return current;
+          }
+          return nextEntries;
+        });
         if (state.sources.length > 0) {
-          void refresh({ silent: true });
+          setInitialBackgroundRefresh(true);
+          void refresh({ silent: true }).finally(() => {
+            if (!cancelled) setInitialBackgroundRefresh(false);
+          });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setSources([]);
-          setEntries([]);
+          if (!cachedSnapshot) {
+            setSources([]);
+            setEntries([]);
+          }
         }
       })
       .finally(() => {
@@ -653,11 +701,11 @@ function MobileFeedPage() {
 
   useEffect(() => {
     if (loading && sources.length === 0 && entries.length === 0) return;
-    mobileFeedSnapshot = {
+    rememberMobileFeedSnapshot({
       apiBaseUrl,
       sources,
       entries,
-    };
+    });
   }, [apiBaseUrl, entries, loading, sources]);
 
   async function addFeedSource() {
@@ -701,7 +749,8 @@ function MobileFeedPage() {
     if (!keyword) return true;
     return `${entry.title} ${entry.summary ?? ""} ${entry.sourceTitle}`.toLowerCase().includes(keyword);
   });
-  const feedCountLabel = loading && sources.length === 0 && entries.length === 0
+  const awaitingInitialFeed = (loading || initialBackgroundRefresh) && sources.length > 0 && entries.length === 0;
+  const feedCountLabel = (loading && sources.length === 0 && entries.length === 0) || awaitingInitialFeed
     ? "正在读取订阅…"
     : `${sources.length} 个来源 · ${entries.length} 篇更新`;
 
@@ -721,7 +770,7 @@ function MobileFeedPage() {
           </button>
         </div>
       </div>
-      {loading ? (
+      {(loading || awaitingInitialFeed) && entries.length === 0 ? (
         <div className="mobile-empty">正在加载订阅更新…</div>
       ) : (
         <>

@@ -33,7 +33,45 @@ type FeedPageSnapshot = {
   readEntries: string[];
 };
 
+const FEED_PAGE_SNAPSHOT_KEY = "oneradar.feed.page.snapshot.v1";
+
 let feedPageSnapshot: FeedPageSnapshot | null = null;
+
+function parseStoredFeedPageSnapshot(apiBaseUrl: string): FeedPageSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(FEED_PAGE_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<FeedPageSnapshot>;
+    if (
+      parsed.apiBaseUrl !== apiBaseUrl ||
+      !Array.isArray(parsed.savedSources) ||
+      !parsed.feeds ||
+      typeof parsed.feeds !== "object" ||
+      !Array.isArray(parsed.readEntries)
+    ) {
+      return null;
+    }
+    return {
+      apiBaseUrl: parsed.apiBaseUrl,
+      savedSources: parsed.savedSources,
+      feeds: parsed.feeds as Record<string, ApiFeedPreviewResponse>,
+      readEntries: parsed.readEntries,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function rememberFeedPageSnapshot(snapshot: FeedPageSnapshot) {
+  feedPageSnapshot = snapshot;
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(FEED_PAGE_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {
+    // A transient UI snapshot is optional; API state remains the source of truth.
+  }
+}
 
 function formatPublishedAt(value?: string | null) {
   if (!value) return "未知时间";
@@ -107,7 +145,7 @@ export function FeedPage() {
   const navigate = useNavigate();
   const { apiBaseUrl } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
-  const cachedSnapshot = feedPageSnapshot?.apiBaseUrl === apiBaseUrl ? feedPageSnapshot : null;
+  const cachedSnapshot = feedPageSnapshot?.apiBaseUrl === apiBaseUrl ? feedPageSnapshot : parseStoredFeedPageSnapshot(apiBaseUrl);
 
   const [filter, setFilter] = useState<FeedFilter>("week");
   const [selectedSource, setSelectedSource] = useState<SelectedSource>("all");
@@ -117,6 +155,7 @@ export function FeedPage() {
   const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>(cachedSnapshot?.feeds ?? {});
   const [readEntries, setReadEntries] = useState<Set<string>>(() => new Set(cachedSnapshot?.readEntries ?? []));
   const [serverHydrated, setServerHydrated] = useState(false);
+  const [initialBackgroundRefresh, setInitialBackgroundRefresh] = useState(false);
   const [loading, setLoading] = useState(!cachedSnapshot);
   const [error, setError] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
@@ -140,11 +179,17 @@ export function FeedPage() {
           lastRefreshError: source.last_refresh_error,
           lastRefreshedAt: source.last_refreshed_at,
         }));
-        setFeeds(state.feeds);
+        const nextFeeds = state.feeds;
+        if (!(cachedSnapshot && serverSources.length > 0 && Object.keys(nextFeeds).length === 0 && Object.keys(cachedSnapshot.feeds).length > 0)) {
+          setFeeds(nextFeeds);
+        }
         setSavedSources(serverSources);
         setReadEntries(new Set(state.read_entries));
         if (serverSources.length > 0) {
-          void refreshSources(serverSources, { background: true });
+          setInitialBackgroundRefresh(true);
+          void refreshSources(serverSources, { background: true }).finally(() => {
+            if (!cancelled) setInitialBackgroundRefresh(false);
+          });
         }
       })
       .catch((nextError) => {
@@ -163,12 +208,12 @@ export function FeedPage() {
 
   useEffect(() => {
     if (!serverHydrated && savedSources.length === 0 && Object.keys(feeds).length === 0) return;
-    feedPageSnapshot = {
+    rememberFeedPageSnapshot({
       apiBaseUrl,
       savedSources,
       feeds,
       readEntries: Array.from(readEntries),
-    };
+    });
   }, [apiBaseUrl, feeds, readEntries, savedSources, serverHydrated]);
 
   async function fetchFeed(targetUrl: string) {
@@ -377,7 +422,8 @@ export function FeedPage() {
   const selectedFeed = selectedSource === "all" ? null : feeds[selectedSource];
   const selectedSourceLabel = selectedFeed?.site_title ?? savedSources.find((source) => source.sourceUrl === selectedSource)?.siteTitle ?? "全部订阅源";
   const hasFeedSnapshot = serverHydrated || savedSources.length > 0 || Object.keys(feeds).length > 0;
-  const countLabel = (count: number) => (hasFeedSnapshot ? String(count) : "…");
+  const awaitingInitialFeed = !hasFeedSnapshot || (initialBackgroundRefresh && sourceEntries.length === 0);
+  const countLabel = (count: number) => (awaitingInitialFeed ? "…" : String(count));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -552,7 +598,7 @@ export function FeedPage() {
         </aside>
 
         <main style={{ overflowY: "auto", padding: "8px 0" }}>
-          {loading && allEntries.length === 0 ? (
+          {(loading || initialBackgroundRefresh) && allEntries.length === 0 ? (
             <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
               <span className="icon icon-lg" style={{ color: "var(--outline)" }}>sync</span>
             </div>
