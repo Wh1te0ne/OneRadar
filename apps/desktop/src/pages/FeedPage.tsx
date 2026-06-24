@@ -136,6 +136,7 @@ export function FeedPage() {
   const [loadedWindow, setLoadedWindow] = useState<FeedFilter | "all">(cachedSnapshot?.loadedWindow ?? "week");
   const [serverHydrated, setServerHydrated] = useState(false);
   const [loading, setLoading] = useState(!cachedSnapshot);
+  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const keyword = searchParams.get("q")?.trim().toLowerCase() ?? "";
@@ -165,6 +166,9 @@ export function FeedPage() {
         }
         setSavedSources(serverSources);
         setLoadedWindow("week");
+        if (serverSources.length > 0) {
+          void refreshSources({ background: true, window: "week", sourceCount: serverSources.length });
+        }
       })
       .catch((nextError) => {
         setError(nextError instanceof Error ? nextError.message : "订阅源状态读取失败");
@@ -287,24 +291,36 @@ export function FeedPage() {
     }
   }
 
-  async function refreshSources() {
-    if (savedSources.length === 0) {
+  async function refreshSources(options?: { background?: boolean; window?: FeedFilter | "all"; sourceCount?: number }) {
+    const isBackground = Boolean(options?.background);
+    const targetWindow = options?.window ?? filter;
+    if ((options?.sourceCount ?? savedSources.length) === 0) {
       setError(null);
       return;
     }
-    setLoading(true);
+    if (isBackground) {
+      setBackgroundRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     try {
       const result = await client.refreshFeeds();
-      await loadState(filter, { silent: true });
-      if (result.failed > 0) {
+      await loadState(targetWindow, { silent: true });
+      if (result.failed > 0 && !isBackground) {
         const firstReason = Object.values(result.errors)[0] ?? "RSS 读取失败";
         setError(`${result.failed} 个订阅源刷新失败，已显示其余可用内容。原因：${firstReason}`);
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "订阅源刷新失败");
+      if (!isBackground) {
+        setError(nextError instanceof Error ? nextError.message : "订阅源刷新失败");
+      }
     } finally {
-      setLoading(false);
+      if (isBackground) {
+        setBackgroundRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   }
 
@@ -441,9 +457,9 @@ export function FeedPage() {
               </span>
             </div>
           )}
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => void refreshSources()} disabled={loading}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void refreshSources()} disabled={loading || backgroundRefreshing}>
             <span className="icon icon-sm">sync</span>
-            {loading ? "刷新中…" : "刷新订阅源"}
+            {loading || backgroundRefreshing ? "同步中…" : "刷新订阅源"}
           </button>
         </div>
       </div>

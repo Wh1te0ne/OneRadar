@@ -8,6 +8,7 @@ import { useAppState } from "../state/appState";
 import { hasConfiguredLlmProvider } from "../utils/providers";
 
 const DAILY_NEWS_GENERATION_KEY = "oneradar.daily-news.generation";
+const DAILY_NEWS_BACKGROUND_SYNC_KEY = "oneradar.daily-news.background-sync";
 const DAILY_NEWS_GENERATION_TTL_MS = 12 * 60 * 1000;
 const RUNTIME_SHARE_BASE_URL = window.__ONERADAR_CONFIG__?.shareBaseUrl;
 
@@ -238,6 +239,7 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
   const selectedDate = shareMode ? routeParams.date || report?.report_date || todayDate() : searchParams.get("date") || todayDate();
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [backgroundSyncing, setBackgroundSyncing] = useState<string | null>(null);
   const [pendingGeneration, setPendingGeneration] = useState<PendingGeneration | null>(() => readPendingGeneration());
   const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -248,6 +250,11 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
     headlineClass: "daily-news-headline-balanced",
     sectionClasses: [],
   });
+  const selectedDateRef = useRef(selectedDate);
+
+  useEffect(() => {
+    selectedDateRef.current = selectedDate;
+  }, [selectedDate]);
 
   function setDate(nextDate: string) {
     const next = new URLSearchParams(searchParams);
@@ -263,12 +270,55 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
     if (!options?.silent) setLoading(true);
     setError(null);
     try {
-      setReport(shareMode ? await client.getPublicDailyNews(shareKey, date) : await client.getDailyNews(date));
+      const nextReport = shareMode ? await client.getPublicDailyNews(shareKey, date) : await client.getDailyNews(date);
+      setReport(nextReport);
+      return nextReport;
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "读取每日新闻失败");
       setReport(null);
+      return null;
     } finally {
       if (!options?.silent) setLoading(false);
+    }
+  }
+
+  async function syncReportInBackground(date: string) {
+    if (shareMode || date !== todayDate() || backgroundSyncing || pendingGeneration?.date === date) return;
+    if (!hasConfiguredLlmProvider(providers)) {
+      const nextProviders = await loadProviders();
+      if (!hasConfiguredLlmProvider(nextProviders)) return;
+    }
+    const syncKey = `${apiBaseUrl}:${date}`;
+    let marked = false;
+    try {
+      if (sessionStorage.getItem(DAILY_NEWS_BACKGROUND_SYNC_KEY) === syncKey) return;
+      sessionStorage.setItem(DAILY_NEWS_BACKGROUND_SYNC_KEY, syncKey);
+      marked = true;
+    } catch {
+      // Session storage is a best-effort guard against repeated background generation.
+    }
+    setBackgroundSyncing(date);
+    try {
+      const nextReport = await client.generateDailyNews(date, true);
+      if (selectedDateRef.current === date) {
+        setError(null);
+        setReport(nextReport);
+      }
+    } catch (nextError) {
+      if (marked) {
+        try {
+          sessionStorage.removeItem(DAILY_NEWS_BACKGROUND_SYNC_KEY);
+        } catch {
+          // Ignore storage cleanup failures.
+        }
+      }
+      if (shouldKeepDailyNewsPendingAfterError(nextError)) {
+        window.setTimeout(() => {
+          if (selectedDateRef.current === date) void loadReport(date, { silent: true });
+        }, 1800);
+      }
+    } finally {
+      setBackgroundSyncing(null);
     }
   }
 
@@ -344,7 +394,9 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
   }
 
   useEffect(() => {
-    void loadReport(selectedDate);
+    void loadReport(selectedDate).finally(() => {
+      void syncReportInBackground(selectedDate);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, selectedDate, shareKey, shareMode]);
 
@@ -422,6 +474,7 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
   }, [filteredSections, ready, report]);
 
   const isGeneratingSelectedDate = Boolean((generating || pendingGeneration) && pendingGeneration?.date === selectedDate);
+  const isBackgroundSyncingSelectedDate = backgroundSyncing === selectedDate && !isGeneratingSelectedDate;
   const isTodayOrFuture = selectedDate >= todayDate();
   const calendarDays = buildCalendarDays(calendarMonth);
   const today = todayDate();
@@ -516,6 +569,11 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
       {isGeneratingSelectedDate && (
         <div className="feedback feedback-info daily-news-feedback">
           正在生成 {selectedDate} 的每日新闻。可以切换到其他页面，回来后会继续显示状态并自动读取结果。
+        </div>
+      )}
+      {isBackgroundSyncingSelectedDate && (
+        <div className="feedback feedback-info daily-news-feedback">
+          正在后台同步今天的日报，当前先显示缓存内容。
         </div>
       )}
       {error && <div className="feedback feedback-error daily-news-feedback">{error}</div>}
