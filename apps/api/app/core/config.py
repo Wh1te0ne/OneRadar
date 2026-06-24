@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     daily_news_generation_enabled: bool = True
     daily_news_generation_hour: int = 10
     daily_news_generation_timezone: str = "Asia/Shanghai"
+    douyin_cookie: str | None = None
+    xiaohongshu_cookie: str | None = None
+    social_parse_proxy: str | None = None
 
     model_config = SettingsConfigDict(
         env_prefix="ONERADAR_",

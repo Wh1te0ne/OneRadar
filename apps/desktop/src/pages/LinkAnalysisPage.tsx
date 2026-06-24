@@ -105,7 +105,7 @@ export function LinkAnalysisPage() {
           <input
             value={url}
             onChange={(event) => setUrl(event.target.value)}
-            placeholder="粘贴网页、微信公众号、Bilibili 链接"
+            placeholder="粘贴网页、微信公众号、Bilibili、抖音、小红书链接"
             autoFocus
           />
           <button type="submit" className="btn btn-primary" disabled={busy}>
@@ -119,7 +119,8 @@ export function LinkAnalysisPage() {
           </span>
           <span className="chip chip-neutral">网页 / 微信公众号：正文提取</span>
           <span className="chip chip-neutral">Bilibili：元数据分析</span>
-          <span className="chip chip-neutral">YouTube / 抖音 / 小红书：适配器待接入</span>
+          <span className="chip chip-neutral">抖音 / 小红书：公开解析库解析</span>
+          <span className="chip chip-neutral">YouTube：适配器待接入</span>
         </div>
       </section>
 
@@ -165,7 +166,12 @@ export function LinkAnalysisPage() {
           <div className="analysis-tabs">
             {([
               ["summary", "摘要"],
-              ["original", result.source_text_kind === "metadata_description" ? "平台简介" : "原文"],
+              [
+                "original",
+                ["metadata_description", "platform_visible_text"].includes(result.source_text_kind)
+                  ? "平台可见文本"
+                  : "原文",
+              ],
               ["json", "结构化"],
             ] as [ResultTab, string][]).map(([value, label]) => (
               <button key={value} type="button" className={tab === value ? "active" : ""} onClick={() => setTab(value)}>

@@ -11,9 +11,9 @@ from app.services.daily_news_service import _call_chat_completion
 from app.services.feed_service import preview_feed_article
 from app.services.items_service import preview_bilibili_item
 from app.services.provider_registry import ProviderCapability, resolve_provider_config
+from app.services.social_platform_service import preview_social_platform_url
 
-
-VIDEO_PLATFORMS_PENDING = {
+PLATFORM_HOST_SUFFIXES = {
     "youtube.com": "youtube",
     "youtu.be": "youtube",
     "douyin.com": "douyin",
@@ -31,11 +31,16 @@ def _platform_from_url(url: str, hint: str | None = None) -> str:
         host = (urlsplit(url).hostname or "").lower()
     except ValueError:
         return "web"
-    if host == "b23.tv" or host.endswith(".b23.tv") or host == "bilibili.com" or host.endswith(".bilibili.com"):
+    if (
+        host == "b23.tv"
+        or host.endswith(".b23.tv")
+        or host == "bilibili.com"
+        or host.endswith(".bilibili.com")
+    ):
         return "bilibili"
     if host == "mp.weixin.qq.com":
         return "wechat"
-    for suffix, platform in VIDEO_PLATFORMS_PENDING.items():
+    for suffix, platform in PLATFORM_HOST_SUFFIXES.items():
         if host == suffix or host.endswith("." + suffix):
             return platform
     return "web"
@@ -45,7 +50,12 @@ def _extractive_summary(text: str, limit: int = 520) -> str:
     cleaned = re.sub(r"\s+", " ", text).strip()
     if len(cleaned) <= limit:
         return cleaned
-    boundary = max(cleaned.rfind("。", 0, limit), cleaned.rfind(".", 0, limit), cleaned.rfind("！", 0, limit), cleaned.rfind("？", 0, limit))
+    boundary = max(
+        cleaned.rfind("。", 0, limit),
+        cleaned.rfind(".", 0, limit),
+        cleaned.rfind("！", 0, limit),
+        cleaned.rfind("？", 0, limit),
+    )
     if boundary >= 80:
         return cleaned[: boundary + 1]
     return cleaned[:limit].rstrip() + "..."
@@ -96,7 +106,9 @@ def analyze_url(url: str, platform_hint: str | None = None) -> UrlAnalysisRespon
 
     if platform == "bilibili":
         preview = preview_bilibili_item(source_url)
-        original_text = preview.description or f"{preview.title}\nUP 主：{preview.owner_name or '未知'}"
+        original_text = (
+            preview.description or f"{preview.title}\nUP 主：{preview.owner_name or '未知'}"
+        )
         summary, summary_provider, model_name = _model_summary(preview.title, original_text)
         return UrlAnalysisResponse(
             source_url=source_url,
@@ -126,7 +138,29 @@ def analyze_url(url: str, platform_hint: str | None = None) -> UrlAnalysisRespon
             persisted=False,
         )
 
-    if platform in {"youtube", "douyin", "xiaohongshu"}:
+    if platform in {"douyin", "xiaohongshu"}:
+        preview = preview_social_platform_url(source_url, platform)
+        summary, summary_provider, model_name = _model_summary(preview.title, preview.original_text)
+        return UrlAnalysisResponse(
+            source_url=source_url,
+            final_url=preview.final_url,
+            platform=preview.platform,
+            content_type=preview.content_type,
+            title=preview.title,
+            source_name=preview.source_name,
+            author=preview.author,
+            published_at=preview.published_at,
+            original_text=preview.original_text,
+            source_text_kind=preview.source_text_kind,
+            summary=summary,
+            summary_provider=summary_provider,
+            model_name=model_name,
+            metadata=preview.metadata,
+            fetched_at=preview.fetched_at,
+            persisted=False,
+        )
+
+    if platform == "youtube":
         raise ValueError(f"{platform} 临时分析适配器尚未接入；当前不会把链接保存为阅读条目。")
 
     article = preview_feed_article(source_url)

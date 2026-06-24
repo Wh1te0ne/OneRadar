@@ -10,7 +10,7 @@ V1 assumptions:
 
 - RSS sources are user-managed and continuously refreshed.
 - Daily news is generated from cached RSS entries.
-- Temporary URL analysis accepts article/WeChat/web links and Bilibili metadata today, with YouTube/Douyin/Xiaohongshu adapters planned.
+- Temporary URL analysis accepts article/WeChat/web links, Bilibili metadata, and ParseHub-backed Douyin/Xiaohongshu visible text today, with YouTube adapter work still planned.
 - Temporary URL analysis returns text, summary, and metadata without creating saved reading items.
 - Provider management is a first-class API surface.
 - Single-user or small-private-deployment is the default operating model.
@@ -275,8 +275,15 @@ Current behavior:
 
 - Web pages and WeChat article URLs use the existing article extraction path and return `source_text_kind=readable_text`.
 - Bilibili URLs return video metadata and visible description as `source_text_kind=metadata_description`; full subtitle/transcript analysis remains adapter work.
-- YouTube, Douyin, and Xiaohongshu URLs are recognized but return a clear “adapter not connected” error until platform-specific extractors are implemented.
+- Douyin and Xiaohongshu URLs use the open-source `parsehub` Python package and return visible platform text as `source_text_kind=platform_visible_text`, plus media metadata when available. The server does not download or persist media.
+- YouTube URLs are recognized but return a clear “adapter not connected” error until a platform-specific extractor is implemented.
 - If no summarization provider is configured, the endpoint returns an extractive summary and `summary_provider=extractive`.
+
+Optional social-platform parser environment variables:
+
+- `ONERADAR_DOUYIN_COOKIE`: server-side Douyin Cookie header for links that require login state.
+- `ONERADAR_XIAOHONGSHU_COOKIE`: server-side Xiaohongshu Cookie header for links that require login state.
+- `ONERADAR_SOCIAL_PARSE_PROXY`: optional HTTP proxy passed to the social parser.
 
 ## 7. Legacy Unified Import Flow
 

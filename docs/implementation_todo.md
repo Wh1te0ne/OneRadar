@@ -32,6 +32,9 @@ Legend:
 - [x] Keep model/provider configuration as a first-class settings surface.
 - [ ] Add production-grade transient adapters for YouTube, Douyin, Xiaohongshu, and WeChat links beyond generic webpage extraction or metadata preview.
 
+Current adapter note:
+Douyin and Xiaohongshu transient URL analysis now uses the open-source MIT `parsehub` Python package. The API extracts visible platform text and media metadata without downloading or saving media, and can receive optional server-side Cookie/proxy settings through environment variables. YouTube remains pending.
+
 - [x] Replace single-user no-login mode with lightweight private-deployment login/register flow.
 - [x] Convert desktop UI copy to Chinese-first.
 - [x] Add Inbox as the default landing state for newly imported items.

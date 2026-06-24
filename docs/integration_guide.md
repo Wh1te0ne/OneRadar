@@ -132,7 +132,8 @@ Current platform behavior:
 
 - Web pages and WeChat article pages: readable-text extraction and summary.
 - Bilibili: metadata and visible description summary.
-- YouTube, Douyin, Xiaohongshu: recognized, but full adapters are not connected yet.
+- Douyin and Xiaohongshu: visible platform text and media metadata through the open-source `parsehub` parser. The endpoint does not download or save media.
+- YouTube: recognized, but the full adapter is not connected yet.
 
 ## Daily News
 
