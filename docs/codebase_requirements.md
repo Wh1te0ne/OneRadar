@@ -10,15 +10,17 @@ If a future coding task is unclear, this file should be treated as the working c
 
 The repo must preserve these V1 boundaries:
 
-- V1 is a reader-first personal knowledge library.
-- Input is manual link submission only.
+- V1 is an information radar and temporary content-analysis service, not a reader-first personal knowledge library.
+- RSS source management, cached news entries, daily news generation, and MCP/API access are first-class.
+- Manual link submission is used for one-off analysis by default, not persistent saving.
 - Manual input supports article links, Bilibili video links, and podcast episodes explicitly added from subscribed podcast feeds.
-- V1 does not include browser extension capture or broad automated harvesting. RSS is a scoped, user-managed discovery surface: saved sources may be refreshed, viewed, used to generate one persisted daily news brief per date, and exposed as raw time-windowed news data to Hermes Agent through the built-in MCP endpoint. RSS entries are not imported into the reading library unless the user explicitly saves them. Podcast RSS remains the scoped podcast exception for subscriptions and episode discovery.
+- V1 does not include browser extension capture or broad automated harvesting. RSS is a scoped, user-managed discovery surface: saved sources may be refreshed, viewed, used to generate one persisted daily news brief per date, and exposed as raw time-windowed news data to Hermes Agent through the built-in MCP endpoint.
+- OneRadar no longer owns user-facing notes, highlights, folders, collections, reading progress, or a Library/knowledge-base surface. Long-term knowledge storage belongs in Obsidian or another external destination.
 - V1 is server plus Windows desktop client first.
 - The server must support Docker deployment.
 - AI provider configuration must be user-manageable.
 - V1 formal mode supports lightweight private-deployment accounts with username/email plus password login and registration. It is not a SaaS/team system.
-- New imports land in Inbox first and can then be moved into folders.
+- New one-off analyses return transient results and are not saved unless a later explicit export/integration writes them elsewhere.
 - The desktop UI is Chinese-first in V1.
 - The desktop UI must support light, dark, and system theme modes.
 
@@ -36,16 +38,17 @@ Preferred stack:
 
 Required backend responsibilities:
 
-- Link normalization and deduplication.
+- Link normalization and temporary analysis.
 - Article fetching and readable-text extraction.
-- Bilibili metadata retrieval and audio-to-text transcription. Platform subtitles may be inspected as metadata, but they are not the default canonical transcript source.
-- Podcast search/subscription, RSS episode discovery, and explicit podcast episode import.
+- Bilibili metadata retrieval and progressively richer temporary analysis. Platform subtitles/transcripts remain adapter work, not a Library import requirement.
+- RSS source management, entry caching, refresh state, daily news generation, and MCP/API exposure.
+- Podcast search/subscription can remain as a source adapter only when it does not reintroduce a reading library workflow.
 - Capability-driven Bilibili multimodal enhancement after subtitle retrieval, without replacing the readable transcript or timeline source.
 - Podcast audio must not download automatically on subscription; it downloads only after the user adds an episode to Inbox / later reading.
-- Storage of raw materials and readable documents.
+- Temporary return of raw/readable materials; persistent storage is reserved for RSS cache, daily reports, settings, tokens, and operational state.
 - Provider registry and model selection.
 - Authentication and per-user data isolation for provider settings, RSS state, folders, collections, reading items, annotations, and generated reports.
-- Search, highlights, notes, folders/collections, and reading state.
+- API/integration token management for MCP and product-to-product calls.
 
 ### Desktop Client
 
@@ -57,10 +60,10 @@ Preferred stack:
 Required desktop responsibilities:
 
 - Connect to configured server and authenticate with username/email plus password.
-- Submit links.
-- Display Inbox, folders, and library lists.
-- Render article text and transcript text in a Reader-like layout.
-- Support annotations, labels, folders, collections, and search.
+- Manage RSS sources and view news entries.
+- Display daily news.
+- Submit one-off links and show transient original text, summary, metadata, and structured response.
+- Expose API/MCP integration status and tokens.
 - Expose provider, theme, account, and connection settings.
 - Support Bilibili QR-code login as the primary credential flow for authenticated subtitle retrieval.
 
@@ -74,6 +77,7 @@ Implications:
 - Do not overfit interaction design to desktop-only assumptions.
 - Keep native-shell integrations isolated from core UI logic.
 - Mobile Web/PWA surfaces are responsive shells over the same React client, API client, auth state, and backend data. They may reorganize navigation and reading layout for phone ergonomics, but they must not introduce a separate mobile-only backend, import path, settings store, or content model.
+- Android client work, when present, should reference the same mobile UI information architecture and call the same OneRadar API. It may use native Android controls for phone ergonomics, but it must not introduce a mobile-only backend, account system, import path, settings store, or content model.
 
 ## Required Repo Structure
 
@@ -93,6 +97,7 @@ E:\OneRadar
     deployment_v1.md
   apps/
     desktop/
+    android/
     api/
     worker/
   packages/

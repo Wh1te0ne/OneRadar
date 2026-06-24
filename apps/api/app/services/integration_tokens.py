@@ -21,7 +21,7 @@ from app.schemas.integration_tokens import (
 from app.services.db_access import get_primary_user
 
 TOKEN_PREFIX = "ort_"
-DEFAULT_SCOPES = {"mcp:read"}
+DEFAULT_SCOPES = {"mcp:read", "analysis:write"}
 
 
 def _hash_token(token: str) -> str:

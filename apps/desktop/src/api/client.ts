@@ -32,6 +32,7 @@ import type {
   ApiProviderTestResponse,
   ApiReadingState,
   ApiReadingStateUpdatePayload,
+  ApiUrlAnalysisResponse,
   ApiTag,
   ApiItemTaskResponse,
   ApiTaskEntry
@@ -175,6 +176,14 @@ export function createApiClient(baseUrl: string) {
     deleteIntegrationToken: (tokenId: string) =>
       request<{ id: string; revoked: boolean }>(baseUrl, "/api/integration-tokens/" + tokenId, {
         method: "DELETE"
+      }),
+    analyzeUrl: (url: string, platformHint?: string | null) =>
+      request<ApiUrlAnalysisResponse>(baseUrl, "/api/analysis/url", {
+        method: "POST",
+        body: JSON.stringify({
+          url,
+          ...(platformHint ? { platform_hint: platformHint } : {})
+        })
       }),
     getFeedPreview: (url: string, limit = 0) => {
       const params = new URLSearchParams({ url, limit: String(limit) });

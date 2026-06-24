@@ -2,55 +2,51 @@
 
 ## 1. Architecture Goals
 
-OneRadar V1 is a reader-first personal knowledge library with manual link input plus a scoped podcast subscription surface.
+OneRadar V1 is an information radar and temporary content-analysis service. It owns RSS source management, daily news generation, temporary URL analysis, MCP/API access, and provider configuration. It no longer owns the primary reading library, note-taking, saved collections, or personal knowledge-base workflow.
 
 The architecture must support these constraints:
 
-- Manual item creation only.
-- Supported inputs: article links, Bilibili video links, and explicitly imported podcast episodes from user-subscribed podcast RSS feeds.
+- User-managed RSS sources with continuous server-side refresh.
+- Daily news generated from cached RSS entries.
+- Temporary URL analysis for webpages, WeChat articles, Bilibili metadata, and future social/video platform adapters.
+- No primary saved-reader, notes, highlights, folders, collections, or read/unread product flow.
 - Server-first execution with a Windows desktop client.
 - Docker-based deployment for the server.
-- Subtitle-first, then ASR transcription for video items.
-- Capability-driven multimodal video/audio analysis for video items, with subtitles preserved as timeline and prompt context.
 - First-class provider registry for chat, embedding, transcription, and visual-understanding model use.
-- Web-first UI rendered inside a desktop shell.
+- Web-first UI rendered inside the desktop shell, with mobile web sharing the same information architecture.
 
 The architecture should optimize for:
 
 - Low coupling between ingestion, parsing, AI, search, and presentation.
 - Clear fallback paths when a source or provider fails.
-- Future portability to mobile or PWA without rewriting the entire backend.
+- Future portability to mobile, PWA, or Android without rewriting the entire backend.
 - Practical reuse of mature open-source components rather than building every parser from scratch.
 
 ## 2. System Overview
 
-OneRadar is split into four logical layers plus a thin agent integration surface:
+OneRadar is split into four logical layers plus agent/API integration surfaces:
 
 - Desktop client.
 - API server.
-- Worker pipeline.
+- RSS refresh and analysis workers.
 - Storage and external providers.
 - MCP endpoint for trusted local agents such as Hermes.
 
 ```mermaid
 flowchart LR
   UI[Windows Desktop Shell\nTauri + React] --> API[API Server\nFastAPI]
+  MOBILE[Mobile Web UI\nSame API] --> API
   HERMES[Hermes Agent] --> MCP[MCP Endpoint\n/api/mcp]
+  CLIENTS[Other Products / AI Agents] --> ANA[Temporary Analysis API\n/api/analysis/url]
   MCP --> API
+  ANA --> API
   API --> PG[(PostgreSQL)]
   API --> REDIS[(Redis)]
-  API --> OBJ[(File/Object Storage)]
   API --> W[Worker Queue]
-  W --> ING[Ingestion Workers]
-  W --> PROC[Processing Workers]
-  ING --> SRC1[Article Fetchers]
-  ING --> SRC2[Bilibili Fetchers]
-  ING --> SRC3[Podcast RSS / Enclosure Fetchers]
-  PROC --> EX[Extractors]
-  PROC --> TR[Transcription Adapters]
-  PROC --> AI[LLM Provider Adapters]
-  PROC --> IX[Index Builders]
-  AI --> EXT[External Model Providers]
+  W --> RSS[RSS Refresh Workers]
+  W --> EX[Temporary Extractors]
+  W --> AI[LLM Provider Adapters]
+  AI --> PROVIDERS[External Model Providers]
 ```
 
 The desktop client never performs heavy ingestion or transcription work locally in V1.
@@ -59,52 +55,39 @@ The MCP endpoint is hosted inside the API server rather than as a separate Docke
 
 The server owns:
 
-- URL normalization and deduplication.
-- Fetching, extraction, and transcription orchestration.
+- RSS source state, refresh, cached entries, and daily-news candidates.
+- Temporary URL fetching, extraction, and summarization.
 - Provider registry and secret management.
-- Search indexing.
-- Persistent content storage.
+- Integration tokens for MCP and direct API calls.
 
 The desktop client owns:
 
 - Server connection setup and single-user workspace bootstrap.
-- Import UI.
-- Library browsing.
-- Reading and annotation UI.
+- Daily news browsing.
+- RSS source management and filtering.
+- Temporary link analysis workbench.
+- API/MCP token console.
 - Provider settings UI.
-- Import workbench UI for manual link submission and source-specific auth such as Bilibili cookies.
-- Podcast UI for Apple search, RSS subscription management, and explicit episode import.
-- Bilibili QR-code login helper for explicit app-based authorization, modeled after bilidown-style login UX.
-- Desktop-only local helper for explicit Chromium cookie import when the user chooses to read Bilibili browser cookies into OneRadar.
 
 ## 3. Core Design Principles
 
-### 3.1 Manual input only
+### 3.1 RSS-first source ownership
 
-V1 does not crawl the web proactively.
+OneRadar continuously refreshes only the RSS sources the user explicitly adds.
 
-Every content item starts from a user action. Article and Bilibili items start from a user-supplied URL. Podcast episode items start when the user explicitly adds a discovered episode to Inbox / later reading.
+RSS is a bounded discovery surface, not a broad crawler. Cached entries accumulate until the source is deleted, and daily news is generated from this cached state.
 
-- Article pipeline.
-- Bilibili pipeline.
-- Podcast episode pipeline.
+### 3.2 Temporary analysis only for pasted links
 
-Podcast subscriptions are discovery state, not content items. Subscribing to a podcast RSS feed never downloads audio and never triggers model work by itself.
+Pasted links are analyzed on demand and returned to the caller. The analysis path must not create saved reading items, reading progress, folders, notes, highlights, or collections.
 
-### 3.2 Source-specific pipelines behind a shared item model
+Current temporary adapters:
 
-The UI should operate on a unified `content_item` abstraction.
+- Web/WeChat article extraction.
+- Bilibili metadata and visible description.
+- Planned YouTube, Douyin, Xiaohongshu, and richer Bilibili transcript adapters.
 
-The backend may ingest different source types, but the output must be normalized into:
-
-- Metadata.
-- Readable body or transcript.
-- AI summaries.
-- Searchable chunks.
-- User annotations and reading state.
-
-
-### 3.2 Integration settings
+### 3.3 Integration settings
 
 Provider configuration and site-specific integration secrets should not share the same storage record.
 
@@ -119,7 +102,7 @@ For V1, keep a separate integration-settings layer for source-specific auth such
 
 This keeps provider credentials and source credentials isolated while preserving a consistent server-owned secret model.
 
-### 3.3 Provider abstraction first
+### 3.4 Provider abstraction first
 
 Model access must be managed through a provider registry.
 
@@ -129,9 +112,9 @@ The product must not hard-code one vendor into:
 - Embeddings.
 - Transcription.
 
-### 3.4 Subtitle-first video processing
+### 3.5 Future video/social adapter processing
 
-For Bilibili items, the preferred order is:
+For future full video analysis adapters, the preferred order is:
 
 1. Existing subtitles.
 2. Automatic subtitles where available.
@@ -148,13 +131,13 @@ Implementation note:
 - Keep `yt-dlp` as the generic media fallback rather than the first Bilibili-specific integration choice.
 - Treat `Bilibili All In One` as a technical template until its runtime domains and credential handling are explicitly approved.
 
-Transcript timestamps must be preserved for jump-back behavior.
+Transcript timestamps should be returned in structured results when available, but OneRadar does not need an internal reader to consume them.
 
-### 3.5 Web-first UI, desktop-shell delivery
+### 3.6 Web-first UI
 
-The client is a desktop shell around a web UI.
+The primary client is a desktop shell around a web UI. Mobile web follows the same product shape: daily news, RSS sources, link analysis, API/settings.
 
-This keeps the UI reusable for future PWA or mobile-oriented work while still delivering a Windows desktop product in V1.
+This keeps the product coherent across web and desktop while the Docker-served web app remains the production runtime.
 
 ## 4. Service Responsibilities
 
@@ -163,12 +146,10 @@ This keeps the UI reusable for future PWA or mobile-oriented work while still de
 Responsibilities:
 
 - Server connection and workspace bootstrap.
-- Manual item import.
-- Library list and detail pages.
-- Podcast search, subscription, and explicit episode import.
-- Reading view for articles and transcripts.
-- Highlight and note interaction.
-- Collection and tag management.
+- Daily news browsing.
+- RSS source management and source/date filtering.
+- Temporary link analysis.
+- API/MCP endpoint and token visibility.
 - Provider settings and connection testing.
 
 Non-responsibilities:
@@ -182,25 +163,21 @@ Non-responsibilities:
 Responsibilities:
 
 - Single-user workspace bootstrap and internal ownership context.
-- CRUD APIs for content, annotations, collections, reading state, and providers.
-- Import orchestration and task creation.
-- Query APIs for search and item detail.
+- RSS source, cache, refresh, and daily-news APIs.
+- Temporary URL analysis API.
+- MCP news-source JSON-RPC endpoint.
+- Integration token APIs.
 - Secure storage and retrieval of provider configuration.
-- Serving assets and computed outputs.
 
 ### 4.3 Worker Layer
 
 Responsibilities:
 
-- Fetch URLs.
-- Parse HTML.
-- Extract readable article content.
-- Retrieve Bilibili metadata and subtitles.
-- Extract audio when needed.
-- Run transcription.
-- Chunk content.
-- Generate summaries and outlines.
-- Build search and vector indexes.
+- Refresh RSS sources and persist feed entries.
+- Fetch and extract temporary URL analysis inputs.
+- Retrieve Bilibili metadata for temporary analysis.
+- Generate daily-news and link-analysis summaries through the configured provider.
+- Support future platform-specific transcript or original-text adapters.
 
 Worker jobs should be idempotent when possible and retryable when not.
 
@@ -411,16 +388,9 @@ Adapter behavior should be consistent:
 PostgreSQL is the system of record for:
 
 - Users.
-- Content items.
-- Parsed documents.
-- Transcripts.
-- Summaries.
-- Highlights.
-- Notes.
-- Tags.
-- Collections.
-- Reading state.
-- Processing tasks.
+- RSS sources and cached entries.
+- Daily news reports.
+- Integration tokens.
 - Provider registry metadata.
 
 ### 7.2 File or Object Storage
@@ -560,25 +530,23 @@ Deliverables:
 - API doc.
 - Repo skeleton and module boundaries.
 
-### Phase 1: Manual article import
+### Phase 1: RSS and daily news
 
 Deliverables:
 
-- URL import.
-- Article extraction.
-- Content list and detail page.
-- Basic search.
-- Reading state.
+- RSS source management.
+- Server-side refresh and cached entries.
+- Daily-news generation and saved reports.
+- Direct source opening.
 
-### Phase 2: Bilibili transcription path
+### Phase 2: Temporary link analysis
 
 Deliverables:
 
-- Bilibili metadata retrieval.
-- Subtitle retrieval.
-- Audio extraction fallback.
-- ASR transcription.
-- Timestamp-aware transcript view.
+- Web/WeChat readable-text extraction.
+- Bilibili metadata analysis.
+- Model-backed summary with extractive fallback.
+- JSON result for downstream callers.
 
 ### Phase 3: Provider registry
 
@@ -589,15 +557,14 @@ Deliverables:
 - Connection test.
 - Capability-specific selection.
 
-### Phase 4: Annotation and organization
+### Phase 4: API/MCP integration
 
 Deliverables:
 
-- Highlights.
-- Notes.
-- Tags.
-- Collections.
-- Better reader ergonomics.
+- MCP news-source tools.
+- Integration tokens.
+- Direct analysis API.
+- API console in the desktop UI.
 
 ### Phase 5: Hardening and portability
 
@@ -613,24 +580,25 @@ Deliverables:
 Do not introduce these into V1 architecture:
 
 - Automatic content harvesting.
-- RSS pipeline complexity.
+- Broad non-RSS crawling.
 - Cross-user collaboration features.
 - Hard dependency on one model vendor.
 - Heavy in-client media processing.
 - Premature microservice decomposition.
+- Built-in personal knowledge base, note-taking, highlights, folders, collections, or read/unread workflows as primary product surfaces.
 
 ## 12. Summary
 
-OneRadar V1 should be built as a server-owned content library with a web-first desktop shell on top.
+OneRadar V1 should be built as a server-owned information radar and temporary analysis service with a web-first desktop shell on top.
 
-The server owns ingestion, extraction, provider selection, storage, and search.
+The server owns RSS refresh, daily news, temporary extraction, provider selection, and integration tokens.
 
-The desktop client owns reading, annotation, organization, and configuration.
+The desktop client owns source operations, daily-news browsing, link analysis, API visibility, and configuration.
 
 The most important architectural guardrails are:
 
-- Manual input only.
-- Subtitle-first Bilibili processing.
+- RSS source ownership without broad crawling.
+- Temporary link analysis without persistence into a reader.
 - Capability-based model providers.
-- Strong separation between raw inputs, normalized documents, and user annotations.
+- Strong separation between OneRadar's transient analysis output and external long-term knowledge storage.
 - Docker-first server deployment.

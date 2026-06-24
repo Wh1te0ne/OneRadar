@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { createApiClient } from "../api";
 import type { ApiFeedPreviewItem, ApiFeedPreviewResponse } from "../api/types";
 import { useAppState } from "../state/appState";
@@ -30,7 +30,6 @@ type FeedPageSnapshot = {
   apiBaseUrl: string;
   savedSources: SavedFeedSource[];
   feeds: Record<string, ApiFeedPreviewResponse>;
-  readEntries: string[];
 };
 
 const FEED_PAGE_SNAPSHOT_KEY = "oneradar.feed.page.snapshot.v1";
@@ -47,8 +46,7 @@ function parseStoredFeedPageSnapshot(apiBaseUrl: string): FeedPageSnapshot | nul
       parsed.apiBaseUrl !== apiBaseUrl ||
       !Array.isArray(parsed.savedSources) ||
       !parsed.feeds ||
-      typeof parsed.feeds !== "object" ||
-      !Array.isArray(parsed.readEntries)
+      typeof parsed.feeds !== "object"
     ) {
       return null;
     }
@@ -56,7 +54,6 @@ function parseStoredFeedPageSnapshot(apiBaseUrl: string): FeedPageSnapshot | nul
       apiBaseUrl: parsed.apiBaseUrl,
       savedSources: parsed.savedSources,
       feeds: parsed.feeds as Record<string, ApiFeedPreviewResponse>,
-      readEntries: parsed.readEntries,
     };
   } catch {
     return null;
@@ -113,36 +110,8 @@ function compareByPublishedAt(a: FeedEntry, b: FeedEntry) {
   return right - left;
 }
 
-function feedArticlePreviewPath(item: FeedEntry) {
-  const params = new URLSearchParams({
-    url: item.link,
-    title: item.title,
-    source_title: item.sourceTitle,
-  });
-  if (item.author) params.set("author", item.author);
-  if (item.published_at) params.set("published_at", item.published_at);
-  if (item.summary) params.set("summary", item.summary.slice(0, 600));
-  if (item.is_saved) params.set("is_saved", "1");
-  if (item.saved_item_id) params.set("saved_item_id", item.saved_item_id);
-  if (item.saved_uid) params.set("saved_uid", item.saved_uid);
-  return "/feed/preview?" + params.toString();
-}
-
-function feedEntryReadKey(item: FeedEntry) {
-  return `${item.sourceUrl}:${item.id || item.link}`;
-}
-
-function feedEntryReadKeys(item: FeedEntry) {
-  return Array.from(new Set([feedEntryReadKey(item), `${item.sourceUrl}:${item.link}`]));
-}
-
-function isFeedEntryRead(item: FeedEntry, readEntries: Set<string>) {
-  return feedEntryReadKeys(item).some((key) => readEntries.has(key));
-}
-
 export function FeedPage() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const { apiBaseUrl } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
   const cachedSnapshot = feedPageSnapshot?.apiBaseUrl === apiBaseUrl ? feedPageSnapshot : parseStoredFeedPageSnapshot(apiBaseUrl);
@@ -153,13 +122,10 @@ export function FeedPage() {
   const [savedSources, setSavedSources] = useState<SavedFeedSource[]>(cachedSnapshot?.savedSources ?? []);
   const [rssUrl, setRssUrl] = useState("");
   const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>(cachedSnapshot?.feeds ?? {});
-  const [readEntries, setReadEntries] = useState<Set<string>>(() => new Set(cachedSnapshot?.readEntries ?? []));
   const [serverHydrated, setServerHydrated] = useState(false);
   const [initialBackgroundRefresh, setInitialBackgroundRefresh] = useState(false);
   const [loading, setLoading] = useState(!cachedSnapshot);
   const [error, setError] = useState<string | null>(null);
-  const [importingId, setImportingId] = useState<string | null>(null);
-  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const keyword = searchParams.get("q")?.trim().toLowerCase() ?? "";
   const sourceParam = searchParams.get("source")?.trim() ?? "";
@@ -184,7 +150,6 @@ export function FeedPage() {
           setFeeds(nextFeeds);
         }
         setSavedSources(serverSources);
-        setReadEntries(new Set(state.read_entries));
         if (serverSources.length > 0) {
           setInitialBackgroundRefresh(true);
           void refreshSources(serverSources, { background: true }).finally(() => {
@@ -212,9 +177,8 @@ export function FeedPage() {
       apiBaseUrl,
       savedSources,
       feeds,
-      readEntries: Array.from(readEntries),
     });
-  }, [apiBaseUrl, feeds, readEntries, savedSources, serverHydrated]);
+  }, [apiBaseUrl, feeds, savedSources, serverHydrated]);
 
   async function fetchFeed(targetUrl: string) {
     const url = targetUrl.trim();
@@ -246,7 +210,6 @@ export function FeedPage() {
   async function loadFeed(targetUrl: string, options?: { select?: boolean }) {
     setLoading(true);
     setError(null);
-    setImportMessage(null);
     try {
       const next = await fetchFeed(targetUrl);
       rememberFeed(next);
@@ -284,12 +247,10 @@ export function FeedPage() {
     const nextSources = sources;
     if (nextSources.length === 0) {
       setError(null);
-      setImportMessage(null);
       return;
     }
     if (!options?.background) setLoading(true);
     setError(null);
-    setImportMessage(null);
     const results = await Promise.allSettled(nextSources.map((source) => fetchFeed(source.sourceUrl)));
     const successful = results
       .filter((result): result is PromiseFulfilledResult<ApiFeedPreviewResponse> => result.status === "fulfilled")
@@ -360,35 +321,6 @@ export function FeedPage() {
     return timeFiltered;
   }, [sourceEntries, filter, keyword]);
 
-  async function handleImport(item: FeedEntry) {
-    if (item.is_saved) return;
-    const importingKey = feedEntryReadKey(item);
-    setImportingId(importingKey);
-    setImportMessage(null);
-    try {
-      const result = await client.importItem(item.link, "article");
-      setImportMessage(result.is_duplicate ? `已存在：${result.uid}` : `已加入稍后阅读：${result.uid}`);
-      setFeeds((current) => {
-        const next = { ...current };
-        const feed = next[item.sourceUrl];
-        if (!feed) return current;
-        next[item.sourceUrl] = {
-          ...feed,
-          items: feed.items.map((entry) => (
-            entry.id === item.id || entry.link === item.link
-              ? { ...entry, is_saved: true, saved_item_id: result.item_id, saved_uid: result.uid }
-              : entry
-          )),
-        };
-        return next;
-      });
-    } catch (nextError) {
-      setImportMessage(nextError instanceof Error ? nextError.message : "导入失败");
-    } finally {
-      setImportingId(null);
-    }
-  }
-
   function removeSource(sourceUrl: string) {
     setSavedSources((current) => current.filter((source) => source.sourceUrl !== sourceUrl));
     setFeeds((current) => {
@@ -404,17 +336,8 @@ export function FeedPage() {
     });
   }
 
-  function markEntryRead(item: FeedEntry) {
-    const key = feedEntryReadKey(item);
-    setReadEntries((current) => {
-      if (isFeedEntryRead(item, current)) return current;
-      const next = new Set(current);
-      feedEntryReadKeys(item).forEach((entryKey) => next.add(entryKey));
-      return next;
-    });
-    void client.markFeedEntryRead(key).catch(() => {
-      // Optimistic local read marker is enough for immediate UI feedback.
-    });
+  function openOriginal(item: FeedEntry) {
+    window.open(item.link, "_blank", "noopener,noreferrer");
   }
 
   const todayCount = sourceEntries.filter((item) => isToday(item.published_at)).length;
@@ -442,7 +365,7 @@ export function FeedPage() {
         <div className="source-toolbar-left">
           <div className="source-page-title">
             <span>RSS</span>
-            <h2>订阅源</h2>
+            <h2>信息源</h2>
           </div>
           <div className="podcast-tabbar">
             {([
@@ -550,7 +473,6 @@ export function FeedPage() {
         </div>
       )}
 
-      {importMessage && <div className="feedback feedback-success" style={{ margin: "12px 28px 0" }}>{importMessage}</div>}
       {error && <div className="feedback feedback-error" style={{ margin: "12px 28px 0" }}>{error}</div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", minHeight: 0, flex: 1 }}>
@@ -613,14 +535,7 @@ export function FeedPage() {
               <FeedRow
                 key={`${item.sourceUrl}:${item.id}`}
                 item={item}
-                isRead={isFeedEntryRead(item, readEntries)}
-                isImporting={importingId === feedEntryReadKey(item)}
-                isSaved={Boolean(item.is_saved)}
-                onOpen={() => {
-                  markEntryRead(item);
-                  navigate(feedArticlePreviewPath(item));
-                }}
-                onImport={() => void handleImport(item)}
+                onOpen={() => openOriginal(item)}
               />
             ))
           )}
@@ -632,18 +547,10 @@ export function FeedPage() {
 
 function FeedRow({
   item,
-  isRead,
-  isImporting,
-  isSaved,
   onOpen,
-  onImport,
 }: {
   item: FeedEntry;
-  isRead: boolean;
-  isImporting: boolean;
-  isSaved: boolean;
   onOpen: () => void;
-  onImport: () => void;
 }) {
   return (
     <div
@@ -668,19 +575,6 @@ function FeedRow({
       onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-container)"; }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = ""; }}
     >
-      <div
-        aria-hidden
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: "50%",
-          marginTop: 20,
-          marginRight: 14,
-          flexShrink: 0,
-          background: isRead ? "transparent" : "var(--primary)",
-        }}
-      />
-
       <div style={{ flex: 1, minWidth: 0, padding: "14px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--on-surface-v)" }}>{item.sourceTitle}</span>
@@ -723,7 +617,6 @@ function FeedRow({
             <span key={tag} className="chip chip-neutral" style={{ fontSize: 11 }}>{tag}</span>
           ))}
           {isRecent(item.published_at) && <span className="chip chip-primary" style={{ fontSize: 11 }}>最近更新</span>}
-          {isSaved && <span className="chip chip-secondary" style={{ fontSize: 11 }}>已加入</span>}
         </div>
       </div>
 
@@ -740,19 +633,6 @@ function FeedRow({
         >
           <span className="icon icon-sm">open_in_new</span>
         </a>
-        <button
-          type="button"
-          title={isSaved ? "已加入稍后阅读" : "加入稍后阅读"}
-          className="topbar-icon-btn"
-          onClick={(event) => {
-            event.stopPropagation();
-            onImport();
-          }}
-          disabled={isImporting || isSaved}
-          style={{ width: 28, height: 28 }}
-        >
-          <span className="icon icon-sm">{isSaved ? "bookmark_added" : "bookmark_add"}</span>
-        </button>
       </div>
     </div>
   );

@@ -2,132 +2,110 @@
 
 ## Source Of Truth
 
-The approved interface baseline for V1 is the Stitch project AI???? (projects/7116847179377516441).
+2026-06 之后，OneRadar 的 UI 以“信息雷达 + 临时链接分析 + 调用接口”为主，不再以阅读库、稍后读、内置笔记或知识库组织为主。
 
-Reference screens as of 2026-04-13:
-
-- Feed ??? (OneRadar)
-- Library ??? (OneRadar)
-- AI ????? (OneRadar)
-- AI ??/????? (OneRadar)
-- ?? Settings
-
-Use this Stitch project as the visual and structural baseline for desktop implementation unless the user explicitly overrides it.
+参考旧 Stitch 设计时只继承视觉气质，不继承旧信息架构。
 
 ## Design Thesis
 
-OneRadar V1 should feel like a calm Chinese-first editorial reading workspace, not a generic admin dashboard.
+OneRadar V1 should feel like a calm Chinese-first information operations console, not a general reading app or a generic admin dashboard.
 
 The approved direction is:
 
-- high-end editorial
-- low-chrome
-- tonal layering instead of hard borders
-- spacious Chinese typography
-- library / archive mood rather than analytics dashboard mood
-- primary emphasis on reading, classification, and AI-assisted understanding
+- quiet, utility-first, and editorially readable
+- dense enough for RSS source work and daily news scanning
+- low-chrome navigation with clear task surfaces
+- restrained panels and typography rather than dashboard-card mosaics
+- first-class model/provider configuration because summaries and analysis depend on it
+- no Library / read-later / notes mood in the primary product
 
 ## Layout Rules
 
 Follow these structure rules when implementing screens:
 
-- Use a persistent navigation rail or floating bridge for workspace switching.
-- Default primary views are Feed, Library, Article Reader, Video/Podcast Reader, and Settings.
-- Keep the main content area focused on one reading task at a time.
-- Use an inspector or side panel only when it provides secondary context such as metadata, AI summary, notes, or actions.
-- Prefer surface changes, spacing, and typography for hierarchy before adding dividers or cards.
-- Avoid dashboard-card mosaics.
+- Use a persistent navigation rail or compact mobile tab bar for workspace switching.
+- Default primary views are 每日新闻, 信息源, 链接分析, 调用接口, and 设置.
+- RSS entries open the original source URL directly.
+- Do not add read/unread state, reader progress, highlights, notes, folders, collections, or saved-library affordances to RSS rows.
+- Keep model/provider settings visible under 设置 and reflect model availability on analysis surfaces.
+- Use side panels only for secondary context such as source status, API examples, provider state, or result metadata.
+- Avoid marketing-style hero sections and decorative card-heavy composition.
 
 ## Visual Rules
 
 - Chinese-first UI copy in V1.
 - Theme modes: system, light, dark; default to system.
 - No heavy 1px border grid. Use tonal separation first.
-- Use warm neutral surfaces and one indigo-family accent.
-- Use premium-but-readable typography with generous line-height for Chinese text.
-- Buttons and chips may use rounded pills, but routine panels should stay restrained.
-- Reading surfaces should feel like paper layers, not widgets.
+- Use warm neutral surfaces with restrained accent color.
+- Buttons and chips may be compact, but routine panels should stay restrained.
+- Tables, rows, and result panes should be scannable and stable; avoid layout shifts when content loads.
 
 ## Interaction Rules
 
-- Inbox is the default landing space for new imports.
-- Folder movement should feel lightweight and immediate.
-- Stable UID should be visible in import feedback and detail surfaces, but not dominate the reading flow.
-- Reader actions should stay close to content: highlight, note, summary, jump to source, move to folder.
-- For video/podcast content, timestamp navigation must be treated as a first-class reader action.
-
-## Missing Functional Additions Allowed On Top Of This Design
-
-When functionality is missing, add it within this visual framework instead of changing the overall UI direction.
-
-P0 additions allowed within the Stitch baseline:
-
-- manual link import entry
-- import processing state and retry
-- duplicate detection feedback
-- Inbox to folder organization flow
-- provider configuration
-- article highlight and note interactions
-- AI summary and outline panel
-- video transcript segments with timestamp jump
-- delete, archive, favorite, and reading progress actions
-- search and filter controls
+- RSS source management supports adding, refreshing, removing, and filtering by source/date.
+- Clicking an RSS entry opens the original link in the system browser or a new browser tab.
+- Daily news is a date-based brief generated from cached RSS entries and opens source links directly.
+- Link analysis is temporary: submit URL, return original text/visible platform text, summary, metadata, and JSON. It must not create a saved reading item.
+- API/MCP uses integration tokens. Newly created tokens should support both `mcp:read` and `analysis:write` unless a narrower scope is explicitly needed.
+- Provider/model configuration remains a core settings workflow and must not be hidden as an advanced-only feature.
 
 ## Screen Intent
 
-### Feed
+### 每日新闻
 
-Use as the triage surface:
+Use as the daily scanning surface:
 
-- newly imported items
-- processing items
-- suggested next reading
-- quick classification into folders
+- saved daily report by date
+- AI-first grouped news structure
+- source links that jump to original pages
+- regenerate/share actions where available
 
-### Library
+### 信息源
 
-Use as the organized archive:
+Use as the RSS operations surface:
 
-- Inbox
-- folders
-- saved collections
-- filters and search
+- source add/remove/refresh
+- source and date filters
+- cached entry list
+- direct source opening
+- refresh errors and source health
 
-### Article Reader
+### 链接分析
 
-Use as the long-form reading surface:
+Use as the temporary analysis workbench:
 
-- clean readable body
-- summary / outline
-- highlight and notes
-- source jump
-- reading state
+- URL input for webpage, WeChat article, Bilibili, and future video/social platforms
+- original text or platform-visible text
+- AI summary when a summarization model is configured
+- JSON result for downstream copying
+- explicit indication that nothing is saved to a reading library
 
-### Video Or Podcast Reader
+### 调用接口
 
-Use as the transcript-first reading surface:
+Use as the product-to-product integration surface:
 
-- transcript segments
-- timestamp jump
-- subtitle / ASR provenance
-- summary / outline
-- notes tied to time ranges
+- MCP endpoint
+- temporary analysis endpoint
+- integration token creation/revocation
+- curl examples and capability matrix
 
-### Settings
+### 设置
 
 Use as the system surface:
 
-- provider setup
+- provider setup and connection testing
+- current chat/summarization model
+- ASR/transcription model where relevant
 - theme mode
-- parsing / model defaults
 - server connection diagnostics
+- source-specific integration credentials such as Bilibili cookies
 
 ## Implementation Guidance
 
-When converting Stitch to code:
+When changing UI:
 
-- preserve the information architecture first
-- preserve spacing and hierarchy before decorative detail
-- prefer layout and typography fidelity over perfect visual imitation
-- do not regress into a generic CRUD admin look when adding missing features
-- new screens should inherit this design language instead of inventing a separate one
+- preserve the new information architecture first
+- remove old Library/reader affordances from primary navigation instead of hiding them behind copy
+- keep shared behavior coherent across desktop web and mobile web surfaces
+- leave native Android changes for a dedicated pass unless the user explicitly asks, because the current deploy target is the Docker-served web stack
+- do not regress into the old reader/archive product shape when adding missing features

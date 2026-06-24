@@ -57,3 +57,21 @@ async def require_mcp_user(authorization: Annotated[str | None, Header()] = None
         yield
     finally:
         reset_current_user_id(token)
+
+
+async def require_analysis_user(authorization: Annotated[str | None, Header()] = None) -> AsyncIterator[None]:
+    bearer = _bearer_token(authorization)
+    if bearer is None:
+        raise HTTPException(status_code=401, detail="请提供登录令牌或分析接口令牌")
+
+    user_id = verify_auth_token(bearer)
+    if user_id is None:
+        user_id = verify_integration_token(bearer, required_scope="analysis:write")
+    if user_id is None or not _user_exists(user_id):
+        raise HTTPException(status_code=401, detail="分析接口令牌无效或已失效")
+
+    token = set_current_user_id(user_id)
+    try:
+        yield
+    finally:
+        reset_current_user_id(token)

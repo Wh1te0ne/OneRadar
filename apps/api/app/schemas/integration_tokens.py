@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class IntegrationTokenCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    scopes: list[str] = Field(default_factory=lambda: ["mcp:read"])
+    scopes: list[str] = Field(default_factory=lambda: ["mcp:read", "analysis:write"])
 
 
 class IntegrationTokenEntry(BaseModel):

@@ -120,6 +120,25 @@ export type ApiAuthSession = {
   user: ApiUser;
 };
 
+export type ApiUrlAnalysisResponse = {
+  source_url: string;
+  final_url?: string | null;
+  platform: string;
+  content_type: string;
+  title: string;
+  source_name?: string | null;
+  author?: string | null;
+  published_at?: string | null;
+  original_text: string;
+  source_text_kind: string;
+  summary: string;
+  summary_provider: string;
+  model_name?: string | null;
+  metadata: Record<string, unknown>;
+  fetched_at: string;
+  persisted: boolean;
+};
+
 export type ApiFolderEntry = {
   id: string;
   name: string;

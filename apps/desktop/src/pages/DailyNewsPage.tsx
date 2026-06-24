@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { layout, prepare } from "@chenglou/pretext";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { ApiError, createApiClient } from "../api";
-import type { ApiDailyNewsEntry, ApiDailyNewsItem, ApiDailyNewsReportResponse } from "../api/types";
+import type { ApiDailyNewsItem, ApiDailyNewsReportResponse } from "../api/types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useAppState } from "../state/appState";
 import { hasConfiguredLlmProvider } from "../utils/providers";
@@ -95,18 +95,6 @@ function displayPublishedAt(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function feedArticlePreviewPath(entry: ApiDailyNewsEntry) {
-  const params = new URLSearchParams({
-    url: entry.link,
-    title: entry.title,
-    source_title: entry.source_title,
-  });
-  if (entry.author) params.set("author", entry.author);
-  if (entry.published_at) params.set("published_at", entry.published_at);
-  if (entry.summary) params.set("summary", entry.summary.slice(0, 600));
-  return "/feed/preview?" + params.toString();
 }
 
 function itemKey(item: ApiDailyNewsItem, fallback: string) {
@@ -240,7 +228,6 @@ export function DailyNewsSharePage() {
 export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
   const { apiBaseUrl, loadProviders, providers } = useAppState();
   const client = useMemo(() => createApiClient(apiBaseUrl), [apiBaseUrl]);
-  const navigate = useNavigate();
   const routeParams = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const shareKey = routeParams.shareKey || "";
@@ -567,19 +554,14 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
               <span className="daily-news-source-dot" />
               {report?.lead?.entry ? `${report.lead.entry.source_title} · ${displayPublishedAt(report.lead.entry.published_at)}` : "今日重点"}
             </p>
-            {shareMode && report?.lead?.entry ? (
+            {report?.lead?.entry ? (
               <a className="daily-news-lead-title" href={report.lead.entry.link} target="_blank" rel="noreferrer">
                 {report?.lead?.title || report?.headline || "每日新闻"}
               </a>
             ) : (
-              <button
-                type="button"
-                className="daily-news-lead-title"
-                onClick={() => report?.lead?.entry && navigate(feedArticlePreviewPath(report.lead.entry))}
-                disabled={!report?.lead?.entry}
-              >
+              <span className="daily-news-lead-title">
                 {report?.lead?.title || report?.headline || "每日新闻"}
-              </button>
+              </span>
             )}
             <p>{report?.lead?.summary || report?.headline}</p>
           </section>
@@ -598,19 +580,14 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
                 <div className="daily-news-entry-list">
                   {section.items.map((item, itemIndex) => (
                     <article className="daily-news-entry" key={itemKey(item, `${sectionIndex}-${itemIndex}`)}>
-                      {shareMode && item.entry ? (
+                      {item.entry ? (
                         <a className="daily-news-entry-title" href={item.entry.link} target="_blank" rel="noreferrer">
                           {item.title}
                         </a>
                       ) : (
-                        <button
-                          type="button"
-                          className="daily-news-entry-title"
-                          onClick={() => item.entry && navigate(feedArticlePreviewPath(item.entry))}
-                          disabled={!item.entry}
-                        >
+                        <span className="daily-news-entry-title">
                           {item.title}
-                        </button>
+                        </span>
                       )}
                       <p>{item.summary}</p>
                       <div className="daily-news-entry-footer">
