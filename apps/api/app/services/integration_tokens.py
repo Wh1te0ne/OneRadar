@@ -17,6 +17,7 @@ from app.schemas.integration_tokens import (
     IntegrationTokenEntry,
     IntegrationTokenListResponse,
     IntegrationTokenRevokeResponse,
+    IntegrationTokenUpdateRequest,
 )
 from app.services.db_access import get_primary_user
 
@@ -59,7 +60,9 @@ def _to_entry(token: IntegrationToken) -> IntegrationTokenEntry:
     )
 
 
-def create_integration_token(payload: IntegrationTokenCreateRequest) -> IntegrationTokenCreateResponse:
+def create_integration_token(
+    payload: IntegrationTokenCreateRequest,
+) -> IntegrationTokenCreateResponse:
     name = payload.name.strip()
     if not name:
         raise ValueError("请输入令牌名称")
@@ -97,6 +100,30 @@ def list_integration_tokens() -> IntegrationTokenListResponse:
             .all()
         )
         return IntegrationTokenListResponse(items=[_to_entry(token) for token in tokens])
+
+
+def update_integration_token(
+    token_id: str,
+    payload: IntegrationTokenUpdateRequest,
+) -> IntegrationTokenEntry:
+    name = payload.name.strip()
+    if not name:
+        raise ValueError("请输入令牌名称")
+    try:
+        parsed_id = uuid.UUID(token_id)
+    except ValueError as exc:
+        raise ValueError("令牌不存在") from exc
+    with SessionLocal() as session:
+        user = get_primary_user(session)
+        token = session.get(IntegrationToken, parsed_id)
+        if token is None or token.user_id != user.id or token.revoked_at is not None:
+            raise ValueError("令牌不存在")
+        token.name = name
+        session.add(token)
+        session.flush()
+        entry = _to_entry(token)
+        session.commit()
+        return entry
 
 
 def revoke_integration_token(token_id: str) -> IntegrationTokenRevokeResponse:

@@ -173,6 +173,11 @@ export function createApiClient(baseUrl: string) {
         method: "POST",
         body: JSON.stringify({ name, scopes })
       }),
+    updateIntegrationToken: (tokenId: string, name: string) =>
+      request<ApiIntegrationToken>(baseUrl, "/api/integration-tokens/" + tokenId, {
+        method: "PATCH",
+        body: JSON.stringify({ name })
+      }),
     deleteIntegrationToken: (tokenId: string) =>
       request<{ id: string; revoked: boolean }>(baseUrl, "/api/integration-tokens/" + tokenId, {
         method: "DELETE"

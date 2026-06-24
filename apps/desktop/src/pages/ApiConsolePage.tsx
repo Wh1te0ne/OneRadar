@@ -30,6 +30,8 @@ export function ApiConsolePage() {
   const [tokens, setTokens] = useState<ApiIntegrationToken[]>([]);
   const [tokenName, setTokenName] = useState("OneRadar API");
   const [newToken, setNewToken] = useState<string | null>(null);
+  const [editingTokenId, setEditingTokenId] = useState<string | null>(null);
+  const [editingTokenName, setEditingTokenName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rootUrl = apiRootUrl(apiBaseUrl);
@@ -76,6 +78,32 @@ export function ApiConsolePage() {
       setTokens((current) => current.filter((token) => token.id !== tokenId));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "删除令牌失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startRenameToken(token: ApiIntegrationToken) {
+    setEditingTokenId(token.id);
+    setEditingTokenName(token.name);
+    setError(null);
+  }
+
+  async function saveTokenName(tokenId: string) {
+    const name = editingTokenName.trim();
+    if (!name) {
+      setError("请输入令牌名称。");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await client.updateIntegrationToken(tokenId, name);
+      setTokens((current) => current.map((token) => (token.id === tokenId ? updated : token)));
+      setEditingTokenId(null);
+      setEditingTokenName("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "重命名令牌失败");
     } finally {
       setBusy(false);
     }
@@ -156,12 +184,44 @@ export function ApiConsolePage() {
           {tokens.map((token) => (
             <div key={token.id} className="api-token-row">
               <div>
-                <strong>{token.name}</strong>
+                {editingTokenId === token.id ? (
+                  <input
+                    className="input"
+                    value={editingTokenName}
+                    onChange={(event) => setEditingTokenName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void saveTokenName(token.id);
+                      if (event.key === "Escape") {
+                        setEditingTokenId(null);
+                        setEditingTokenName("");
+                      }
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <strong>{token.name}</strong>
+                )}
                 <span>{token.token_prefix}... · {token.scopes.join(", ")} · 最后使用 {displayTime(token.last_used_at)}</span>
               </div>
-              <button className="btn btn-danger btn-sm" type="button" disabled={busy} onClick={() => void deleteToken(token.id)}>
-                删除
-              </button>
+              {editingTokenId === token.id ? (
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  <button className="btn btn-primary btn-sm" type="button" disabled={busy || !editingTokenName.trim()} onClick={() => void saveTokenName(token.id)}>
+                    保存
+                  </button>
+                  <button className="btn btn-ghost btn-sm" type="button" disabled={busy} onClick={() => { setEditingTokenId(null); setEditingTokenName(""); }}>
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                  <button className="btn btn-secondary btn-sm" type="button" disabled={busy} onClick={() => startRenameToken(token)}>
+                    重命名
+                  </button>
+                  <button className="btn btn-danger btn-sm" type="button" disabled={busy} onClick={() => void deleteToken(token.id)}>
+                    删除
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

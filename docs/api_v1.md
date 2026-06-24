@@ -113,6 +113,7 @@ Integration tokens are personal access tokens for service-to-service use, such a
 ```http
 GET /api/integration-tokens
 POST /api/integration-tokens
+PATCH /api/integration-tokens/{token_id}
 DELETE /api/integration-tokens/{token_id}
 ```
 
@@ -122,6 +123,14 @@ Create request:
 {
   "name": "OneRadar API",
   "scopes": ["mcp:read", "analysis:write"]
+}
+```
+
+Rename request:
+
+```json
+{
+  "name": "Obsidian Bridge"
 }
 ```
 

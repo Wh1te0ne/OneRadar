@@ -44,6 +44,42 @@ def test_integration_token_is_only_shown_once(client) -> None:
     assert "token" not in listed.json()["items"][0]
 
 
+def test_integration_token_can_be_renamed(client) -> None:
+    created = client.post(
+        "/api/integration-tokens",
+        json={"name": "Hermes MCP", "scopes": ["mcp:read"]},
+    )
+    assert created.status_code == 200, created.json()
+    token_id = created.json()["item"]["id"]
+
+    updated = client.patch(
+        f"/api/integration-tokens/{token_id}",
+        json={"name": "Obsidian Bridge"},
+    )
+    assert updated.status_code == 200, updated.json()
+    assert updated.json()["id"] == token_id
+    assert updated.json()["name"] == "Obsidian Bridge"
+
+    listed = client.get("/api/integration-tokens")
+    assert listed.status_code == 200, listed.json()
+    assert listed.json()["items"][0]["name"] == "Obsidian Bridge"
+
+
+def test_integration_token_rename_requires_name(client) -> None:
+    created = client.post(
+        "/api/integration-tokens",
+        json={"name": "Hermes MCP", "scopes": ["mcp:read"]},
+    )
+    assert created.status_code == 200, created.json()
+    token_id = created.json()["item"]["id"]
+
+    updated = client.patch(
+        f"/api/integration-tokens/{token_id}",
+        json={"name": "   "},
+    )
+    assert updated.status_code == 400
+
+
 def test_revoked_integration_token_cannot_call_mcp(client) -> None:
     created = client.post(
         "/api/integration-tokens",

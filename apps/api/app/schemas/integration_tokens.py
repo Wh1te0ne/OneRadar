@@ -10,6 +10,10 @@ class IntegrationTokenCreateRequest(BaseModel):
     scopes: list[str] = Field(default_factory=lambda: ["mcp:read", "analysis:write"])
 
 
+class IntegrationTokenUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
 class IntegrationTokenEntry(BaseModel):
     id: str
     name: str

@@ -214,6 +214,8 @@ export function SettingsPage() {
   const [integrationTokens, setIntegrationTokens] = useState<ApiIntegrationToken[]>([]);
   const [tokenName, setTokenName] = useState("MCP 调用");
   const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [editingTokenId, setEditingTokenId] = useState<string | null>(null);
+  const [editingTokenName, setEditingTokenName] = useState("");
   const [tokenBusy, setTokenBusy] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
 
@@ -427,6 +429,33 @@ export function SettingsPage() {
       showAppToast("集成令牌已删除。", "success");
     } catch (e) {
       setTokenError(e instanceof Error ? e.message : "删除集成令牌失败");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  function startRenameToken(token: ApiIntegrationToken) {
+    setEditingTokenId(token.id);
+    setEditingTokenName(token.name);
+    setTokenError(null);
+  }
+
+  async function saveTokenName(tokenId: string) {
+    const name = editingTokenName.trim();
+    if (!name) {
+      setTokenError("请输入令牌名称。");
+      return;
+    }
+    setTokenBusy(true);
+    setTokenError(null);
+    try {
+      const updated = await client.updateIntegrationToken(tokenId, name);
+      setIntegrationTokens((current) => current.map((token) => (token.id === tokenId ? updated : token)));
+      setEditingTokenId(null);
+      setEditingTokenName("");
+      showAppToast("集成令牌已重命名。", "success");
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : "重命名集成令牌失败");
     } finally {
       setTokenBusy(false);
     }
@@ -756,14 +785,46 @@ export function SettingsPage() {
                     <span className="icon icon-sm">vpn_key</span>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{token.name}</div>
+                    {editingTokenId === token.id ? (
+                      <input
+                        className="input"
+                        value={editingTokenName}
+                        onChange={(event) => setEditingTokenName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void saveTokenName(token.id);
+                          if (event.key === "Escape") {
+                            setEditingTokenId(null);
+                            setEditingTokenName("");
+                          }
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      <div style={{ fontWeight: 600, fontSize: 14, color: "var(--on-surface)" }}>{token.name}</div>
+                    )}
                     <div style={{ fontSize: 12, color: "var(--outline)" }}>
                       {token.token_prefix}… · {token.scopes.join(", ")} · {token.last_used_at ? `上次使用 ${new Date(token.last_used_at).toLocaleString()}` : "尚未使用"}
                     </div>
                   </div>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void deleteToken(token.id)} disabled={tokenBusy}>
-                    删除
-                  </button>
+                  {editingTokenId === token.id ? (
+                    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveTokenName(token.id)} disabled={tokenBusy || !editingTokenName.trim()}>
+                        保存
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setEditingTokenId(null); setEditingTokenName(""); }} disabled={tokenBusy}>
+                        取消
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => startRenameToken(token)} disabled={tokenBusy}>
+                        重命名
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => void deleteToken(token.id)} disabled={tokenBusy}>
+                        删除
+                      </button>
+                    </div>
+                  )}
                 </div>
               )) : <p className="text-meta">还没有创建集成令牌。</p>}
             </div>
