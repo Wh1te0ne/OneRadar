@@ -189,7 +189,8 @@ export function createApiClient(baseUrl: string) {
       const params = new URLSearchParams({ url, limit: String(limit) });
       return request<ApiFeedPreviewResponse>(baseUrl, "/api/feeds/preview?" + params.toString());
     },
-    getFeedState: () => request<ApiFeedStateResponse>(baseUrl, "/api/feeds/state"),
+    getFeedState: (window: "today" | "week" | "all" = "week") =>
+      request<ApiFeedStateResponse>(baseUrl, `/api/feeds/state?window=${encodeURIComponent(window)}`),
     cacheFeedPreview: (feed: ApiFeedPreviewResponse) =>
       request<ApiFeedStateResponse>(baseUrl, "/api/feeds/cache", {
         method: "POST",

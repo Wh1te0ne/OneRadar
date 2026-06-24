@@ -16,6 +16,9 @@ type SavedFeedSource = {
   lastRefreshStatus?: string | null;
   lastRefreshError?: string | null;
   lastRefreshedAt?: string | null;
+  entryCount: number;
+  todayCount: number;
+  weekCount: number;
 };
 
 const DEFAULT_RSS_URL = "https://blog.python.org/rss.xml";
@@ -30,6 +33,7 @@ type FeedPageSnapshot = {
   apiBaseUrl: string;
   savedSources: SavedFeedSource[];
   feeds: Record<string, ApiFeedPreviewResponse>;
+  loadedWindow: FeedFilter | "all";
 };
 
 const FEED_PAGE_SNAPSHOT_KEY = "oneradar.feed.page.snapshot.v1";
@@ -54,6 +58,7 @@ function parseStoredFeedPageSnapshot(apiBaseUrl: string): FeedPageSnapshot | nul
       apiBaseUrl: parsed.apiBaseUrl,
       savedSources: parsed.savedSources,
       feeds: parsed.feeds as Record<string, ApiFeedPreviewResponse>,
+      loadedWindow: (parsed.loadedWindow as FeedFilter | "all" | undefined) ?? "week",
     };
   } catch {
     return null;
@@ -110,6 +115,12 @@ function compareByPublishedAt(a: FeedEntry, b: FeedEntry) {
   return right - left;
 }
 
+function sourceCount(source: SavedFeedSource, filter: FeedFilter) {
+  if (filter === "today") return source.todayCount;
+  if (filter === "week") return source.weekCount;
+  return source.entryCount;
+}
+
 export function FeedPage() {
   const [searchParams] = useSearchParams();
   const { apiBaseUrl } = useAppState();
@@ -122,8 +133,8 @@ export function FeedPage() {
   const [savedSources, setSavedSources] = useState<SavedFeedSource[]>(cachedSnapshot?.savedSources ?? []);
   const [rssUrl, setRssUrl] = useState("");
   const [feeds, setFeeds] = useState<Record<string, ApiFeedPreviewResponse>>(cachedSnapshot?.feeds ?? {});
+  const [loadedWindow, setLoadedWindow] = useState<FeedFilter | "all">(cachedSnapshot?.loadedWindow ?? "week");
   const [serverHydrated, setServerHydrated] = useState(false);
-  const [initialBackgroundRefresh, setInitialBackgroundRefresh] = useState(false);
   const [loading, setLoading] = useState(!cachedSnapshot);
   const [error, setError] = useState<string | null>(null);
 
@@ -132,7 +143,7 @@ export function FeedPage() {
 
   useEffect(() => {
     let cancelled = false;
-    client.getFeedState()
+    client.getFeedState("week")
       .then((state) => {
         if (cancelled) return;
         const serverSources = state.sources.map((source) => ({
@@ -144,18 +155,16 @@ export function FeedPage() {
           lastRefreshStatus: source.last_refresh_status,
           lastRefreshError: source.last_refresh_error,
           lastRefreshedAt: source.last_refreshed_at,
+          entryCount: source.entry_count,
+          todayCount: source.today_count,
+          weekCount: source.week_count,
         }));
         const nextFeeds = state.feeds;
         if (!(cachedSnapshot && serverSources.length > 0 && Object.keys(nextFeeds).length === 0 && Object.keys(cachedSnapshot.feeds).length > 0)) {
           setFeeds(nextFeeds);
         }
         setSavedSources(serverSources);
-        if (serverSources.length > 0) {
-          setInitialBackgroundRefresh(true);
-          void refreshSources(serverSources, { background: true }).finally(() => {
-            if (!cancelled) setInitialBackgroundRefresh(false);
-          });
-        }
+        setLoadedWindow("week");
       })
       .catch((nextError) => {
         setError(nextError instanceof Error ? nextError.message : "订阅源状态读取失败");
@@ -177,8 +186,9 @@ export function FeedPage() {
       apiBaseUrl,
       savedSources,
       feeds,
+      loadedWindow,
     });
-  }, [apiBaseUrl, feeds, savedSources, serverHydrated]);
+  }, [apiBaseUrl, feeds, savedSources, loadedWindow, serverHydrated]);
 
   async function fetchFeed(targetUrl: string) {
     const url = targetUrl.trim();
@@ -200,6 +210,9 @@ export function FeedPage() {
         lastRefreshStatus: "success",
         lastRefreshError: null,
         lastRefreshedAt: new Date().toISOString(),
+        entryCount: next.items.length,
+        todayCount: next.items.filter((item) => isToday(item.published_at)).length,
+        weekCount: next.items.filter((item) => isRecent(item.published_at)).length,
       })
     );
     void client.cacheFeedPreview(next).catch(() => {
@@ -232,6 +245,9 @@ export function FeedPage() {
             lastRefreshStatus: "failed",
             lastRefreshError: message,
             lastRefreshedAt: new Date().toISOString(),
+            entryCount: 0,
+            todayCount: 0,
+            weekCount: 0,
           })
         );
         void client.markFeedSourceError(failedUrl, message).catch(() => {
@@ -243,42 +259,53 @@ export function FeedPage() {
     }
   }
 
-  async function refreshSources(sources = savedSources, options?: { background?: boolean }) {
-    const nextSources = sources;
-    if (nextSources.length === 0) {
+  async function loadState(window: FeedFilter | "all", options?: { silent?: boolean }) {
+    if (!options?.silent) setLoading(true);
+    setError(null);
+    try {
+      const state = await client.getFeedState(window);
+      const serverSources = state.sources.map((source) => ({
+        sourceUrl: source.source_url,
+        siteTitle: source.site_title,
+        siteUrl: source.site_url,
+        description: source.description,
+        lastLoadedAt: source.last_loaded_at,
+        lastRefreshStatus: source.last_refresh_status,
+        lastRefreshError: source.last_refresh_error,
+        lastRefreshedAt: source.last_refreshed_at,
+        entryCount: source.entry_count,
+        todayCount: source.today_count,
+        weekCount: source.week_count,
+      }));
+      setSavedSources(serverSources);
+      setFeeds(state.feeds);
+      setLoadedWindow(window);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "订阅源状态读取失败");
+    } finally {
+      if (!options?.silent) setLoading(false);
+    }
+  }
+
+  async function refreshSources() {
+    if (savedSources.length === 0) {
       setError(null);
       return;
     }
-    if (!options?.background) setLoading(true);
+    setLoading(true);
     setError(null);
-    const results = await Promise.allSettled(nextSources.map((source) => fetchFeed(source.sourceUrl)));
-    const successful = results
-      .filter((result): result is PromiseFulfilledResult<ApiFeedPreviewResponse> => result.status === "fulfilled")
-      .map((result) => result.value);
-    successful.forEach(rememberFeed);
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") return;
-      const source = nextSources[index];
-      const message = result.reason instanceof Error ? result.reason.message : "RSS 读取失败";
-      setSavedSources((current) =>
-        upsertSavedSource(current, {
-          ...source,
-          lastRefreshStatus: "failed",
-          lastRefreshError: message,
-          lastRefreshedAt: new Date().toISOString(),
-        })
-      );
-      void client.markFeedSourceError(source.sourceUrl, message, source.siteTitle).catch(() => {
-        // Local source error is already visible.
-      });
-    });
-    const failedCount = results.length - successful.length;
-    if (failedCount > 0) {
-      const firstFailure = results.find((result) => result.status === "rejected") as PromiseRejectedResult | undefined;
-      const reason = firstFailure?.reason instanceof Error ? firstFailure.reason.message : "RSS 读取失败";
-      setError(`${failedCount} 个订阅源读取失败，已显示其余可用内容。原因：${reason}`);
+    try {
+      const result = await client.refreshFeeds();
+      await loadState(filter, { silent: true });
+      if (result.failed > 0) {
+        const firstReason = Object.values(result.errors)[0] ?? "RSS 读取失败";
+        setError(`${result.failed} 个订阅源刷新失败，已显示其余可用内容。原因：${firstReason}`);
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "订阅源刷新失败");
+    } finally {
+      setLoading(false);
     }
-    if (!options?.background) setLoading(false);
   }
 
   useEffect(() => {
@@ -291,6 +318,14 @@ export function FeedPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceParam, serverHydrated, savedSources, feeds]);
+
+  useEffect(() => {
+    if (!serverHydrated) return;
+    if (filter === "all" && loadedWindow !== "all") {
+      void loadState("all");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, loadedWindow, serverHydrated]);
 
   const allEntries = useMemo(() => {
     return Object.values(feeds)
@@ -340,12 +375,22 @@ export function FeedPage() {
     window.open(item.link, "_blank", "noopener,noreferrer");
   }
 
-  const todayCount = sourceEntries.filter((item) => isToday(item.published_at)).length;
-  const weekCount = sourceEntries.filter((item) => isRecent(item.published_at)).length;
+  const selectedSourceMeta = selectedSource === "all" ? null : savedSources.find((source) => source.sourceUrl === selectedSource) ?? null;
+  const selectedCounts = selectedSourceMeta
+    ? {
+        today: selectedSourceMeta.todayCount,
+        week: selectedSourceMeta.weekCount,
+        all: selectedSourceMeta.entryCount,
+      }
+    : {
+        today: savedSources.reduce((sum, source) => sum + source.todayCount, 0),
+        week: savedSources.reduce((sum, source) => sum + source.weekCount, 0),
+        all: savedSources.reduce((sum, source) => sum + source.entryCount, 0),
+      };
   const selectedFeed = selectedSource === "all" ? null : feeds[selectedSource];
   const selectedSourceLabel = selectedFeed?.site_title ?? savedSources.find((source) => source.sourceUrl === selectedSource)?.siteTitle ?? "全部订阅源";
   const hasFeedSnapshot = serverHydrated || savedSources.length > 0 || Object.keys(feeds).length > 0;
-  const awaitingInitialFeed = !hasFeedSnapshot || (initialBackgroundRefresh && sourceEntries.length === 0);
+  const awaitingInitialFeed = !hasFeedSnapshot;
   const countLabel = (count: number) => (awaitingInitialFeed ? "…" : String(count));
 
   return (
@@ -369,9 +414,9 @@ export function FeedPage() {
           </div>
           <div className="podcast-tabbar">
             {([
-              ["today", "今天", countLabel(todayCount)],
-              ["week", "近 7 天", countLabel(weekCount)],
-              ["all", "全部", countLabel(sourceEntries.length)],
+              ["today", "今天", countLabel(selectedCounts.today)],
+              ["week", "近 7 天", countLabel(selectedCounts.week)],
+              ["all", "全部", countLabel(selectedCounts.all)],
             ] as [FeedFilter, string, string][]).map(([value, label, count]) => (
               <button
                 key={value}
@@ -386,13 +431,13 @@ export function FeedPage() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          {sourceEntries.length > 0 && (
+          {selectedCounts[filter] > 0 && (
             <div style={{ display: "flex", flexDirection: "column", minWidth: 0, alignItems: "flex-end" }}>
               <span style={{ fontSize: 12, color: "var(--on-surface)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {selectedSourceLabel}
               </span>
               <span style={{ fontSize: 12, color: "var(--outline)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {savedSources.length || Object.keys(feeds).length ? `${Object.keys(feeds).length} 个已加载源 · ${sourceEntries.length} 条` : "订阅源发现流"}
+                {savedSources.length || Object.keys(feeds).length ? `${Object.keys(feeds).length} 个已加载源 · ${selectedCounts[filter]} 条` : "订阅源发现流"}
               </span>
             </div>
           )}
@@ -484,11 +529,11 @@ export function FeedPage() {
           >
             <span className="source-item-icon icon icon-sm">dynamic_feed</span>
             <span className="source-item-title">全部订阅源</span>
-            <span className="source-item-count">{countLabel(allEntries.length)}</span>
+            <span className="source-item-count">{countLabel(selectedCounts[filter])}</span>
           </button>
           {savedSources.map((source) => {
             const loadedFeed = feeds[source.sourceUrl];
-            const count = loadedFeed?.items.length ?? 0;
+            const count = sourceCount(source, filter);
             return (
               <div
                 key={source.sourceUrl}
@@ -520,7 +565,7 @@ export function FeedPage() {
         </aside>
 
         <main style={{ overflowY: "auto", padding: "8px 0" }}>
-          {(loading || initialBackgroundRefresh) && allEntries.length === 0 ? (
+          {loading && allEntries.length === 0 ? (
             <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
               <span className="icon icon-lg" style={{ color: "var(--outline)" }}>sync</span>
             </div>

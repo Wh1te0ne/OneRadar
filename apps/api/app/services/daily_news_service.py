@@ -147,7 +147,7 @@ def _fresh_entries_for_report(report_date: str) -> list[dict[str, Any]]:
     _ = date.fromisoformat(report_date)
     end = _daily_news_reference_time()
     start = end - timedelta(hours=24)
-    state = get_feed_state()
+    state = get_feed_state(since=start.astimezone(UTC), until=end.astimezone(UTC))
     entries: list[dict[str, Any]] = []
     ordinal = 1
     for feed in state.feeds.values():

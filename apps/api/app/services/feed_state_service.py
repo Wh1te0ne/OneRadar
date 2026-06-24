@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from os import getenv
 from pathlib import Path
 from threading import Lock
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import selectinload
 
 from app.db.models import FeedEntry, FeedEntryReadState, FeedSource
 from app.db.session import SessionLocal
@@ -59,24 +58,95 @@ def _save_file_state(state: dict[str, object]) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _file_feed_state() -> FeedStateResponse:
+def _window_bounds(window: str = "all", since: datetime | None = None, until: datetime | None = None) -> tuple[str, datetime | None, datetime | None]:
+    normalized = (window or "all").strip().lower()
+    now = datetime.now(UTC)
+    if since is not None or until is not None:
+        return "custom", since, until or now
+    if normalized == "today":
+        local_now = now.astimezone()
+        start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        return "today", start, now
+    if normalized in {"week", "7d", "recent"}:
+        return "week", now - timedelta(days=7), now
+    return "all", None, None
+
+
+def _in_window(value: datetime | None, start: datetime | None, end: datetime | None) -> bool:
+    if value is None:
+        return start is None and end is None
+    current = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    if start is not None and current < start:
+        return False
+    if end is not None and current > end:
+        return False
+    return True
+
+
+def _count_windows(values: list[datetime | None]) -> tuple[int, int, int]:
+    _, today_start, today_end = _window_bounds("today")
+    _, week_start, week_end = _window_bounds("week")
+    return (
+        len(values),
+        sum(1 for value in values if _in_window(value, today_start, today_end)),
+        sum(1 for value in values if _in_window(value, week_start, week_end)),
+    )
+
+
+def _file_feed_state(window: str = "all", since: datetime | None = None, until: datetime | None = None) -> FeedStateResponse:
+    normalized_window, start, end = _window_bounds(window, since, until)
     with _STATE_LOCK:
         state = _load_file_state()
     sources: list[FeedSourceEntry] = []
+    raw_feeds = dict(state["feeds"])
     for source in state["sources"]:
         if not isinstance(source, dict):
             continue
+        source_url = str(source.get("source_url") or "")
+        raw_items = []
+        raw_feed = raw_feeds.get(source_url)
+        if isinstance(raw_feed, dict) and isinstance(raw_feed.get("items"), list):
+            raw_items = [item for item in raw_feed["items"] if isinstance(item, dict)]
+        published_values = []
+        for item in raw_items:
+            try:
+                value = item.get("published_at")
+                published_values.append(datetime.fromisoformat(str(value)) if value else None)
+            except ValueError:
+                published_values.append(None)
+        entry_count, today_count, week_count = _count_windows(published_values)
+        enriched = {
+            **source,
+            "entry_count": entry_count,
+            "today_count": today_count,
+            "week_count": week_count,
+        }
         try:
-            sources.append(FeedSourceEntry.model_validate(source))
+            sources.append(FeedSourceEntry.model_validate(enriched))
         except ValueError:
             continue
 
     feeds: dict[str, FeedPreviewResponse] = {}
-    for key, feed in dict(state["feeds"]).items():
+    for key, feed in raw_feeds.items():
         if not isinstance(key, str) or not isinstance(feed, dict):
             continue
+        next_feed = dict(feed)
+        raw_items = next_feed.get("items")
+        if isinstance(raw_items, list) and normalized_window != "all":
+            filtered_items = []
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                published_at = item.get("published_at")
+                try:
+                    parsed_at = datetime.fromisoformat(str(published_at)) if published_at else None
+                except ValueError:
+                    parsed_at = None
+                if _in_window(parsed_at, start, end):
+                    filtered_items.append(item)
+            next_feed["items"] = filtered_items
         try:
-            feeds[key] = FeedPreviewResponse.model_validate(feed)
+            feeds[key] = FeedPreviewResponse.model_validate(next_feed)
         except ValueError:
             continue
 
@@ -85,7 +155,7 @@ def _file_feed_state() -> FeedStateResponse:
         for entry in state["read_entries"]
         if isinstance(entry, str) and entry.strip()
     ]
-    return FeedStateResponse(sources=sources, feeds=feeds, read_entries=read_entries)
+    return FeedStateResponse(sources=sources, feeds=feeds, read_entries=read_entries, window=normalized_window)
 
 
 def _entry_read_key(source_url: str, entry_id: str) -> str:
@@ -113,7 +183,8 @@ def _with_saved_state(item: FeedPreviewItem) -> FeedPreviewItem:
     return item
 
 
-def _source_entry(record: FeedSource) -> FeedSourceEntry:
+def _source_entry(record: FeedSource, counts: tuple[int, int, int] = (0, 0, 0)) -> FeedSourceEntry:
+    entry_count, today_count, week_count = counts
     return FeedSourceEntry(
         source_url=record.source_url,
         site_title=record.site_title,
@@ -123,10 +194,13 @@ def _source_entry(record: FeedSource) -> FeedSourceEntry:
         last_refresh_status=record.last_refresh_status,
         last_refresh_error=record.last_refresh_error,
         last_refreshed_at=record.last_refreshed_at,
+        entry_count=entry_count,
+        today_count=today_count,
+        week_count=week_count,
     )
 
 
-def _feed_response(record: FeedSource, read_entry_ids: set[str]) -> FeedPreviewResponse:
+def _feed_response(record: FeedSource, entries: list[FeedEntry], read_entry_ids: set[str]) -> FeedPreviewResponse:
     items = [
         _with_saved_state(
             FeedPreviewItem(
@@ -140,7 +214,7 @@ def _feed_response(record: FeedSource, read_entry_ids: set[str]) -> FeedPreviewR
             )
         )
         for entry in sorted(
-            record.entries,
+            entries,
             key=lambda item: item.published_at or datetime.fromtimestamp(0, tz=UTC),
             reverse=True,
         )
@@ -156,16 +230,40 @@ def _feed_response(record: FeedSource, read_entry_ids: set[str]) -> FeedPreviewR
     )
 
 
-def get_feed_state() -> FeedStateResponse:
+def get_feed_state(window: str = "all", since: datetime | None = None, until: datetime | None = None) -> FeedStateResponse:
+    normalized_window, start, end = _window_bounds(window, since, until)
     try:
         with SessionLocal() as session:
             user = get_primary_user(session)
             sources = session.execute(
                 select(FeedSource)
                 .where(FeedSource.user_id == user.id)
-                .options(selectinload(FeedSource.entries))
                 .order_by(FeedSource.last_loaded_at.desc())
             ).scalars().all()
+            source_ids = [source.id for source in sources]
+            count_rows = []
+            entries_by_source: dict[object, list[FeedEntry]] = {source.id: [] for source in sources}
+            if source_ids:
+                count_rows = session.execute(
+                    select(FeedEntry.feed_source_id, FeedEntry.published_at)
+                    .where(FeedEntry.feed_source_id.in_(source_ids))
+                ).all()
+                entries_query = select(FeedEntry).where(FeedEntry.feed_source_id.in_(source_ids))
+                if start is not None:
+                    entries_query = entries_query.where(FeedEntry.published_at >= start)
+                if end is not None:
+                    entries_query = entries_query.where(FeedEntry.published_at <= end)
+                entries = session.execute(entries_query).scalars().all()
+                for entry in entries:
+                    entries_by_source.setdefault(entry.feed_source_id, []).append(entry)
+            counts_by_source: dict[object, tuple[int, int, int]] = {}
+            for source in sources:
+                published_values = [
+                    published_at
+                    for feed_source_id, published_at in count_rows
+                    if feed_source_id == source.id
+                ]
+                counts_by_source[source.id] = _count_windows(published_values)
             read_states = session.execute(
                 select(FeedEntryReadState, FeedEntry, FeedSource)
                 .join(FeedEntry, FeedEntryReadState.feed_entry_id == FeedEntry.id)
@@ -178,12 +276,20 @@ def get_feed_state() -> FeedStateResponse:
             ]
             read_ids = {str(entry.id) for _, entry, _ in read_states}
             return FeedStateResponse(
-                sources=[_source_entry(source) for source in sources],
-                feeds={source.source_url: _feed_response(source, read_ids) for source in sources},
+                sources=[_source_entry(source, counts_by_source.get(source.id, (0, 0, 0))) for source in sources],
+                feeds={
+                    source.source_url: _feed_response(
+                        source,
+                        entries_by_source.get(source.id, []),
+                        read_ids,
+                    )
+                    for source in sources
+                },
                 read_entries=read_entries,
+                window=normalized_window,
             )
     except SQLAlchemyError:
-        return _file_feed_state()
+        return _file_feed_state(normalized_window, start, end)
 
 
 def upsert_feed_cache(feed: FeedPreviewResponse) -> FeedStateResponse:

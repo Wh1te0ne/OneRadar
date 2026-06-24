@@ -31,8 +31,8 @@ def preview_feed(url: str, limit: int = 0) -> FeedPreviewResponse:
 
 
 @router.get("/state")
-def get_feed_state() -> FeedStateResponse:
-    return get_feed_state_service()
+def get_feed_state(window: str = "week") -> FeedStateResponse:
+    return get_feed_state_service(window=window)
 
 
 @router.post("/cache")

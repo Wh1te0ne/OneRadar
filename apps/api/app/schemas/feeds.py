@@ -54,12 +54,16 @@ class FeedSourceEntry(BaseModel):
     last_refresh_status: str | None = None
     last_refresh_error: str | None = None
     last_refreshed_at: datetime | None = None
+    entry_count: int = 0
+    today_count: int = 0
+    week_count: int = 0
 
 
 class FeedStateResponse(BaseModel):
     sources: list[FeedSourceEntry] = Field(default_factory=list)
     feeds: dict[str, FeedPreviewResponse] = Field(default_factory=dict)
     read_entries: list[str] = Field(default_factory=list)
+    window: str = "all"
 
 
 class FeedRefreshResponse(BaseModel):

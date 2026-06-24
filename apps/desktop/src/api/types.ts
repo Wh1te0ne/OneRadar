@@ -47,12 +47,16 @@ export type ApiFeedSourceEntry = {
   last_refresh_status?: string | null;
   last_refresh_error?: string | null;
   last_refreshed_at?: string | null;
+  entry_count: number;
+  today_count: number;
+  week_count: number;
 };
 
 export type ApiFeedStateResponse = {
   sources: ApiFeedSourceEntry[];
   feeds: Record<string, ApiFeedPreviewResponse>;
   read_entries: string[];
+  window: "today" | "week" | "all" | "custom" | string;
 };
 
 export type ApiFeedRefreshResponse = {
