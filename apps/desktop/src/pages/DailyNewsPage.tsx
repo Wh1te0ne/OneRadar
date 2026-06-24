@@ -282,8 +282,9 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
     }
   }
 
-  async function syncReportInBackground(date: string) {
+  async function syncReportInBackground(date: string, cachedReport: ApiDailyNewsReportResponse | null) {
     if (shareMode || date !== todayDate() || backgroundSyncing || pendingGeneration?.date === date) return;
+    if (cachedReport?.status === "ready") return;
     if (!hasConfiguredLlmProvider(providers)) {
       const nextProviders = await loadProviders();
       if (!hasConfiguredLlmProvider(nextProviders)) return;
@@ -299,7 +300,7 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
     }
     setBackgroundSyncing(date);
     try {
-      const nextReport = await client.generateDailyNews(date, true);
+      const nextReport = await client.generateDailyNews(date, false);
       if (selectedDateRef.current === date) {
         setError(null);
         setReport(nextReport);
@@ -394,8 +395,8 @@ export function DailyNewsPage({ shareMode = false }: DailyNewsPageProps) {
   }
 
   useEffect(() => {
-    void loadReport(selectedDate).finally(() => {
-      void syncReportInBackground(selectedDate);
+    void loadReport(selectedDate).then((cachedReport) => {
+      void syncReportInBackground(selectedDate, cachedReport);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, selectedDate, shareKey, shareMode]);
