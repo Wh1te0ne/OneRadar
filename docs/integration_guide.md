@@ -153,6 +153,24 @@ Response shape:
   "original_text": "Clean extracted text...",
   "source_text_kind": "readable_text",
   "summary": "Chinese summary...",
+  "source_material": {
+    "kind": "article_text",
+    "text": "Clean extracted text...",
+    "markdown": "# Article title\n\n> 来源：...\n\n## 原始材料\n\n...",
+    "segments": [],
+    "assets": [],
+    "completeness": "full",
+    "warnings": []
+  },
+  "ai_summary": {
+    "summary": "Chinese summary...",
+    "markdown": "## AI 总结\n\nChinese summary...",
+    "key_points": ["Chinese summary..."],
+    "provider": "extractive",
+    "model_name": null
+  },
+  "source_markdown": "# Article title\n\n...",
+  "summary_markdown": "## AI 总结\n\nChinese summary...",
   "summary_provider": "extractive",
   "model_name": null,
   "metadata": {},
@@ -167,6 +185,8 @@ Current platform behavior:
 - Bilibili: metadata and visible description summary.
 - Douyin and Xiaohongshu: visible platform text and media metadata through the open-source `parsehub` parser. The endpoint does not download or save media.
 - YouTube: recognized, but the full adapter is not connected yet.
+
+For Obsidian or note-taking integrations, prefer `summary_markdown` for the note front section and `source_markdown` for the traceable source-material section. Keep `source_material.completeness` and `source_material.warnings` in the note so video/social posts are not mistaken for full transcripts. `original_text` and `summary` remain as backwards-compatible flat fields.
 
 ## Daily News
 

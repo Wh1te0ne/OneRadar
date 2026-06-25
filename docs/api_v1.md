@@ -275,6 +275,8 @@ Current behavior:
 
 - Web pages and WeChat article URLs use the existing article extraction path and return `source_text_kind=readable_text`.
 - Bilibili URLs return video metadata and visible description as `source_text_kind=metadata_description`; full subtitle/transcript analysis remains adapter work.
+- Responses preserve flat compatibility fields `original_text` and `summary`, and additionally return Obsidian-friendly structured fields: `source_material`, `ai_summary`, `source_markdown`, and `summary_markdown`.
+- `source_material.completeness` distinguishes `full` article text from `partial` visible social text and `metadata_only` video metadata. Callers should display `source_material.warnings` whenever completeness is not `full`.
 - Douyin and Xiaohongshu URLs use the open-source `parsehub` Python package and return visible platform text as `source_text_kind=platform_visible_text`, plus media metadata when available. The server does not download or persist media.
 - YouTube URLs are recognized but return a clear “adapter not connected” error until a platform-specific extractor is implemented.
 - If no summarization provider is configured, the endpoint returns an extractive summary and `summary_provider=extractive`.
