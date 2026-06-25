@@ -1,6 +1,6 @@
 """feed translation fields and refresh settings
 
-Revision ID: 0013_feed_translation_and_refresh_settings
+Revision ID: 0013_feed_translation_settings
 Revises: 0012_integration_tokens
 Create Date: 2026-06-25 00:00:00.000000
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0013_feed_translation_and_refresh_settings"
+revision = "0013_feed_translation_settings"
 down_revision = "0012_integration_tokens"
 branch_labels = None
 depends_on = None
