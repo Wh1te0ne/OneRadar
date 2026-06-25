@@ -86,7 +86,7 @@ curl -X POST "https://oneradar.whiteone.cn:8112/api/mcp" \
   }'
 ```
 
-Use MCP for another AI project that needs OneRadar RSS/news data. OneRadar supplies raw entries and source status; the downstream project owns ranking, grouping, writing, and delivery.
+Use MCP for another AI project that needs OneRadar RSS/news data. OneRadar supplies source status plus Chinese-first entry payloads: `title`/`summary` are display fields, `original_title`/`original_summary` keep the source text, and `translated_title`/`translated_summary` expose persisted translations when available. The downstream project owns ranking, grouping, writing, and delivery.
 
 ## Temporary URL Analysis
 

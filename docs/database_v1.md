@@ -207,7 +207,7 @@ RSS discovery is persisted in PostgreSQL so Docker Compose deployments and deskt
 Tables:
 
 - `feed_sources`: one row per subscribed RSS URL, scoped by `user_id`. Stores source URL, site title/link/description, last loaded time, and last refresh status/error.
-- `feed_entries`: cached RSS entries for a source. Stores stable entry id, article link, title, summary, author, published time, tags, and raw item metadata. Entries remain until the source is removed.
+- `feed_entries`: cached RSS entries for a source. Stores stable entry id, article link, original title, original summary, translated title/summary, translation status/provenance/source hash, author, published time, tags, and raw item metadata. Entries remain until the source is removed.
 - `daily_news_reports`: one generated RSS daily brief per user per date. Stores the generated headline, lead story, topical sections, source entry references, provider/model provenance, freshness window, and generation timestamp. Regenerating a date overwrites that day's report so each date keeps only one current brief.
 - `feed_entry_read_states`: per-user read markers for cached entries.
 
@@ -216,11 +216,12 @@ Indexes:
 - unique index on `feed_sources(user_id, source_url)`
 - unique index on `feed_entries(feed_source_id, entry_id)`
 - index on `feed_entries(user_id, published_at desc)`
+- index on `feed_entries(translation_status, published_at)` for pending translation scans
 - unique index on `feed_entry_read_states(user_id, feed_entry_id)`
 
 Rules:
 
-- Loading or refreshing a feed upserts entries and records refresh success or failure.
+- Loading or refreshing a feed upserts entries, marks newly changed rows pending for translation, translates new non-Chinese entries through the configured summarization provider, and records refresh success or failure.
 - Opening an RSS article preview marks the cached feed entry as read.
 - Removing a source deletes its cached entries and read markers through cascade.
 - Saving an RSS article to 稍后阅读 creates a normal `content_items` record and persists the cleaned article body there; the feed cache remains only the discovery surface.

@@ -1,8 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+FeedRefreshIntervalUnit = Literal["minutes", "hours"]
+
+
+class FeedRefreshSettingsEntry(BaseModel):
+    enabled: bool = True
+    interval_value: int = 30
+    interval_unit: FeedRefreshIntervalUnit = "minutes"
+    interval_seconds: int = 1800
+    updated_at: datetime | None = None
+
+
+class FeedRefreshSettingsUpdateRequest(BaseModel):
+    enabled: bool = True
+    interval_value: int = Field(ge=1, le=60)
+    interval_unit: FeedRefreshIntervalUnit
 
 
 class BilibiliIntegrationSettingsEntry(BaseModel):

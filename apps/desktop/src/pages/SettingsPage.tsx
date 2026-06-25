@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createApiClient } from "../api";
-import type { ApiIntegrationToken, ApiProvider } from "../api";
+import type { ApiFeedRefreshSettings, ApiIntegrationToken, ApiProvider } from "../api";
 import { useAppState } from "../state/appState";
 
 const DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
@@ -16,6 +16,7 @@ type ProviderKind = "doubao" | "openai_compatible" | "deepseek" | "custom";
 type ProviderCapability = "llm" | "asr";
 type ThinkingMode = "default" | "enabled" | "disabled";
 type ModelInputCapability = "text" | "image" | "audio" | "video";
+type FeedRefreshUnit = "minutes" | "hours";
 
 const modelInputCapabilityOptions: Array<{ value: ModelInputCapability; label: string }> = [
   { value: "text", label: "文字" },
@@ -193,6 +194,12 @@ function formatCheckedAt(value: string | undefined) {
   }).format(new Date(value));
 }
 
+function formatRefreshInterval(settings: ApiFeedRefreshSettings | null) {
+  if (!settings?.enabled) return "已关闭";
+  const unit = settings.interval_unit === "hours" ? "小时" : "分钟";
+  return `每 ${settings.interval_value} ${unit}`;
+}
+
 export function SettingsPage() {
   const {
     apiBaseUrl,
@@ -218,6 +225,12 @@ export function SettingsPage() {
   const [editingTokenName, setEditingTokenName] = useState("");
   const [tokenBusy, setTokenBusy] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
+  const [feedRefreshSettings, setFeedRefreshSettings] = useState<ApiFeedRefreshSettings | null>(null);
+  const [feedRefreshEnabled, setFeedRefreshEnabled] = useState(true);
+  const [feedRefreshValue, setFeedRefreshValue] = useState("30");
+  const [feedRefreshUnit, setFeedRefreshUnit] = useState<FeedRefreshUnit>("minutes");
+  const [feedRefreshSaving, setFeedRefreshSaving] = useState(false);
+  const [feedRefreshError, setFeedRefreshError] = useState<string | null>(null);
 
   const llmProviders = providers.filter((provider) => capabilityOf(provider) === "llm");
   const asrProviders = providers.filter((provider) => capabilityOf(provider) === "asr");
@@ -239,6 +252,54 @@ export function SettingsPage() {
   useEffect(() => {
     void loadIntegrationTokens();
   }, [client]);
+
+  async function loadFeedRefreshSettings() {
+    setFeedRefreshError(null);
+    try {
+      const result = await client.getFeedRefreshSettings();
+      setFeedRefreshSettings(result);
+      setFeedRefreshEnabled(result.enabled);
+      setFeedRefreshValue(String(result.interval_value));
+      setFeedRefreshUnit(result.interval_unit);
+    } catch (e) {
+      setFeedRefreshError(e instanceof Error ? e.message : "读取 RSS 自动刷新设置失败");
+    }
+  }
+
+  useEffect(() => {
+    void loadFeedRefreshSettings();
+  }, [client]);
+
+  async function saveFeedRefreshSettings() {
+    const parsedValue = Number.parseInt(feedRefreshValue, 10);
+    if (!Number.isFinite(parsedValue)) {
+      setFeedRefreshError("请输入有效的刷新间隔。");
+      return;
+    }
+    if (feedRefreshUnit === "minutes" && (parsedValue < 1 || parsedValue > 60)) {
+      setFeedRefreshError("分钟间隔必须在 1 到 60 之间。");
+      return;
+    }
+    if (feedRefreshUnit === "hours" && (parsedValue < 1 || parsedValue > 24)) {
+      setFeedRefreshError("小时间隔必须在 1 到 24 之间。");
+      return;
+    }
+    setFeedRefreshSaving(true);
+    setFeedRefreshError(null);
+    try {
+      const result = await client.updateFeedRefreshSettings({
+        enabled: feedRefreshEnabled,
+        interval_value: parsedValue,
+        interval_unit: feedRefreshUnit,
+      });
+      setFeedRefreshSettings(result);
+      showAppToast("RSS 自动刷新设置已保存。", "success");
+    } catch (e) {
+      setFeedRefreshError(e instanceof Error ? e.message : "保存 RSS 自动刷新设置失败");
+    } finally {
+      setFeedRefreshSaving(false);
+    }
+  }
 
   async function saveProvider(form: ProviderFormState) {
     const existingProvider = providers.find((provider) => provider.id === form.id);
@@ -743,6 +804,61 @@ export function SettingsPage() {
             </div>
           </div>
           <p className="text-meta">OneRadar 会每 10 分钟自动检查一次，有可用更新时顶部设置按钮会显示红点。</p>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-section-title">
+            <span className="icon icon-sm" style={{ marginRight: 8, color: "var(--tertiary)", verticalAlign: "middle" }}>rss_feed</span>
+            RSS 自动刷新
+          </div>
+          <div className="settings-model-block">
+            <div className="settings-model-block-header">
+              <div>
+                <h3>刷新间隔</h3>
+                <p>分钟间隔按整点对齐，例如 30 分钟会在每小时 00 分和 30 分刷新。</p>
+              </div>
+              <span className="chip chip-neutral">{formatRefreshInterval(feedRefreshSettings)}</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", gap: 12, alignItems: "end" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={feedRefreshEnabled}
+                  onChange={(event) => setFeedRefreshEnabled(event.target.checked)}
+                />
+                <span className="text-caption">启用</span>
+              </label>
+              <label>
+                <span className="text-caption">间隔</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={feedRefreshUnit === "minutes" ? 60 : 24}
+                  value={feedRefreshValue}
+                  onChange={(event) => setFeedRefreshValue(event.target.value)}
+                />
+              </label>
+              <label>
+                <span className="text-caption">单位</span>
+                <select
+                  className="input"
+                  value={feedRefreshUnit}
+                  onChange={(event) => setFeedRefreshUnit(event.target.value as FeedRefreshUnit)}
+                >
+                  <option value="minutes">分钟</option>
+                  <option value="hours">小时</option>
+                </select>
+              </label>
+            </div>
+            <div className="btn-group">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => void saveFeedRefreshSettings()} disabled={feedRefreshSaving}>
+                <span className="icon icon-sm">{feedRefreshSaving ? "sync" : "save"}</span>
+                {feedRefreshSaving ? "保存中…" : "保存刷新设置"}
+              </button>
+            </div>
+            {feedRefreshError && <div className="feedback feedback-error">{feedRefreshError}</div>}
+          </div>
         </div>
 
         <div className="settings-section">

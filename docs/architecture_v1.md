@@ -75,7 +75,7 @@ The desktop client owns:
 
 OneRadar continuously refreshes only the RSS sources the user explicitly adds.
 
-RSS is a bounded discovery surface, not a broad crawler. Cached entries accumulate until the source is deleted, and daily news is generated from this cached state.
+RSS is a bounded discovery surface, not a broad crawler. Cached entries accumulate until the source is deleted, newly refreshed non-Chinese entries are translated and stored on the feed entry row, and daily news is generated from this cached Chinese-first state.
 
 ### 3.2 Temporary analysis only for pasted links
 

@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.cookies import SimpleCookie
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.core.config import get_settings
 from app.db.models import IntegrationSetting
 from app.db.session import SessionLocal
 from app.schemas.settings import (
     BilibiliIntegrationCookieParseResponse,
     BilibiliIntegrationSettingsEntry,
     BilibiliIntegrationSettingsUpdateRequest,
+    FeedRefreshSettingsEntry,
+    FeedRefreshSettingsUpdateRequest,
     IntegrationSecretStatus,
 )
 from app.services.db_access import get_bilibili_integration_setting, get_primary_user
@@ -19,11 +23,25 @@ from app.services.store import STORE, seed_store
 
 BILIBILI_INTEGRATION_KEY = 'bilibili'
 BILIBILI_DISPLAY_NAME = 'Bilibili'
+FEED_REFRESH_SETTINGS_KEY = 'feed_refresh'
+FEED_REFRESH_DISPLAY_NAME = 'RSS 自动刷新'
 COOKIE_KEYS = {
     'SESSDATA': 'sessdata',
     'bili_jct': 'bili_jct',
     'buvid3': 'buvid3',
 }
+
+
+@dataclass(frozen=True, slots=True)
+class FeedRefreshRuntimeSettings:
+    enabled: bool
+    interval_value: int
+    interval_unit: str
+
+    @property
+    def interval_seconds(self) -> int:
+        multiplier = 3600 if self.interval_unit == "hours" else 60
+        return self.interval_value * multiplier
 
 
 def _normalize_secret(value: str | None) -> str | None:
@@ -39,6 +57,178 @@ def _mask_secret(value: str | None) -> str | None:
     if len(value) <= 8:
         return '*' * len(value)
     return f'{value[:4]}...{value[-4:]}'
+
+
+def _default_feed_refresh_runtime_settings() -> FeedRefreshRuntimeSettings:
+    settings = get_settings()
+    seconds = max(60, int(settings.feed_refresh_interval_seconds))
+    if seconds % 3600 == 0:
+        hours = max(1, min(24, seconds // 3600))
+        return FeedRefreshRuntimeSettings(
+            enabled=bool(settings.feed_refresh_enabled),
+            interval_value=hours,
+            interval_unit="hours",
+        )
+    minutes = max(1, min(60, round(seconds / 60)))
+    return FeedRefreshRuntimeSettings(
+        enabled=bool(settings.feed_refresh_enabled),
+        interval_value=minutes,
+        interval_unit="minutes",
+    )
+
+
+def _validate_feed_refresh_settings(
+    enabled: bool,
+    interval_value: int,
+    interval_unit: str,
+) -> FeedRefreshRuntimeSettings:
+    if interval_unit not in {"minutes", "hours"}:
+        raise ValueError("刷新单位只支持分钟或小时。")
+    if interval_unit == "minutes" and not 1 <= interval_value <= 60:
+        raise ValueError("分钟间隔必须在 1 到 60 之间。")
+    if interval_unit == "hours" and not 1 <= interval_value <= 24:
+        raise ValueError("小时间隔必须在 1 到 24 之间。")
+    return FeedRefreshRuntimeSettings(
+        enabled=enabled,
+        interval_value=interval_value,
+        interval_unit=interval_unit,
+    )
+
+
+def _feed_refresh_entry_from_runtime(
+    settings: FeedRefreshRuntimeSettings,
+    updated_at: datetime | None = None,
+) -> FeedRefreshSettingsEntry:
+    return FeedRefreshSettingsEntry(
+        enabled=settings.enabled,
+        interval_value=settings.interval_value,
+        interval_unit=settings.interval_unit,  # type: ignore[arg-type]
+        interval_seconds=settings.interval_seconds,
+        updated_at=updated_at,
+    )
+
+
+def _runtime_from_feed_refresh_config(
+    config: dict[str, Any],
+    enabled: bool,
+) -> FeedRefreshRuntimeSettings:
+    default = _default_feed_refresh_runtime_settings()
+    interval_unit = str(config.get("interval_unit") or default.interval_unit)
+    try:
+        interval_value = int(config.get("interval_value") or default.interval_value)
+    except (TypeError, ValueError):
+        interval_value = default.interval_value
+    return _validate_feed_refresh_settings(enabled, interval_value, interval_unit)
+
+
+def get_feed_refresh_runtime_settings() -> FeedRefreshRuntimeSettings:
+    try:
+        with SessionLocal() as session:
+            user = get_primary_user(session)
+            setting = next(
+                (
+                    item
+                    for item in user.integration_settings
+                    if item.integration_key == FEED_REFRESH_SETTINGS_KEY
+                ),
+                None,
+            )
+            if setting is None:
+                return _default_feed_refresh_runtime_settings()
+            return _runtime_from_feed_refresh_config(
+                dict(setting.config or {}),
+                bool(setting.is_enabled),
+            )
+    except SQLAlchemyError:
+        seed_store()
+        with STORE.lock:
+            record = STORE.integrations.get(FEED_REFRESH_SETTINGS_KEY)
+            if record is None:
+                return _default_feed_refresh_runtime_settings()
+            return _runtime_from_feed_refresh_config(
+                dict(record.get("config") or {}),
+                bool(record.get("is_enabled", True)),
+            )
+
+
+def get_feed_refresh_settings() -> FeedRefreshSettingsEntry:
+    try:
+        with SessionLocal() as session:
+            user = get_primary_user(session)
+            setting = next(
+                (
+                    item
+                    for item in user.integration_settings
+                    if item.integration_key == FEED_REFRESH_SETTINGS_KEY
+                ),
+                None,
+            )
+            if setting is None:
+                return _feed_refresh_entry_from_runtime(_default_feed_refresh_runtime_settings())
+            runtime = _runtime_from_feed_refresh_config(
+                dict(setting.config or {}),
+                bool(setting.is_enabled),
+            )
+            return _feed_refresh_entry_from_runtime(runtime, setting.updated_at)
+    except SQLAlchemyError:
+        runtime = get_feed_refresh_runtime_settings()
+        record = STORE.integrations.get(FEED_REFRESH_SETTINGS_KEY)
+        updated_at = record.get("updated_at") if isinstance(record, dict) else None
+        return _feed_refresh_entry_from_runtime(runtime, updated_at)
+
+
+def update_feed_refresh_settings(
+    payload: FeedRefreshSettingsUpdateRequest,
+) -> FeedRefreshSettingsEntry:
+    runtime = _validate_feed_refresh_settings(
+        payload.enabled,
+        int(payload.interval_value),
+        payload.interval_unit,
+    )
+    config = {
+        "interval_value": runtime.interval_value,
+        "interval_unit": runtime.interval_unit,
+    }
+    now = datetime.now(UTC)
+    try:
+        with SessionLocal() as session:
+            user = get_primary_user(session)
+            setting = next(
+                (
+                    item
+                    for item in user.integration_settings
+                    if item.integration_key == FEED_REFRESH_SETTINGS_KEY
+                ),
+                None,
+            )
+            if setting is None:
+                setting = IntegrationSetting(
+                    user_id=user.id,
+                    integration_key=FEED_REFRESH_SETTINGS_KEY,
+                    display_name=FEED_REFRESH_DISPLAY_NAME,
+                    is_enabled=runtime.enabled,
+                    config=config,
+                )
+                session.add(setting)
+            else:
+                setting.display_name = FEED_REFRESH_DISPLAY_NAME
+                setting.is_enabled = runtime.enabled
+                setting.config = config
+            session.commit()
+            session.refresh(setting)
+            return _feed_refresh_entry_from_runtime(runtime, setting.updated_at)
+    except SQLAlchemyError:
+        seed_store()
+        with STORE.lock:
+            STORE.integrations[FEED_REFRESH_SETTINGS_KEY] = {
+                "id": FEED_REFRESH_SETTINGS_KEY,
+                "integration_key": FEED_REFRESH_SETTINGS_KEY,
+                "display_name": FEED_REFRESH_DISPLAY_NAME,
+                "is_enabled": runtime.enabled,
+                "config": config,
+                "updated_at": now,
+            }
+        return _feed_refresh_entry_from_runtime(runtime, now)
 
 
 def _parse_cookie_header(raw_cookie: str | None) -> dict[str, str | None]:

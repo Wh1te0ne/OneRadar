@@ -124,6 +124,56 @@ def test_feed_preview_route_returns_parsed_items(client, monkeypatch) -> None:
     assert body["items"][1]["author"] == "Hugo van Kemenade"
 
 
+def test_feed_cache_returns_persisted_translation_fields(client, monkeypatch) -> None:
+    from app.db.models import FeedEntry
+    from app.db.session import SessionLocal
+    from app.services import feed_translation_service
+
+    def fake_translate_entries(*, entry_ids=None, user_id=None, published_since=None, limit=200):
+        _ = user_id, published_since, limit
+        with SessionLocal() as session:
+            for entry_id in entry_ids or []:
+                entry = session.get(FeedEntry, entry_id)
+                if entry is None:
+                    continue
+                entry.translated_title = "OpenAI 发布新模型"
+                entry.translated_summary = "新模型提升代码能力。"
+                entry.translation_status = "done"
+            session.commit()
+
+    monkeypatch.setattr(feed_translation_service, "translate_feed_entries", fake_translate_entries)
+
+    response = client.post(
+        "/api/feeds/cache",
+        json={
+            "feed": {
+                "source_url": "https://example.com/rss.xml",
+                "site_title": "Example",
+                "site_url": "https://example.com",
+                "description": None,
+                "fetched_at": "2026-06-25T00:10:00Z",
+                "items": [
+                    {
+                        "id": "entry-1",
+                        "title": "OpenAI releases a new model",
+                        "link": "https://example.com/openai-model",
+                        "summary": "The new model improves coding.",
+                        "author": "Reporter",
+                        "published_at": "2026-06-25T00:00:00Z",
+                        "tags": ["AI"],
+                    }
+                ],
+            }
+        },
+    )
+
+    assert response.status_code == 200, response.json()
+    item = response.json()["feeds"]["https://example.com/rss.xml"]["items"][0]
+    assert item["translated_title"] == "OpenAI 发布新模型"
+    assert item["translated_summary"] == "新模型提升代码能力。"
+    assert item["translation_status"] == "done"
+
+
 def test_feed_preview_limit_zero_returns_all_feed_items(client, monkeypatch) -> None:
     items = "\n".join(
         f"""
@@ -364,7 +414,7 @@ def test_feed_state_routes_persist_cache_and_read_markers(client, monkeypatch) -
     assert read_response.status_code == 200, read_response.json()
     assert "https://example.com/rss.xml:entry-1" in read_response.json()["read_entries"]
 
-    state_response = client.get("/api/feeds/state")
+    state_response = client.get("/api/feeds/state", params={"window": "all"})
     assert state_response.status_code == 200, state_response.json()
     state = state_response.json()
     assert state["feeds"]["https://example.com/rss.xml"]["items"][0]["title"] == "Entry One"
@@ -451,7 +501,7 @@ def test_feed_refresh_route_refreshes_cached_sources(client, monkeypatch) -> Non
 
     assert response.status_code == 200, response.json()
     assert response.json() == {"total": 1, "refreshed": 1, "failed": 0, "errors": {}}
-    state = client.get("/api/feeds/state").json()
+    state = client.get("/api/feeds/state", params={"window": "all"}).json()
     assert state["feeds"]["https://example.com/rss.xml"]["site_title"] == "New Feed"
     assert state["feeds"]["https://example.com/rss.xml"]["items"][0]["title"] == "New Entry"
     state_path.unlink(missing_ok=True)
@@ -509,6 +559,6 @@ def test_feed_refresh_keeps_existing_db_entries_not_in_latest_feed(client, monke
     response = client.post("/api/feeds/refresh")
 
     assert response.status_code == 200, response.json()
-    entries = client.get("/api/feeds/state").json()["feeds"]["https://example.com/rss.xml"]["items"]
+    entries = client.get("/api/feeds/state", params={"window": "all"}).json()["feeds"]["https://example.com/rss.xml"]["items"]
     titles = {entry["title"] for entry in entries}
     assert {"Old Entry", "New Entry"} <= titles

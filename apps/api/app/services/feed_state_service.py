@@ -17,6 +17,7 @@ from app.schemas.feeds import (
     FeedSourceEntry,
     FeedStateResponse,
 )
+from app.services import feed_translation_service
 from app.services.db_access import get_primary_user
 from app.services.items_service import find_saved_item_for_url
 
@@ -206,8 +207,22 @@ def _feed_response(record: FeedSource, entries: list[FeedEntry], read_entry_ids:
             FeedPreviewItem(
                 id=entry.entry_id,
                 title=entry.title,
+                translated_title=entry.translated_title,
+                display_title=feed_translation_service.display_feed_title(
+                    entry.title,
+                    entry.translated_title,
+                ),
                 link=entry.link,
                 summary=entry.summary,
+                translated_summary=entry.translated_summary,
+                display_summary=feed_translation_service.display_feed_summary(
+                    entry.summary,
+                    entry.translated_summary,
+                ),
+                translation_status=entry.translation_status,
+                translation_provider=entry.translation_provider,
+                translation_model=entry.translation_model,
+                translated_at=entry.translated_at,
                 author=entry.author,
                 published_at=entry.published_at,
                 tags=list(entry.tags or []),
@@ -293,6 +308,7 @@ def get_feed_state(window: str = "all", since: datetime | None = None, until: da
 
 
 def upsert_feed_cache(feed: FeedPreviewResponse) -> FeedStateResponse:
+    translation_entry_ids = []
     try:
         with SessionLocal() as session:
             user = get_primary_user(session)
@@ -339,14 +355,33 @@ def upsert_feed_cache(feed: FeedPreviewResponse) -> FeedStateResponse:
                         link=item.link,
                     )
                     session.add(entry)
+                    session.flush()
+                    translation_entry_ids.append(entry.id)
                 entry.title = item.title
                 entry.link = item.link
                 entry.summary = item.summary
+                source_hash = feed_translation_service.feed_translation_source_hash(
+                    entry.title,
+                    entry.summary,
+                )
+                if entry.translation_source_hash != source_hash:
+                    entry.translated_title = None
+                    entry.translated_summary = None
+                    entry.translation_language = None
+                    entry.translation_provider = None
+                    entry.translation_model = None
+                    entry.translation_status = "pending"
+                    entry.translation_error = None
+                    entry.translation_source_hash = source_hash
+                    entry.translated_at = None
+                    if entry.id not in translation_entry_ids:
+                        translation_entry_ids.append(entry.id)
                 entry.author = item.author
                 entry.published_at = item.published_at
                 entry.tags = list(item.tags or [])
                 entry.raw_item = item.model_dump(mode="json")
             session.commit()
+        feed_translation_service.translate_feed_entries(entry_ids=translation_entry_ids)
         return get_feed_state()
     except SQLAlchemyError:
         with _STATE_LOCK:

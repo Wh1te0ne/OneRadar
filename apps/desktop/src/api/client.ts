@@ -12,6 +12,7 @@ import type {
   ApiFeedArticlePreviewResponse,
   ApiFeedPreviewResponse,
   ApiFeedRefreshResponse,
+  ApiFeedRefreshSettings,
   ApiFeedStateResponse,
   ApiFolderEntry,
   ApiHealth,
@@ -196,6 +197,13 @@ export function createApiClient(baseUrl: string) {
     },
     getFeedState: (window: "today" | "week" | "all" = "week") =>
       request<ApiFeedStateResponse>(baseUrl, `/api/feeds/state?window=${encodeURIComponent(window)}`),
+    getFeedRefreshSettings: () =>
+      request<ApiFeedRefreshSettings>(baseUrl, "/api/settings/feed-refresh"),
+    updateFeedRefreshSettings: (payload: { enabled: boolean; interval_value: number; interval_unit: "minutes" | "hours" }) =>
+      request<ApiFeedRefreshSettings>(baseUrl, "/api/settings/feed-refresh", {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      }),
     cacheFeedPreview: (feed: ApiFeedPreviewResponse) =>
       request<ApiFeedStateResponse>(baseUrl, "/api/feeds/cache", {
         method: "POST",

@@ -752,9 +752,9 @@ POST /api/feeds/sources/error
 DELETE /api/feeds/sources?url=https://blog.python.org/rss.xml
 ```
 
-Persists the RSS discovery surface in the primary database. `POST /api/feeds/cache` upserts a loaded source and every fetched entry. Existing cached entries remain even if a later feed response no longer includes them, so source history accumulates until the source is deleted. `POST /api/feeds/read` marks a cached entry as read. `POST /api/feeds/refresh` refreshes all saved RSS sources server-side and returns `{ total, refreshed, failed, errors }`. `POST /api/feeds/sources/error` records a refresh failure without deleting the previous cached entries. Deleting a source removes its cached entries and read markers.
+Persists the RSS discovery surface in the primary database. `POST /api/feeds/cache` upserts a loaded source and every fetched entry. Existing cached entries remain even if a later feed response no longer includes them, so source history accumulates until the source is deleted. Newly inserted or materially changed feed entries are translated through the configured summarization/chat provider during the refresh/cache path. Feed entry responses keep the original `title` and `summary`, and also expose `translated_title`, `translated_summary`, `display_title`, `display_summary`, and translation provenance/status fields. `display_title` uses `中文版本 ---> 英文版本` when a translation exists; `display_summary` prefers the Chinese summary. `POST /api/feeds/read` marks a cached entry as read for legacy compatibility. `POST /api/feeds/refresh` refreshes all saved RSS sources server-side and returns `{ total, refreshed, failed, errors }`. `POST /api/feeds/sources/error` records a refresh failure without deleting the previous cached entries. Deleting a source removes its cached entries and read markers.
 
-The API process also runs the same refresh logic on a timer when `ONERADAR_FEED_REFRESH_ENABLED=true`. The default interval is controlled by `ONERADAR_FEED_REFRESH_INTERVAL_SECONDS` and defaults to 1800 seconds.
+The API process also runs the same refresh logic on a timer when enabled. The default interval is seeded from `ONERADAR_FEED_REFRESH_INTERVAL_SECONDS`, but the runtime setting is user-editable through `/api/settings/feed-refresh`. Minute intervals are aligned to the clock hour rather than to the moment the setting was saved; for example, 30 minutes refreshes at `HH:00` and `HH:30`.
 
 The desktop 每日新闻 page is model-generated and persisted per date. The API reads cached RSS entries from the 24 hours before the actual generation time, calls the configured summarization/chat provider, asks the model to translate and summarize entries into a fixed daily-brief structure, and saves exactly one report per day. The generated structure is AI-first: the headline and lead must prefer AI news when available, the first section must be AI, AI coverage should be heavier than other sections, and game news belongs at the end. Regenerating the same date overwrites the previous report.
 
@@ -806,7 +806,7 @@ The endpoint accepts JSON-RPC 2.0 MCP-style requests. The initial tools are:
 
 - `get_news_sources`: returns configured RSS sources, refresh status, refresh errors, and cached entry counts.
 - `get_news_window_status`: returns per-source counts for a time window without returning entries.
-- `get_news_window`: returns raw structured RSS entries for a time window. `since` and `until` are ISO 8601 strings; if omitted, the default window is the previous 24 hours. `limit` defaults to 1000 and supports `next_cursor` pagination.
+- `get_news_window`: returns structured RSS entries for a time window. `since` and `until` are ISO 8601 strings; if omitted, the default window is the previous 24 hours. `limit` defaults to 1000 and supports `next_cursor` pagination. Entry payloads expose the display Chinese-first title/summary plus original and translated fields so downstream agents can choose either presentation.
 
 MCP accepts either a normal user bearer token or a user-created integration token with `mcp:read` scope. Hermes should use an integration token:
 
@@ -1213,7 +1213,38 @@ If needed, the UI can use the same reading-state endpoint rather than separate r
 
 ## 15. Settings APIs
 
-### 15.1 Get Bilibili Integration Settings
+### 15.1 RSS Refresh Settings
+
+```http
+GET /api/settings/feed-refresh
+PUT /api/settings/feed-refresh
+```
+
+Response:
+
+```json
+{
+  "enabled": true,
+  "interval_value": 30,
+  "interval_unit": "minutes",
+  "interval_seconds": 1800,
+  "updated_at": "2026-06-25T08:30:00Z"
+}
+```
+
+Update request:
+
+```json
+{
+  "enabled": true,
+  "interval_value": 2,
+  "interval_unit": "hours"
+}
+```
+
+`interval_unit` is either `minutes` or `hours`. Minute values must be 1-60 and are scheduled from clock-hour boundaries. Hour values must be 1-24 and are scheduled from clock-hour boundaries.
+
+### 15.2 Get Bilibili Integration Settings
 
 ```http
 GET /api/settings/integrations/bilibili
@@ -1230,7 +1261,7 @@ For QR-code login, readiness is based on `SESSDATA` plus `bili_jct`; `buvid3` re
 
 Multimodal video/audio analysis is not controlled by a Bilibili-specific toggle. It is driven by the enabled LLM provider's input capability flags: video, image, and audio inputs can trigger sampled video, sampled frame, or extracted-audio analysis, with subtitle text included as prompt context and ASR kept as fallback.
 
-### 15.2 Update Bilibili Integration Settings
+### 15.3 Update Bilibili Integration Settings
 
 ```http
 PUT /api/settings/integrations/bilibili
@@ -1251,7 +1282,7 @@ Notes:
 - API responses must never echo raw cookie values.
 - Omitting a field should preserve the stored value; sending an empty string should clear it.
 
-### 15.3 Parse Bilibili Cookie Header
+### 15.4 Parse Bilibili Cookie Header
 
 ```http
 POST /api/settings/integrations/bilibili/parse-cookie
@@ -1259,7 +1290,7 @@ POST /api/settings/integrations/bilibili/parse-cookie
 
 Use this for import-page previews when the user pastes a full browser cookie string and wants to verify which fields can be extracted before saving.
 
-### 15.4 Create Bilibili QR Login
+### 15.5 Create Bilibili QR Login
 
 ```http
 POST /api/settings/integrations/bilibili/qrcode
@@ -1277,7 +1308,7 @@ Response:
 
 The desktop client renders `url` as a local QR code and keeps `qrcode_key` only for polling. Do not persist the QR URL or key as integration credentials.
 
-### 15.5 Poll Bilibili QR Login
+### 15.6 Poll Bilibili QR Login
 
 ```http
 POST /api/settings/integrations/bilibili/qrcode/poll

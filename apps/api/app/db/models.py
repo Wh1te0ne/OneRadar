@@ -140,6 +140,7 @@ class FeedEntry(TimestampMixin, Base):
         UniqueConstraint('feed_source_id', 'entry_id', name='uq_feed_entries_source_entry_id'),
         Index('ix_feed_entries_user_published', 'user_id', 'published_at'),
         Index('ix_feed_entries_source_published', 'feed_source_id', 'published_at'),
+        Index('ix_feed_entries_translation_status_published', 'translation_status', 'published_at'),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -153,6 +154,15 @@ class FeedEntry(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     link: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translated_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translated_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translation_language: Mapped[str | None] = mapped_column(String, nullable=True)
+    translation_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    translation_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    translation_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    translation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translation_source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    translated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     author: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)

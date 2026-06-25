@@ -8,8 +8,16 @@ from pydantic import BaseModel, Field
 class FeedPreviewItem(BaseModel):
     id: str
     title: str
+    translated_title: str | None = None
+    display_title: str | None = None
     link: str
     summary: str | None = None
+    translated_summary: str | None = None
+    display_summary: str | None = None
+    translation_status: str | None = None
+    translation_provider: str | None = None
+    translation_model: str | None = None
+    translated_at: datetime | None = None
     author: str | None = None
     published_at: datetime | None = None
     tags: list[str] = Field(default_factory=list)

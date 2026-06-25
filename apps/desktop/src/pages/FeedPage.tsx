@@ -121,6 +121,14 @@ function sourceCount(source: SavedFeedSource, filter: FeedFilter) {
   return source.entryCount;
 }
 
+function feedDisplayTitle(item: FeedEntry) {
+  return item.display_title || item.title;
+}
+
+function feedDisplaySummary(item: FeedEntry) {
+  return item.display_summary || item.translated_summary || item.summary || "该订阅项没有提供摘要。";
+}
+
 export function FeedPage() {
   const [searchParams] = useSearchParams();
   const { apiBaseUrl } = useAppState();
@@ -366,7 +374,15 @@ export function FeedPage() {
       if (filter === "today" && !isToday(item.published_at)) return false;
       if (filter === "week" && !isRecent(item.published_at)) return false;
       if (!keyword) return true;
-      const haystack = [item.title, item.summary ?? "", item.author ?? "", item.sourceTitle, item.tags.join(" ")].join(" ").toLowerCase();
+      const haystack = [
+        item.title,
+        item.display_title ?? "",
+        item.summary ?? "",
+        item.display_summary ?? "",
+        item.author ?? "",
+        item.sourceTitle,
+        item.tags.join(" "),
+      ].join(" ").toLowerCase();
       return haystack.includes(keyword);
     });
     return timeFiltered;
@@ -655,7 +671,7 @@ function FeedRow({
             lineHeight: 1.35,
           }}
         >
-          {item.title}
+          {feedDisplayTitle(item)}
         </h3>
 
         <p
@@ -670,7 +686,7 @@ function FeedRow({
             overflow: "hidden",
           }}
         >
-          {item.summary ?? "该订阅项没有提供摘要。"}
+          {feedDisplaySummary(item)}
         </p>
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

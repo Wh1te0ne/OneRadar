@@ -1,8 +1,16 @@
 export type ApiFeedPreviewItem = {
   id: string;
   title: string;
+  translated_title?: string | null;
+  display_title?: string | null;
   link: string;
   summary?: string | null;
+  translated_summary?: string | null;
+  display_summary?: string | null;
+  translation_status?: string | null;
+  translation_provider?: string | null;
+  translation_model?: string | null;
+  translated_at?: string | null;
   author?: string | null;
   published_at?: string | null;
   tags: string[];
@@ -117,6 +125,14 @@ export type ApiUser = {
   username: string;
   email?: string | null;
   created_at?: string;
+};
+
+export type ApiFeedRefreshSettings = {
+  enabled: boolean;
+  interval_value: number;
+  interval_unit: "minutes" | "hours";
+  interval_seconds: number;
+  updated_at?: string | null;
 };
 
 export type ApiAuthSession = {
