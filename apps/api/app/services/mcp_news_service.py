@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.schemas.feeds import FeedPreviewItem, FeedPreviewResponse, FeedSourceEntry
+from app.services.feed_refresh_service import refresh_current_user_feeds
 from app.services.feed_state_service import get_feed_state
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -49,13 +50,15 @@ def _call_tool(params: dict[str, Any]) -> dict[str, Any]:
         payload = get_news_window_status(**arguments)
     elif name == "get_news_window":
         payload = get_news_window(**arguments)
+    elif name == "refresh_news":
+        payload = refresh_news(**arguments)
     else:
         raise ValueError(f"Unknown tool: {name}")
     return _tool_result(payload)
 
 
 def get_news_sources() -> dict[str, Any]:
-    state = get_feed_state()
+    state = get_feed_state(window="all")
     sources = [
         _source_payload(source, state.feeds.get(source.source_url))
         for source in state.sources
@@ -99,6 +102,46 @@ def get_news_window(
     )
 
 
+def refresh_news(
+    since: str | None = None,
+    until: str | None = None,
+    source_urls: list[str] | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+    include_entries: bool = False,
+) -> dict[str, Any]:
+    refresh_result = refresh_current_user_feeds(limit=0)
+    window_payload = _news_window_payload(
+        since=since,
+        until=until,
+        source_urls=source_urls,
+        limit=limit,
+        cursor=cursor,
+        include_entries=include_entries,
+    )
+    refresh = refresh_result.refresh
+    translation = refresh_result.translation
+    status = (
+        "completed"
+        if refresh.failed == 0 and translation.failed == 0
+        else "completed_with_errors"
+    )
+    return {
+        "ready": True,
+        "status": status,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "refresh": refresh.model_dump(mode="json"),
+        "translation": {
+            "total": translation.total,
+            "translated": translation.translated,
+            "skipped": translation.skipped,
+            "failed": translation.failed,
+            "status": "completed" if translation.failed == 0 else "completed_with_errors",
+        },
+        **window_payload,
+    }
+
+
 def _news_window_payload(
     *,
     since: str | None,
@@ -110,7 +153,7 @@ def _news_window_payload(
 ) -> dict[str, Any]:
     since_dt, until_dt = _window_bounds(since, until)
     selected_sources = {url for url in (source_urls or []) if isinstance(url, str) and url.strip()}
-    state = get_feed_state()
+    state = get_feed_state(window="all")
     entries: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
 
@@ -167,7 +210,7 @@ def _entries_in_window(
                 "original_title": item.title,
                 "translated_title": item.translated_title,
                 "url": item.link,
-                "summary": item.display_summary,
+                "summary": item.display_summary or item.translated_summary or item.summary,
                 "original_summary": item.summary,
                 "translated_summary": item.translated_summary,
                 "translation_status": item.translation_status,
@@ -216,6 +259,8 @@ def _parse_datetime(value: str) -> datetime:
 def _item_published_at(item: FeedPreviewItem) -> datetime | None:
     if item.published_at is None:
         return None
+    if item.published_at.tzinfo is None:
+        return item.published_at.replace(tzinfo=UTC)
     return item.published_at.astimezone(UTC)
 
 
@@ -276,6 +321,14 @@ def _tools() -> list[dict[str, Any]]:
             "description": "返回指定时间窗口内的原始结构化新闻条目。默认窗口是调用时刻前 24 小时。",
             "inputSchema": _window_input_schema(include_pagination=True),
         },
+        {
+            "name": "refresh_news",
+            "description": (
+                "刷新当前用户的 RSS 新闻源，等待新条目翻译完成，"
+                "然后返回刷新状态和可选窗口数据。"
+            ),
+            "inputSchema": _refresh_news_input_schema(),
+        },
     ]
 
 
@@ -301,3 +354,12 @@ def _window_input_schema(*, include_pagination: bool) -> dict[str, Any]:
         }
         properties["cursor"] = {"type": "string", "description": "上一页返回的 next_cursor。"}
     return {"type": "object", "properties": properties, "additionalProperties": False}
+
+
+def _refresh_news_input_schema() -> dict[str, Any]:
+    schema = _window_input_schema(include_pagination=True)
+    schema["properties"]["include_entries"] = {
+        "type": "boolean",
+        "description": "是否在刷新完成后直接返回窗口 entries；默认 false，仅返回状态和来源统计。",
+    }
+    return schema

@@ -807,6 +807,7 @@ The endpoint accepts JSON-RPC 2.0 MCP-style requests. The initial tools are:
 - `get_news_sources`: returns configured RSS sources, refresh status, refresh errors, and cached entry counts.
 - `get_news_window_status`: returns per-source counts for a time window without returning entries.
 - `get_news_window`: returns structured RSS entries for a time window. `since` and `until` are ISO 8601 strings; if omitted, the default window is the previous 24 hours. `limit` defaults to 1000 and supports `next_cursor` pagination. Entry payloads expose the display Chinese-first title/summary plus original and translated fields so downstream agents can choose either presentation.
+- `refresh_news`: refreshes the current user's RSS sources, waits for new-entry translation to complete, and then returns refresh/translation status plus the requested news window. `include_entries=true` returns entries in the same shape as `get_news_window`; otherwise the tool returns counts and source status only.
 
 MCP accepts either a normal user bearer token or a user-created integration token with `mcp:read` scope. Hermes should use an integration token:
 
@@ -814,7 +815,7 @@ MCP accepts either a normal user bearer token or a user-created integration toke
 Authorization: Bearer ort_...
 ```
 
-The MCP handoff is a data-source boundary for Hermes Agent. OneRadar provides complete source entries and source status for the requested window; Hermes owns AI grouping, ranking, narration, and delivery. This keeps missing-news responsibility explicit: if an entry is present in `get_news_window`, any omission is downstream of OneRadar.
+The MCP handoff is a data-source boundary for Hermes Agent. OneRadar provides complete source entries and source status for the requested window. A caller that requires the newest cache should call `refresh_news` first, or call it with `include_entries=true` to refresh and read in one round trip. Hermes owns AI grouping, ranking, narration, and delivery. This keeps missing-news responsibility explicit: if an entry is present in `get_news_window` or `refresh_news`, any omission is downstream of OneRadar.
 
 Recommended Hermes MCP configuration:
 

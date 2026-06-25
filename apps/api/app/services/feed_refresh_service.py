@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -15,8 +16,9 @@ from app.services.feed_service import preview_feed
 from app.services.feed_state_service import (
     get_feed_state,
     mark_feed_source_error,
-    upsert_feed_cache,
+    upsert_feed_cache_with_translation_result,
 )
+from app.services.feed_translation_service import FeedTranslationResult
 from app.services.settings_service import (
     FeedRefreshRuntimeSettings,
     get_feed_refresh_runtime_settings,
@@ -27,26 +29,53 @@ logger = logging.getLogger(__name__)
 MAX_SETTINGS_POLL_SECONDS = 30
 
 
+@dataclass(frozen=True, slots=True)
+class FeedRefreshRunResult:
+    refresh: FeedRefreshResponse
+    translation: FeedTranslationResult
+
+
+def _add_translation_results(
+    current: FeedTranslationResult,
+    incoming: FeedTranslationResult,
+) -> FeedTranslationResult:
+    return FeedTranslationResult(
+        total=current.total + incoming.total,
+        translated=current.translated + incoming.translated,
+        skipped=current.skipped + incoming.skipped,
+        failed=current.failed + incoming.failed,
+    )
+
+
 def _refresh_current_user_feeds(limit: int) -> FeedRefreshResponse:
+    return refresh_current_user_feeds(limit).refresh
+
+
+def refresh_current_user_feeds(limit: int = 0) -> FeedRefreshRunResult:
     state = get_feed_state()
     errors: dict[str, str] = {}
     refreshed = 0
+    translation = FeedTranslationResult()
 
     for source in state.sources:
         try:
             feed = preview_feed(source.source_url, limit=limit)
-            upsert_feed_cache(feed)
+            _, translation_result = upsert_feed_cache_with_translation_result(feed)
+            translation = _add_translation_results(translation, translation_result)
             refreshed += 1
         except Exception as error:  # RSS refresh should keep the rest of the sources moving.
             message = str(error)
             errors[source.source_url] = message
             mark_feed_source_error(source.source_url, source.site_title, message)
 
-    return FeedRefreshResponse(
-        total=len(state.sources),
-        refreshed=refreshed,
-        failed=len(errors),
-        errors=errors,
+    return FeedRefreshRunResult(
+        refresh=FeedRefreshResponse(
+            total=len(state.sources),
+            refreshed=refreshed,
+            failed=len(errors),
+            errors=errors,
+        ),
+        translation=translation,
     )
 
 

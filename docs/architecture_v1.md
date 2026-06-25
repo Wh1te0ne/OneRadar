@@ -51,7 +51,7 @@ flowchart LR
 
 The desktop client never performs heavy ingestion or transcription work locally in V1.
 
-The MCP endpoint is hosted inside the API server rather than as a separate Docker service. It reuses the API process, database connection, feed cache, and refresh state. Its initial responsibility is read-only news handoff for Hermes: list news sources, report source/window status, and return raw RSS entries for a requested time window. It must not generate the Hermes morning briefing text; Hermes owns classification and final delivery so missing-news responsibility stays traceable.
+The MCP endpoint is hosted inside the API server rather than as a separate Docker service. It reuses the API process, database connection, feed cache, and refresh state. Its primary responsibility is news handoff for Hermes and other callers: list news sources, report source/window status, return RSS entries for a requested time window, and optionally trigger a current-user RSS refresh before returning data. It must not generate the Hermes morning briefing text; Hermes owns classification and final delivery so missing-news responsibility stays traceable.
 
 The server owns:
 

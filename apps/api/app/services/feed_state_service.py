@@ -19,6 +19,7 @@ from app.schemas.feeds import (
 )
 from app.services import feed_translation_service
 from app.services.db_access import get_primary_user
+from app.services.feed_translation_service import FeedTranslationResult
 from app.services.items_service import find_saved_item_for_url
 
 _STATE_LOCK = Lock()
@@ -308,6 +309,13 @@ def get_feed_state(window: str = "all", since: datetime | None = None, until: da
 
 
 def upsert_feed_cache(feed: FeedPreviewResponse) -> FeedStateResponse:
+    state, _ = upsert_feed_cache_with_translation_result(feed)
+    return state
+
+
+def upsert_feed_cache_with_translation_result(
+    feed: FeedPreviewResponse,
+) -> tuple[FeedStateResponse, FeedTranslationResult]:
     translation_entry_ids = []
     try:
         with SessionLocal() as session:
@@ -381,8 +389,10 @@ def upsert_feed_cache(feed: FeedPreviewResponse) -> FeedStateResponse:
                 entry.tags = list(item.tags or [])
                 entry.raw_item = item.model_dump(mode="json")
             session.commit()
-        feed_translation_service.translate_feed_entries(entry_ids=translation_entry_ids)
-        return get_feed_state()
+        translation = feed_translation_service.translate_feed_entries(
+            entry_ids=translation_entry_ids,
+        )
+        return get_feed_state(), translation
     except SQLAlchemyError:
         with _STATE_LOCK:
             state = _load_file_state()
@@ -428,7 +438,7 @@ def upsert_feed_cache(feed: FeedPreviewResponse) -> FeedStateResponse:
             state["feeds"] = feeds
             state["sources"] = sources[:30]
             _save_file_state(state)
-        return _file_feed_state()
+        return _file_feed_state(), FeedTranslationResult()
 
 
 def mark_feed_source_error(
